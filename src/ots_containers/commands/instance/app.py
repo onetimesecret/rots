@@ -13,6 +13,7 @@ from ..common import DryRun, Follow, JsonOutput, Lines, Quiet, Yes
 from ._helpers import (
     for_each_instance,
     format_command,
+    format_journalctl_hint,
     resolve_identifiers,
 )
 from .annotations import (
@@ -393,7 +394,7 @@ def deploy(
             raise
 
     instances = {itype: list(identifiers)}
-    for_each_instance(instances, delay, do_deploy, "Deploying")
+    for_each_instance(instances, delay, do_deploy, "Deploying", show_logs_hint=True)
 
 
 @app.command
@@ -505,7 +506,7 @@ def redeploy(
             raise
 
     verb = "Force redeploying" if force else "Redeploying"
-    for_each_instance(instances, delay, do_redeploy, verb)
+    for_each_instance(instances, delay, do_redeploy, verb, show_logs_hint=True)
 
 
 @app.command
@@ -616,6 +617,10 @@ def start(
             systemd.start(unit)
             print(f"Started {unit}")
 
+    hint = format_journalctl_hint(instances)
+    if hint:
+        print(f"\nView logs: {hint}")
+
 
 @app.command
 def stop(
@@ -681,6 +686,10 @@ def restart(
             unit = systemd.unit_name(inst_type.value, id_)
             systemd.restart(unit)
             print(f"Restarted {unit}")
+
+    hint = format_journalctl_hint(instances)
+    if hint:
+        print(f"\nView logs: {hint}")
 
 
 @app.command

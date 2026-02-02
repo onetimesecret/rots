@@ -102,8 +102,8 @@ class TestContainerTemplate:
         quadlet.write_web_template(cfg)
 
         content = cfg.web_template_path.read_text()
-        # Syslog tag allows: journalctl -t onetime -f
-        assert "PodmanArgs=--log-opt tag=onetime" in content
+        # Syslog tag allows: journalctl -t onetime-web-7043 -f
+        assert "PodmanArgs=--log-opt tag=onetime-web-%i" in content
 
     def test_write_web_template_includes_volumes(self, mocker, tmp_path):
         """Container quadlet should mount config directory and static assets."""
@@ -305,8 +305,8 @@ class TestWorkerTemplate:
         quadlet.write_worker_template(cfg)
 
         content = cfg.worker_template_path.read_text()
-        # Syslog tag allows: journalctl -t onetime -f
-        assert "PodmanArgs=--log-opt tag=onetime" in content
+        # Syslog tag allows: journalctl -t onetime-worker-1 -f
+        assert "PodmanArgs=--log-opt tag=onetime-worker-%i" in content
 
     def test_write_worker_template_sets_worker_id_env_var(self, mocker, tmp_path):
         """Worker quadlet should set WORKER_ID env var from instance."""
@@ -530,7 +530,8 @@ class TestSchedulerTemplate:
         quadlet.write_scheduler_template(cfg)
 
         content = cfg.scheduler_template_path.read_text()
-        assert "PodmanArgs=--log-opt tag=onetime" in content
+        # Syslog tag allows: journalctl -t onetime-scheduler-main -f
+        assert "PodmanArgs=--log-opt tag=onetime-scheduler-%i" in content
 
     def test_write_scheduler_template_sets_scheduler_id_env_var(self, mocker, tmp_path):
         """Scheduler quadlet should set SCHEDULER_ID env var from instance."""

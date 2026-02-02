@@ -6,9 +6,50 @@ import pytest
 from ots_containers.commands.instance._helpers import (
     for_each_instance,
     format_command,
+    format_journalctl_hint,
     resolve_identifiers,
 )
 from ots_containers.commands.instance.annotations import InstanceType
+
+
+class TestFormatJournalctlHint:
+    """Test format_journalctl_hint helper."""
+
+    def test_single_web_instance(self):
+        """Should generate journalctl command for single web instance."""
+        instances = {InstanceType.WEB: ["7043"]}
+        result = format_journalctl_hint(instances)
+        assert result == "journalctl -t onetime-web-7043 -f"
+
+    def test_multiple_web_instances(self):
+        """Should generate journalctl command for multiple web instances."""
+        instances = {InstanceType.WEB: ["7043", "7044"]}
+        result = format_journalctl_hint(instances)
+        assert result == "journalctl -t onetime-web-7043 -t onetime-web-7044 -f"
+
+    def test_mixed_instance_types(self):
+        """Should generate journalctl command for mixed instance types."""
+        instances = {
+            InstanceType.WEB: ["7043"],
+            InstanceType.WORKER: ["billing"],
+            InstanceType.SCHEDULER: ["main"],
+        }
+        result = format_journalctl_hint(instances)
+        assert "-t onetime-web-7043" in result
+        assert "-t onetime-worker-billing" in result
+        assert "-t onetime-scheduler-main" in result
+        assert result.endswith(" -f")
+
+    def test_empty_instances(self):
+        """Should return empty string for empty instances."""
+        result = format_journalctl_hint({})
+        assert result == ""
+
+    def test_worker_instance(self):
+        """Should generate journalctl command for worker instance."""
+        instances = {InstanceType.WORKER: ["1"]}
+        result = format_journalctl_hint(instances)
+        assert result == "journalctl -t onetime-worker-1 -f"
 
 
 class TestFormatCommand:

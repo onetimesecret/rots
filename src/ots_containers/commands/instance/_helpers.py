@@ -19,6 +19,27 @@ def format_command(cmd: Sequence[str]) -> str:
     return " ".join(shlex.quote(arg) for arg in cmd)
 
 
+def format_journalctl_hint(instances: dict[InstanceType, list[str]]) -> str:
+    """Generate a journalctl command to view logs for the given instances.
+
+    Args:
+        instances: Dict mapping InstanceType to list of identifiers
+
+    Returns:
+        A journalctl command string with -t flags for each instance.
+    """
+    tags = []
+    for itype, ids in instances.items():
+        for id_ in ids:
+            tags.append(f"onetime-{itype.value}-{id_}")
+
+    if not tags:
+        return ""
+
+    tag_args = " ".join(f"-t {shlex.quote(tag)}" for tag in tags)
+    return f"journalctl {tag_args} -f"
+
+
 def resolve_identifiers(
     identifiers: tuple[str, ...],
     instance_type: InstanceType | None,
@@ -96,6 +117,8 @@ def for_each_instance(
     delay: int,
     action: Callable[[InstanceType, str], None],
     verb: str,
+    *,
+    show_logs_hint: bool = False,
 ) -> int:
     """Run action for each instance with delay between.
 
@@ -104,6 +127,7 @@ def for_each_instance(
         delay: Seconds to wait between operations
         action: Callable taking (instance_type, identifier)
         verb: Present participle for logging (e.g., "Restarting")
+        show_logs_hint: If True, print journalctl command to view logs
 
     Returns:
         Total number of instances processed.
@@ -128,4 +152,10 @@ def for_each_instance(
             time.sleep(delay)
 
     print(f"Processed {total} instance(s)")
+
+    if show_logs_hint:
+        hint = format_journalctl_hint(instances)
+        if hint:
+            print(f"\nView logs: {hint}")
+
     return total

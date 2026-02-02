@@ -64,8 +64,8 @@ RestartSec=5
 Image={image}
 Network=host
 
-# Syslog tag for unified log filtering: journalctl -t onetime -f
-PodmanArgs=--log-opt tag=onetime
+# Syslog tag for per-instance log filtering: journalctl -t onetime-web-7043 -f
+PodmanArgs=--log-opt tag=onetime-web-%i
 
 # Port is derived from instance name: onetime-web@7043 -> PORT=7043
 Environment=PORT=%i
@@ -191,8 +191,8 @@ TimeoutStopSec=90
 Image={image}
 Network=host
 
-# Syslog tag for unified log filtering: journalctl -t onetime -f
-PodmanArgs=--log-opt tag=onetime
+# Syslog tag for per-instance log filtering: journalctl -t onetime-worker-1 -f
+PodmanArgs=--log-opt tag=onetime-worker-%i
 
 # Worker ID is derived from instance name: onetime-worker@1 -> WORKER_ID=1
 Environment=WORKER_ID=%i
@@ -293,8 +293,8 @@ TimeoutStopSec=60
 Image={image}
 Network=host
 
-# Syslog tag for unified log filtering: journalctl -t onetime -f
-PodmanArgs=--log-opt tag=onetime
+# Syslog tag for per-instance log filtering: journalctl -t onetime-scheduler-main -f
+PodmanArgs=--log-opt tag=onetime-scheduler-%i
 
 # Scheduler ID is derived from instance name: onetime-scheduler@main -> SCHEDULER_ID=main
 Environment=SCHEDULER_ID=%i
