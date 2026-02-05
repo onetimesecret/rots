@@ -600,6 +600,8 @@ def undeploy(
         unit = systemd.unit_name(inst_type.value, id_)
         try:
             systemd.stop(unit)
+            # Clear failed state so unit doesn't appear in discovery
+            systemd.reset_failed(unit)
             port = int(id_) if inst_type == InstanceType.WEB else 0
             db.record_deployment(
                 cfg.db_path,

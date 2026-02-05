@@ -193,6 +193,15 @@ def stop(unit: str) -> None:
     subprocess.run(cmd, check=True)
 
 
+def reset_failed(unit: str) -> None:
+    """Clear failed state for a unit so it doesn't appear in discovery."""
+    require_systemctl()
+    cmd = ["sudo", "systemctl", "reset-failed", unit]
+    print(f"  $ {' '.join(cmd)}")
+    # Don't check=True - it's fine if the unit wasn't in failed state
+    subprocess.run(cmd)
+
+
 def restart(unit: str) -> None:
     require_systemctl()
     cmd = ["sudo", "systemctl", "restart", unit]
