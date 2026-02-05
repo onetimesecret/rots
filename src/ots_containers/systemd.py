@@ -19,7 +19,7 @@ def require_systemctl() -> None:
     """
     if not shutil.which("systemctl"):
         print(
-            "Error: systemctl not found. Instance management requires Linux with systemd.",
+            "Error: systemctl not found. This command requires Linux with systemd.",
             file=sys.stderr,
         )
         print(
@@ -27,7 +27,7 @@ def require_systemctl() -> None:
             file=sys.stderr,
         )
         print(
-            "For local development, use 'podman run' or 'docker compose' directly.",
+            "Note: 'ots instance shell' works on macOS for local development.",
             file=sys.stderr,
         )
         raise SystemExit(1)
