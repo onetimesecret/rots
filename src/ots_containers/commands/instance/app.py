@@ -12,6 +12,7 @@ from ots_containers.config import Config
 
 from ..common import DryRun, Follow, JsonOutput, Lines, Quiet, Yes
 from ._helpers import (
+    build_secret_args,
     for_each_instance,
     format_command,
     format_journalctl_hint,
@@ -939,3 +940,332 @@ def exec_shell(
             # Interactive exec requires subprocess.run with no capture
             subprocess.run(["podman", "exec", "-it", container, shell])
             print()
+
+
+@app.command
+def shell(
+    persistent: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--persistent", "-p"],
+            help="Named volume for persistent data (survives exit)",
+        ),
+    ] = None,
+    command: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--command", "-c"],
+            help="Command to run (default: interactive bash)",
+        ),
+    ] = None,
+    quiet: Quiet = False,
+    tag: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--tag", "-t"],
+            help="Image tag to use (default: from TAG env or 'current' alias)",
+        ),
+    ] = None,
+    remote: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=["--remote", "-r"],
+            help="Pull from registry instead of using local image",
+        ),
+    ] = False,
+):
+    """Run ephemeral shell for migrations and maintenance.
+
+    By default uses tmpfs at /app/data (data destroyed on exit).
+    Use --persistent to create a named volume that survives exit.
+    Config is mounted read-only at /app/etc.
+
+    Examples:
+        ots instance shell                              # tmpfs, interactive bash
+        ots instance shell --persistent upgrade-v024    # named volume survives exit
+        ots instance shell -c "bin/ots migrate"         # run command and exit
+        ots instance shell --tag v0.24.0                # specific image tag
+    """
+    cfg = Config()
+
+    # Resolve image/tag (same pattern as run command)
+    if remote:
+        if tag:
+            image = cfg.image
+            resolved_tag = tag
+        else:
+            image, resolved_tag = cfg.resolve_image_tag()
+    else:
+        # Local is the default
+        image = "onetimesecret"  # localhost/onetimesecret
+        resolved_tag = tag or cfg.tag
+    full_image = f"{image}:{resolved_tag}"
+
+    # Build podman run command
+    cmd = ["podman", "run", "--rm"]
+
+    # Interactive unless command provided
+    if command is None:
+        cmd.append("-it")
+
+    cmd.append("--network=host")
+
+    # Environment file and secrets
+    env_file = quadlet.DEFAULT_ENV_FILE
+    if env_file.exists():
+        cmd.extend(["--env-file", str(env_file)])
+        cmd.extend(build_secret_args(env_file))
+
+    # Data volume: tmpfs (default) or persistent named volume
+    if persistent:
+        volume_name = f"ots-migration-{persistent}"
+        cmd.extend(["-v", f"{volume_name}:/app/data"])
+    else:
+        cmd.extend(["--tmpfs", "/app/data"])
+
+    # Config directory (always read-only)
+    cmd.extend(["-v", f"{cfg.config_dir}:/app/etc:ro"])
+
+    # Image
+    cmd.append(full_image)
+
+    # Command to run
+    if command:
+        cmd.extend(["/bin/bash", "-c", command])
+    else:
+        cmd.append("/bin/bash")
+
+    if not quiet:
+        print(format_command(cmd))
+        print()
+
+    # Run it
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Shell exited with code {e.returncode}")
+        raise SystemExit(e.returncode)
+    except KeyboardInterrupt:
+        print("\nInterrupted")
+
+
+@app.command(name="config-transform")
+def config_transform(
+    command: Annotated[
+        str,
+        cyclopts.Parameter(
+            name=["--command", "-c"],
+            help="Migration command to run (e.g., 'bin/ots migrate 20250727_01')",
+        ),
+    ],
+    file: Annotated[
+        str,
+        cyclopts.Parameter(
+            name=["--file", "-f"],
+            help="Config file to transform (default: config.yaml)",
+        ),
+    ] = "config.yaml",
+    apply: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=["--apply"],
+            help="Apply changes (default: dry-run showing diff only)",
+        ),
+    ] = False,
+    quiet: Quiet = False,
+    tag: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--tag", "-t"],
+            help="Image tag to use (default: from TAG env or 'current' alias)",
+        ),
+    ] = None,
+    remote: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=["--remote", "-r"],
+            help="Pull from registry instead of using local image",
+        ),
+    ] = False,
+):
+    """Transform config files with backup/apply workflow.
+
+    Runs a migration command in a container to transform config files.
+    By default shows a diff without making changes (dry-run).
+    Use --apply to backup the original and apply the transformation.
+
+    The migration command should:
+    - Read from /app/data/{file} (original config copied there)
+    - Write to /app/data/{file}.new (transformed output)
+    - Exit 0 on success, non-zero on failure
+
+    Examples:
+        # Dry run (default) - shows diff
+        ots instance config-transform -c "bin/ots migrate 20250727_01"
+
+        # Apply changes (creates backup, replaces original)
+        ots instance config-transform -c "bin/ots migrate 20250727_01" --apply
+
+        # Different config file
+        ots instance config-transform -c "bin/ots migrate auth_fix" -f auth.yaml --apply
+    """
+    import difflib
+    import time
+    from pathlib import Path
+
+    cfg = Config()
+
+    # Validate: prevent path traversal
+    if ".." in file or file.startswith("/"):
+        raise SystemExit(f"Invalid file path: {file!r} (no path traversal allowed)")
+
+    # Check config file exists
+    config_path = cfg.config_dir / file
+    if not config_path.exists():
+        raise SystemExit(f"Config file not found: {config_path}")
+
+    # Resolve image/tag (same pattern as shell command)
+    if remote:
+        if tag:
+            image = cfg.image
+            resolved_tag = tag
+        else:
+            image, resolved_tag = cfg.resolve_image_tag()
+    else:
+        image = "onetimesecret"
+        resolved_tag = tag or cfg.tag
+    full_image = f"{image}:{resolved_tag}"
+
+    # Create temporary volume with timestamp
+    timestamp = int(time.time())
+    volume_name = f"ots-config-transform-{timestamp}"
+
+    try:
+        # Create the volume
+        subprocess.run(
+            ["podman", "volume", "create", volume_name],
+            check=True,
+            capture_output=True,
+        )
+
+        # Copy config file to volume using a helper container
+        # We use a busybox-style approach: mount both and copy
+        subprocess.run(
+            [
+                "podman",
+                "run",
+                "--rm",
+                "-v",
+                f"{config_path}:/src/{file}:ro",
+                "-v",
+                f"{volume_name}:/dest",
+                full_image,
+                "/bin/cp",
+                f"/src/{file}",
+                f"/dest/{file}",
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+        # Build and run the transformation command
+        env_file = quadlet.DEFAULT_ENV_FILE
+        cmd = ["podman", "run", "--rm", "--network=host"]
+
+        if env_file.exists():
+            cmd.extend(["--env-file", str(env_file)])
+            cmd.extend(build_secret_args(env_file))
+
+        cmd.extend(["-v", f"{volume_name}:/app/data"])
+        cmd.extend(["-v", f"{cfg.config_dir}:/app/etc:ro"])
+        cmd.append(full_image)
+        cmd.extend(["/bin/bash", "-c", command])
+
+        if not quiet:
+            print(f"Running: {format_command(cmd)}")
+            print()
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            print(f"Migration command failed (exit {result.returncode})")
+            if result.stderr:
+                print(result.stderr)
+            if result.stdout:
+                print(result.stdout)
+            raise SystemExit(result.returncode)
+
+        # Read the transformed file from volume
+        read_result = subprocess.run(
+            [
+                "podman",
+                "run",
+                "--rm",
+                "-v",
+                f"{volume_name}:/data:ro",
+                full_image,
+                "/bin/cat",
+                f"/data/{file}.new",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        if read_result.returncode != 0:
+            print(f"No transformed file produced: /app/data/{file}.new")
+            print("Migration command should write transformed config to {file}.new")
+            raise SystemExit(1)
+
+        new_content = read_result.stdout
+        original_content = config_path.read_text()
+
+        # Generate and display diff
+        diff = list(
+            difflib.unified_diff(
+                original_content.splitlines(keepends=True),
+                new_content.splitlines(keepends=True),
+                fromfile=f"a/{file}",
+                tofile=f"b/{file}",
+            )
+        )
+
+        if not diff:
+            print("No changes detected")
+            return
+
+        print("".join(diff))
+
+        if not apply:
+            print()
+            print("Dry run - no changes made. Use --apply to apply changes.")
+            return
+
+        # Create backup with timestamp
+        backup_time = time.strftime("%Y%m%d-%H%M%S")
+        backup_path = Path(f"{config_path}.bak.{backup_time}")
+
+        # Handle numbered backups if timestamp backup exists
+        if backup_path.exists():
+            counter = 1
+            while True:
+                numbered_backup = Path(f"{config_path}.bak.{backup_time}.{counter}")
+                if not numbered_backup.exists():
+                    backup_path = numbered_backup
+                    break
+                counter += 1
+
+        # Create backup and apply
+        import shutil
+
+        shutil.copy2(config_path, backup_path)
+        print(f"Backup created: {backup_path}")
+
+        config_path.write_text(new_content)
+        print(f"Config updated: {config_path}")
+
+    finally:
+        # Cleanup: remove temporary volume
+        subprocess.run(
+            ["podman", "volume", "rm", "-f", volume_name],
+            capture_output=True,
+        )

@@ -5,8 +5,10 @@
 import shlex
 import time
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 from ots_containers import systemd
+from ots_containers.environment_file import get_secrets_from_env_file
 
 from .annotations import InstanceType
 
@@ -39,6 +41,28 @@ def format_journalctl_hint(instances: dict[InstanceType, list[str]]) -> str:
 
     tag_args = " ".join(f"-t {shlex.quote(tag)}" for tag in tags)
     return f"journalctl {tag_args} -f"
+
+
+def build_secret_args(env_file: Path) -> list[str]:
+    """Build podman --secret arguments from environment file.
+
+    Reads SECRET_VARIABLE_NAMES from the env file and generates
+    corresponding --secret flags for podman run.
+
+    Args:
+        env_file: Path to environment file (e.g., /etc/default/onetimesecret)
+
+    Returns:
+        List of command arguments: ["--secret", "name,type=env,target=VAR", ...]
+    """
+    if not env_file.exists():
+        return []
+
+    secret_specs = get_secrets_from_env_file(env_file)
+    args: list[str] = []
+    for spec in secret_specs:
+        args.extend(["--secret", f"{spec.secret_name},type=env,target={spec.env_var_name}"])
+    return args
 
 
 def resolve_identifiers(
