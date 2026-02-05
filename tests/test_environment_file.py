@@ -270,7 +270,7 @@ class TestExtractSecrets:
 
         env_file = tmp_path / "test.env"
         env_file.write_text(
-            "SECRET_VARIABLE_NAMES=API_KEY,PASSWORD\n" "API_KEY=secret_value\n" "PASSWORD=pass123\n"
+            "SECRET_VARIABLE_NAMES=API_KEY,PASSWORD\nAPI_KEY=secret_value\nPASSWORD=pass123\n"
         )
 
         parsed = EnvFile.parse(env_file)
@@ -287,7 +287,7 @@ class TestExtractSecrets:
         from ots_containers.environment_file import EnvFile, extract_secrets
 
         env_file = tmp_path / "test.env"
-        env_file.write_text("SECRET_VARIABLE_NAMES=API_KEY\n" "_API_KEY=ots_api_key\n")
+        env_file.write_text("SECRET_VARIABLE_NAMES=API_KEY\n_API_KEY=ots_api_key\n")
 
         parsed = EnvFile.parse(env_file)
         secrets, _ = extract_secrets(parsed)
@@ -332,7 +332,7 @@ class TestProcessEnvFile:
 
         env_file = tmp_path / "test.env"
         env_file.write_text(
-            "SECRET_VARIABLE_NAMES=API_KEY\n" "BEFORE=keep\n" "API_KEY=secret\n" "AFTER=also_keep\n"
+            "SECRET_VARIABLE_NAMES=API_KEY\nBEFORE=keep\nAPI_KEY=secret\nAFTER=also_keep\n"
         )
 
         parsed = EnvFile.parse(env_file)

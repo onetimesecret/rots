@@ -81,9 +81,7 @@ class TestGenerateCloudInitConfig:
     def test_config_with_custom_gpg_keys(self):
         """Config should use provided GPG keys."""
         pg_key = (
-            "-----BEGIN PGP PUBLIC KEY BLOCK-----\n"
-            "test-pg-key\n"
-            "-----END PGP PUBLIC KEY BLOCK-----"
+            "-----BEGIN PGP PUBLIC KEY BLOCK-----\ntest-pg-key\n-----END PGP PUBLIC KEY BLOCK-----"
         )
         valkey_key = (
             "-----BEGIN PGP PUBLIC KEY BLOCK-----\n"
