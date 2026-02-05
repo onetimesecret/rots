@@ -198,8 +198,8 @@ def reset_failed(unit: str) -> None:
     require_systemctl()
     cmd = ["sudo", "systemctl", "reset-failed", unit]
     print(f"  $ {' '.join(cmd)}")
-    # Don't check=True - it's fine if the unit wasn't in failed state
-    subprocess.run(cmd)
+    # Suppress stderr - it's fine if the unit wasn't in failed state
+    subprocess.run(cmd, stderr=subprocess.DEVNULL)
 
 
 def restart(unit: str) -> None:
