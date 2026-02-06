@@ -6,7 +6,7 @@
 
 Groups of web, worker, db instances running onetime secret.
 
-See: 0205-environment-configuration-skeleton.txt.
+See: docs/wips/0205-00-environment-configuration-skeleton.md.
 
 ## The manual process as it exists today
 
@@ -191,45 +191,7 @@ Since v4 defers import to execution time, the missing-package case is handled im
 5. Add conditional import in cli.py (3 lines)
 6. Create src/ots/host/ for new code
 
-## More Detail
-
-### Layer 0: Name resolution (dnsmasq)
-
-On your local workstation, dnsmasq replaces scattered IP management. You maintain one file:
-
-```
-# /etc/dnsmasq-hosts (or address= directives in dnsmasq.conf)
-203.0.113.10    prod-us1.ots.internal
-203.0.113.11    prod-eu1.ots.internal
-203.0.113.12    prod-ap1.ots.internal
-# ... 10+ entries
-```
-
-Every other tool in the stack references `prod-us1.ots.internal` instead of an IP. When you rebuild an instance and the IP changes, you update one line. Your deploy scripts, SSH configs, and rsync targets all resolve through it.
-
-The tradeoff: dnsmasq is a local daemon. If it's not running, resolution fails for your custom names. Mitigation is straightforward since `addn-hosts` is just `/etc/hosts` format, so you can symlink or fall back. On modern Debian you'll need to disable systemd-resolved's stub listener (`DNSStubListener=no` in `/etc/systemd/resolved.conf`) to free port 53. That's a one-time configuration cost.
-
-Where dnsmasq earns its keep over plain SSH config Host aliases: other tools besides SSH also need to resolve these names. Your Python scripts, rsync, curl health checks, browser access to admin panels. SSH config only helps SSH.
-
-### Layer 1: SSH config management (sshclick or sshtmux)
-
-sshclick organizes `~/.ssh/config` with group metadata in comments. sshtmux is a fork that adds tmux session integration. Both parse and manage the same underlying SSH config file, so they don't replace SSH, they make the config manageable at scale.
-
-The relevant feature for your workflow: grouping hosts by environment or by role. When you have 10+ environments each with potentially different SSH keys, ports, or jump hosts, `~/.ssh/config` becomes a document management problem. sshclick/sshtmux turns it into a queryable structure.
-
-sshtmux's tmux integration means `sshtmux connect prod-us1` opens a persistent tmux session. You disconnect, reconnect later, your context is preserved. For long config editing sessions where you're verifying changes, this eliminates the "lost my terminal" failure mode.
-
-### Layer 2: Multiplexed operations (sshmx)
-
-sshmx is bash+fzf+tmux. You select multiple hosts interactively, it opens parallel tmux panes, and you can broadcast commands to all of them. This is where the "push to 5 environments at once" capability lives.
-
-For your config workflow, the pattern becomes: select the environments that need the update via fzf multi-select, broadcast the rsync or verification command. Instead of sequential deploy-to-each, you're deploying in parallel and watching verification output across all panes.
-
-sshmx also stores sessions in JSON with optional GPG-encrypted passwords. This overlaps with sshclick/sshtmux's config management but from a different angle (session-oriented vs config-oriented).
-
-The practical question is whether you need both sshtmux and sshmx or pick one. sshtmux is more structured (Python, pip install, config file parsing). sshmx is more ad-hoc (bash, fzf, interactive selection). For the "same change to multiple environments" workflow, sshmx's multi-select broadcasting is the more direct tool.
-
-### Layer 3: State tracking
+## State tracking
 
 The shape of the state tracking depends on where `ots host` commands run — the workstation — versus where `ots instances` commands run — each server. The server-side `deployments.db` already tracks container lifecycle. Config push tracking is a workstation concern: which files were pushed where, when, and whether they match.
 
@@ -270,19 +232,6 @@ The `config_drift` table addresses the key gap: detecting when someone edited a 
 
 - **State tracking** is the least optional. Config push history and drift detection fill a gap that none of the other tools address. The current workflow has no record of what config state each environment is in beyond "whatever's in git history and whatever I remember deploying."
 
-### Gaps
-
-#### Environment inventory as a single source of truth.
-
-Environments appear in dnsmasq hosts, SSH config (via sshtmux), sshmx session definitions, and presumably the SQLite state tables. Four places to add a new environment, four places where a stale entry can cause silent failures. An explicit inventory file that the other tools derive from (generate dnsmasq hosts, generate SSH config blocks, populate environment lists) would collapse this to one.
-
-#### The feedback loop after push.
-
-The document describes push (deploy config) and detect (drift), but not verify-service-health. Checksums confirm the file arrived intact; they don't confirm the application accepted it. A post-push health check (even just "can I curl the /health endpoint and get 200?") closes the loop between "config deployed" and "service operational." Without it, the operator has to manually verify each environment, which is the same gap that config push automation was supposed to eliminate.
-
-#### Rollback as a first-class operation.
-
-config_deployments records checksum_before, which implies rollback is possible, but there's no ots host rollback command and no stored copy of the previous file content. Checksums prove what was there; they don't reconstruct it. Either the git history serves as the rollback source (which requires knowing which commit corresponds to which deployment) or the previous file needs to be preserved on the server or workstation.
 
 ## Future considerations
 
@@ -297,9 +246,6 @@ The cost is one more Debian instance to manage (could share the VPS already runn
 - Pit of success
 - "Day 0/1/2": The metaphor emerged from network engineering, where "Day 0" described initial device configuration, "Day 1" covered deployment, and "Day 2" meant ongoing network operations. This usage dates back at least to the early 2010s in Cisco and Juniper documentation.
 
-## Framing the whole thing
-
-The system is converging on desired-state configuration management, but with the operator as the reconciliation loop rather than automation. That's a legitimate design choice for a single-operator setup where judgment matters more than speed. The risk is that it stays in the "works perfectly when I remember all the steps" zone without reaching the "the tool prevents me from forgetting steps" zone. The distance between those two zones is roughly: validation before push, health check after push, and rollback when health check fails. Those three additions would turn the tool from "config distribution with audit trail" into "deployment pipeline with safety rails."
 
 ---
 

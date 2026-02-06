@@ -41,9 +41,9 @@ Rationale: navigable with `ls`, manifest doubles as documentation, avoids deeply
 
 **Committed on `feature/plugin`:**
 - `6366ed5` — Vision doc (`0205-the-vision.md`) with full design: ambient env context, package structure, layered tooling stack, schema sketches
-
-**Uncommitted:**
-- `0205-the-vision.md` has 120 lines of additions: manual process documentation (FHS file layout, all config files, podman secrets, quadlet templates), gaps analysis (environment inventory, post-push health check, rollback), framing section
+- `15d2503`
+- `a3452a4`
+- `de1a4ac`
 
 **Not yet created:**
 - `environments/` directory structure
@@ -62,7 +62,8 @@ Rationale: navigable with `ls`, manifest doubles as documentation, avoids deeply
 
 ## Key Files
 
-- `0205-the-vision.md` — Vision doc (uncommitted changes, the design source of truth)
+- `docs/wips/0205-04-the-vision-of-the-tooling-draft2.md` — Vision doc (the technical design, cyclopts sub-apps, ambient env context, shell functions)
+- `docs/wips/0205-04-three-layer-model.md` - The bigger picture, conceptual model of layered tooling
 - `src/ots_containers/cli.py` — Entry point, where `host` sub-app registers
 - `src/ots_containers/commands/instance/app.py` — Reference pattern for cyclopts sub-app
 - `src/ots_containers/commands/service/app.py` — Another reference pattern
