@@ -1,5 +1,99 @@
 # 0205-the-vision.md
+
 ---
+
+## Environments
+
+Groups of web, worker, db instances running onetime secret.
+
+See: 0205-environment-configuration-skeleton.txt.
+
+## The manual process as it exists today
+
+Configuration Files (FHS-Compliant Layout)
+
+### 1. Application Config Directory: `/etc/onetimesecret/`
+
+YAML configuration files (mounted read-only into containers as `/app/etc:ro`):
+
+| File           | Purpose                                                        |
+| -------------- | -------------------------------------------------------------- |
+| `config.yaml`  | Application configuration (REQUIRED, validated at deploy time) |
+| `auth.yaml`    | Authentication configuration (optional)                        |
+| `logging.yaml` | Logging configuration (optional)                               |
+| `billing.yaml` | Billing configuration (optional)                               |
+
+### 2. Infrastructure Environment: `/etc/default/onetimesecret`
+
+Shared environment file loaded by all instances. Contains non-secret infrastructure variables:
+
+```bash
+REDIS_URL=redis://localhost:6379
+DATABASE_URL=postgres://localhost:5432/onetimesecret
+RABBITMQ_URL=amqp://localhost:5672
+LOG_LEVEL=info
+SECRET_VARIABLE_NAMES="HMAC_SECRET SECRET SESSION_SECRET STRIPE_API_KEY STRIPE_WEBHOOK_SIGNING_SECRET SMTP_PASSWORD"
+```
+
+The `SECRET_VARIABLE_NAMES` convention tells the system which variables should be sourced from Podman secrets instead of the env file.
+
+### 3. Runtime Data: `/var/lib/onetimesecret/`
+
+SQLite database (`deployments.db`) with 4 tables:
+
+| Table               | Purpose                                                           |
+| ------------------- | ----------------------------------------------------------------- |
+| `deployments`       | Audit trail: timestamp, image, tag, action, port, success/failure |
+| `image_aliases`     | Tag aliases: CURRENT/ROLLBACK → actual image:tag mappings         |
+| `service_instances` | Service tracking: package, instance, config paths, ports          |
+| `service_actions`   | Service audit: timestamp, package, instance, action, success      |
+
+Falls back to `~/.local/share/ots-containers/deployments.db` on macOS or when `/var/lib` not writable.
+
+### 4. Quadlet Templates: `/etc/containers/systemd/`
+
+Systemd unit templates (auto-generated):
+
+- `onetime-web@.container` - Web instance template
+- `onetime-worker@.container` - Worker instance template
+- `onetime-scheduler@.container` - Scheduler instance template
+
+Each contains the quadlet spec with `Secret=` lines dynamically generated from `SECRET_VARIABLE_NAMES`.
+
+### 5. Podman Secrets (not files)
+
+In-memory secrets managed via `podman secret`:
+
+| Secret Name                 | Environment Variable            |
+| --------------------------- | ------------------------------- |
+| `ots_hmac_secret`           | `HMAC_SECRET`                   |
+| `ots_secret`                | `SECRET`                        |
+| `ots_session_secret`        | `SESSION_SECRET`                |
+| `ots_stripe_api_key`        | `STRIPE_API_KEY`                |
+| `ots_stripe_webhook_secret` | `STRIPE_WEBHOOK_SIGNING_SECRET` |
+| `ots_smtp_password`         | `SMTP_PASSWORD`                 |
+
+**Naming convention:** env var `STRIPE_API_KEY` → secret `ots_stripe_api_key` (lowercase with `ots_` prefix)
+
+### 6. Container Registry Auth (optional for private registry)
+
+Podman auth file resolution order:
+
+1. `$REGISTRY_AUTH_FILE` env var
+2. `$XDG_RUNTIME_DIR/containers/auth.json`
+3. `~/.config/containers/auth.json` (macOS/non-root)
+4. `/etc/containers/auth.json` (root on Linux)
+
+### 7. Proxy Config (optional): `/etc/onetimesecret/`
+
+- `Caddyfile.template` - Template for Caddy reverse proxy
+- Output: `/etc/caddy/Caddyfile`
+
+### Validation at Deploy Time
+
+The `Config.validate()` checks that `/etc/onetimesecret/config.yaml` exists before allowing deployment. Other YAML files are optional.
+
+### Prospective commands
 
 The target environment is ambient state, not a per-command argument. Like Onetime Secret's Workspace Mode — where the selected organization and custom domain define the context you're working in rather than being a dropdown choice on each action — the `ots host` commands operate on whichever environment is currently active.
 
@@ -89,6 +183,7 @@ Since v4 defers import to execution time, the missing-package case is handled im
 > **Future consideration**: If the host and container halves ever need fully independent release cycles or conflicting dependency trees, a separate-package approach (each with its own cyclopts.App root and shell entry point) would provide maximum decoupling. The tradeoff is that tab completion, --help integration, and consistent flag handling would need to be maintained by convention rather than by framework.
 
 ### Migration steps
+
 1. Rename package: ots-containers → ots (pyproject.toml name change)
 2. Move source: src/ots_containers/ → src/ots/container/ (or keep flat and just add src/ots/host/)
 3. Update internal imports (one-time, mechanical)
@@ -175,6 +270,20 @@ The `config_drift` table addresses the key gap: detecting when someone edited a 
 
 - **State tracking** is the least optional. Config push history and drift detection fill a gap that none of the other tools address. The current workflow has no record of what config state each environment is in beyond "whatever's in git history and whatever I remember deploying."
 
+### Gaps
+
+#### Environment inventory as a single source of truth.
+
+Environments appear in dnsmasq hosts, SSH config (via sshtmux), sshmx session definitions, and presumably the SQLite state tables. Four places to add a new environment, four places where a stale entry can cause silent failures. An explicit inventory file that the other tools derive from (generate dnsmasq hosts, generate SSH config blocks, populate environment lists) would collapse this to one.
+
+#### The feedback loop after push.
+
+The document describes push (deploy config) and detect (drift), but not verify-service-health. Checksums confirm the file arrived intact; they don't confirm the application accepted it. A post-push health check (even just "can I curl the /health endpoint and get 200?") closes the loop between "config deployed" and "service operational." Without it, the operator has to manually verify each environment, which is the same gap that config push automation was supposed to eliminate.
+
+#### Rollback as a first-class operation.
+
+config_deployments records checksum_before, which implies rollback is possible, but there's no ots host rollback command and no stored copy of the previous file content. Checksums prove what was there; they don't reconstruct it. Either the git history serves as the rollback source (which requires knowing which commit corresponds to which deployment) or the previous file needs to be preserved on the server or workstation.
+
 ## Future considerations
 
 ### Access gateway (The Bastion)
@@ -182,3 +291,16 @@ The `config_drift` table addresses the key gap: detecting when someone edited a 
 If compliance requirements grow (SOC 2, customer audit requests) or team size expands beyond a single operator, an SSH bastion with session recording becomes justified. **The Bastion (OVH)** fits the security model: pure SSH protocol, no agent on production servers, no Docker dependency on targets. It's a hardened relay with full TTY session recording, per-user per-host authorization, and MFA. rsync/scp work through it transparently via ProxyJump, so `ots host push` would gain an audit trail at the SSH layer with no code changes — just an SSH config update.
 
 The cost is one more Debian instance to manage (could share the VPS already running the container registry). Worth evaluating when the number of custom installs or operators makes "who changed what, when" a question that git history alone can't answer.
+
+### Terminology to incorporate
+
+- Pit of success
+- "Day 0/1/2": The metaphor emerged from network engineering, where "Day 0" described initial device configuration, "Day 1" covered deployment, and "Day 2" meant ongoing network operations. This usage dates back at least to the early 2010s in Cisco and Juniper documentation.
+
+## Framing the whole thing
+
+The system is converging on desired-state configuration management, but with the operator as the reconciliation loop rather than automation. That's a legitimate design choice for a single-operator setup where judgment matters more than speed. The risk is that it stays in the "works perfectly when I remember all the steps" zone without reaching the "the tool prevents me from forgetting steps" zone. The distance between those two zones is roughly: validation before push, health check after push, and rollback when health check fails. Those three additions would turn the tool from "config distribution with audit trail" into "deployment pipeline with safety rails."
+
+---
+
+What questions should we be asking, what decisions do we need to make, and what other information should we gather or consider, to make progress on this vision for a production operations tool/system? What pre-existing tools/ services / patterns / concepts can we use to help us conceive and clarify and solidify our ideas? Is there a missing piece or component that we haven't considered yet?
