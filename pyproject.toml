@@ -13,7 +13,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ots-containers"
-version = "0.3.1"
+version = "0.3.2"
 description = "Service orchestration for OneTimeSecret: Podman Quadlets and systemd service management"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -42,8 +42,8 @@ ots-containers = "ots_containers.cli:app"
 
 [project.urls]
 Homepage = "https://onetimesecret.com"
-Repository = "https://github.com/onetimesecret/ots_containers"
-Issues = "https://github.com/onetimesecret/ots_containers/issues"
+Repository = "https://github.com/onetimesecret/ots-containers"
+Issues = "https://github.com/onetimesecret/ots-containers/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
