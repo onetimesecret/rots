@@ -20,7 +20,7 @@ from typing import Annotated
 import cyclopts
 
 from ots_containers import db
-from ots_containers.config import DEFAULT_IMAGE, Config
+from ots_containers.config import Config
 from ots_containers.podman import podman
 
 from ..common import JsonOutput, Lines, Quiet, Yes
@@ -41,12 +41,12 @@ def pull(
         ),
     ] = None,
     image: Annotated[
-        str,
+        str | None,
         cyclopts.Parameter(
             name=["--image", "-i"],
-            help="Full image path (default: ghcr.io/onetimesecret/onetimesecret)",
+            help="Full image path (default: from IMAGE env var)",
         ),
-    ] = DEFAULT_IMAGE,
+    ] = None,
     set_as_current: Annotated[
         bool,
         cyclopts.Parameter(
@@ -82,7 +82,8 @@ def pull(
     """
     cfg = Config()
 
-    # Resolve tag from env var if not provided
+    # Resolve image and tag from env vars if not provided
+    resolved_image = image or cfg.image
     resolved_tag = tag or cfg.tag
     if not resolved_tag:
         print("Error: --tag is required (or set TAG env var)")
@@ -93,9 +94,9 @@ def pull(
         if not cfg.private_image:
             print("Error: --private requires OTS_REGISTRY env var to be set")
             raise SystemExit(1)
-        image = cfg.private_image
+        resolved_image = cfg.private_image
 
-    full_image = f"{image}:{resolved_tag}"
+    full_image = f"{resolved_image}:{resolved_tag}"
 
     if not quiet:
         print(f"Pulling {full_image}...")
@@ -118,7 +119,7 @@ def pull(
         print(f"Failed to pull {full_image}: {e}")
         db.record_deployment(
             cfg.db_path,
-            image=image,
+            image=resolved_image,
             tag=resolved_tag,
             action="pull",
             success=False,
@@ -129,7 +130,7 @@ def pull(
     # Record successful pull
     db.record_deployment(
         cfg.db_path,
-        image=image,
+        image=resolved_image,
         tag=resolved_tag,
         action="pull",
         success=True,
@@ -137,7 +138,7 @@ def pull(
 
     # Set as current if requested
     if set_as_current:
-        previous = db.set_current(cfg.db_path, image, resolved_tag)
+        previous = db.set_current(cfg.db_path, resolved_image, resolved_tag)
         if not quiet:
             if previous:
                 print(f"Set CURRENT to {resolved_tag} (previous: {previous})")
@@ -299,12 +300,12 @@ def set_current(
         cyclopts.Parameter(help="Tag to set as CURRENT"),
     ],
     image: Annotated[
-        str,
+        str | None,
         cyclopts.Parameter(
             name=["--image", "-i"],
-            help="Full image path",
+            help="Full image path (default: from IMAGE env var)",
         ),
-    ] = DEFAULT_IMAGE,
+    ] = None,
 ):
     """Set the CURRENT image alias.
 
@@ -316,9 +317,10 @@ def set_current(
     """
     cfg = Config()
 
-    previous = db.set_current(cfg.db_path, image, tag)
+    resolved_image = image or cfg.image
+    previous = db.set_current(cfg.db_path, resolved_image, tag)
 
-    print(f"CURRENT set to {image}:{tag}")
+    print(f"CURRENT set to {resolved_image}:{tag}")
     if previous:
         print(f"ROLLBACK set to previous: {previous}")
     else:

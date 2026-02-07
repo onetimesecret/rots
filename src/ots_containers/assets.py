@@ -9,7 +9,7 @@ from .podman import podman
 
 def update(cfg: Config, create_volume: bool = True) -> None:
     if create_volume:
-        podman.volume.create("static_assets", check=False)
+        podman.volume.create("static_assets", capture_output=True, check=False)
 
     try:
         result = podman.volume.mount("static_assets", capture_output=True, text=True, check=True)
@@ -18,7 +18,15 @@ def update(cfg: Config, create_volume: bool = True) -> None:
         raise SystemExit(f"Failed to mount volume 'static_assets': {stderr}")
     assets_dir = Path(result.stdout.strip())
 
-    result = podman.create(cfg.resolved_image_with_tag, capture_output=True, text=True, check=True)
+    try:
+        result = podman.create(
+            cfg.resolved_image_with_tag, capture_output=True, text=True, check=True
+        )
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.strip() if e.stderr else "unknown error"
+        raise SystemExit(
+            f"Failed to create temporary container from '{cfg.resolved_image_with_tag}': {stderr}"
+        )
     container_id = result.stdout.strip()
 
     try:
