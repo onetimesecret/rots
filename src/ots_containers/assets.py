@@ -6,6 +6,8 @@ from pathlib import Path
 from .config import Config
 from .podman import podman
 
+TEMP_CONTAINER_NAME = "ots-asset-sync-tmp"
+
 
 def update(cfg: Config, create_volume: bool = True) -> None:
     if create_volume:
@@ -18,9 +20,17 @@ def update(cfg: Config, create_volume: bool = True) -> None:
         raise SystemExit(f"Failed to mount volume 'static_assets': {stderr}")
     assets_dir = Path(result.stdout.strip())
 
+    # Remove any leftover temp container from a previous interrupted run
+    podman.rm(TEMP_CONTAINER_NAME, capture_output=True, check=False)
+
     try:
         result = podman.create(
-            cfg.resolved_image_with_tag, capture_output=True, text=True, check=True
+            cfg.resolved_image_with_tag,
+            name=TEMP_CONTAINER_NAME,
+            image_volume="ignore",
+            capture_output=True,
+            text=True,
+            check=True,
         )
     except subprocess.CalledProcessError as e:
         stderr = e.stderr.strip() if e.stderr else "unknown error"

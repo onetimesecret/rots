@@ -1,12 +1,18 @@
 # tests/test_assets.py
-"""Tests for assets module - exposing the volume.mount bug."""
+"""Tests for assets module."""
 
 import subprocess
 
 import pytest
 
 from ots_containers import assets
+from ots_containers.assets import TEMP_CONTAINER_NAME
 from ots_containers.config import Config
+
+
+def _ok(args, **extra):
+    """Helper to create a successful CompletedProcess."""
+    return subprocess.CompletedProcess(args=args, returncode=0, **extra)
 
 
 class TestAssetsUpdate:
@@ -15,21 +21,17 @@ class TestAssetsUpdate:
     def test_update_raises_user_friendly_error_on_volume_mount_failure(self, mocker):
         """Volume mount failure should raise SystemExit with helpful message.
 
-        Currently broken: raises raw CalledProcessError with traceback.
-        Expected: raises SystemExit with user-friendly error message.
-
         Reproduces:
             $ ots-containers assets sync
             # Should show: "Failed to mount volume 'static_assets': <reason>"
-            # Instead shows: raw Python traceback
+            # Not a raw Python traceback
         """
         mock_run = mocker.patch("subprocess.run")
 
         mock_run.side_effect = [
-            subprocess.CompletedProcess(
-                args=["podman", "volume", "create", "static_assets"],
-                returncode=0,
-            ),
+            # volume.create succeeds
+            _ok(["podman", "volume", "create", "static_assets"]),
+            # volume.mount fails
             subprocess.CalledProcessError(
                 returncode=1,
                 cmd=["podman", "volume", "mount", "static_assets"],
@@ -39,7 +41,6 @@ class TestAssetsUpdate:
         ]
 
         cfg = mocker.MagicMock(spec=Config)
-        cfg.image_with_tag = "ghcr.io/onetimesecret/onetimesecret:current"
 
         with pytest.raises(SystemExit) as exc_info:
             assets.update(cfg, create_volume=True)
@@ -54,80 +55,55 @@ class TestAssetsUpdate:
 
         mock_run.side_effect = [
             # volume.create succeeds
-            subprocess.CompletedProcess(
-                args=["podman", "volume", "create", "static_assets"],
-                returncode=0,
-            ),
+            _ok(["podman", "volume", "create", "static_assets"]),
             # volume.mount returns empty path
-            subprocess.CompletedProcess(
-                args=["podman", "volume", "mount", "static_assets"],
-                returncode=0,
-                stdout="",
-            ),
+            _ok(["podman", "volume", "mount", "static_assets"], stdout=""),
+            # pre-cleanup rm (no leftover container)
+            _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
             # podman.create succeeds
-            subprocess.CompletedProcess(
-                args=["podman", "create", "image:tag"],
-                returncode=0,
-                stdout="abc123\n",
-            ),
+            _ok(["podman", "create", "image:tag"], stdout="abc123\n"),
             # podman.cp succeeds
-            subprocess.CompletedProcess(
-                args=["podman", "cp", "abc123:/app/public/.", "/"],
-                returncode=0,
-            ),
+            _ok(["podman", "cp", "abc123:/app/public/.", "."]),
             # podman.rm succeeds
-            subprocess.CompletedProcess(
-                args=["podman", "rm", "abc123"],
-                returncode=0,
-            ),
+            _ok(["podman", "rm", "abc123"]),
         ]
 
         cfg = mocker.MagicMock(spec=Config)
-        cfg.image_with_tag = "ghcr.io/onetimesecret/onetimesecret:current"
 
-        # This will use empty path "/" which is dangerous
         assets.update(cfg, create_volume=True)
 
-        # Verify podman.cp was called with empty/current dir path (dangerous!)
-        cp_call = mock_run.call_args_list[3]
-        # When stdout is empty, Path("").strip() becomes "." (current dir)
-        assert cp_call[0][0][3] == "."  # Empty path becomes current dir
+        # Verify podman.create was called with --name and --image-volume flags
+        create_call = mock_run.call_args_list[3]
+        cmd = create_call[0][0]
+        assert "--name" in cmd
+        assert TEMP_CONTAINER_NAME in cmd
+        assert "--image-volume" in cmd
+        assert "ignore" in cmd
 
     def test_update_without_create_volume(self, mocker, tmp_path):
         """Test update skips volume creation when create_volume=False."""
         mock_run = mocker.patch("subprocess.run")
 
-        # Use tmp_path to avoid permission issues on real filesystem
         fake_volume_path = tmp_path / "volume_data"
         fake_volume_path.mkdir()
 
         mock_run.side_effect = [
             # volume.mount succeeds (no volume.create call)
-            subprocess.CompletedProcess(
-                args=["podman", "volume", "mount", "static_assets"],
-                returncode=0,
+            _ok(
+                ["podman", "volume", "mount", "static_assets"],
                 stdout=f"{fake_volume_path}\n",
             ),
+            # pre-cleanup rm
+            _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
             # podman.create succeeds
-            subprocess.CompletedProcess(
-                args=["podman", "create", "image:tag"],
-                returncode=0,
-                stdout="abc123\n",
-            ),
+            _ok(["podman", "create", "image:tag"], stdout="abc123\n"),
             # podman.cp succeeds
-            subprocess.CompletedProcess(
-                args=["podman", "cp", "abc123:/app/public/.", "..."],
-                returncode=0,
-            ),
+            _ok(["podman", "cp", "abc123:/app/public/.", str(fake_volume_path)]),
             # podman.rm succeeds
-            subprocess.CompletedProcess(
-                args=["podman", "rm", "abc123"],
-                returncode=0,
-            ),
+            _ok(["podman", "rm", "abc123"]),
         ]
 
         cfg = mocker.MagicMock(spec=Config)
-        cfg.image_with_tag = "ghcr.io/onetimesecret/onetimesecret:current"
 
         assets.update(cfg, create_volume=False)
 
@@ -140,23 +116,19 @@ class TestAssetsUpdate:
         """Test container is removed even when cp fails."""
         mock_run = mocker.patch("subprocess.run")
 
-        # Use tmp_path to avoid permission issues on real filesystem
         fake_volume_path = tmp_path / "volume_data"
         fake_volume_path.mkdir()
 
         mock_run.side_effect = [
             # volume.mount succeeds
-            subprocess.CompletedProcess(
-                args=["podman", "volume", "mount", "static_assets"],
-                returncode=0,
+            _ok(
+                ["podman", "volume", "mount", "static_assets"],
                 stdout=f"{fake_volume_path}\n",
             ),
+            # pre-cleanup rm
+            _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
             # podman.create succeeds
-            subprocess.CompletedProcess(
-                args=["podman", "create", "image:tag"],
-                returncode=0,
-                stdout="container123\n",
-            ),
+            _ok(["podman", "create", "image:tag"], stdout="container123\n"),
             # podman.cp fails
             subprocess.CalledProcessError(
                 returncode=125,
@@ -164,19 +136,140 @@ class TestAssetsUpdate:
                 stderr="Error: no such container",
             ),
             # podman.rm should still be called (cleanup)
-            subprocess.CompletedProcess(
-                args=["podman", "rm", "container123"],
-                returncode=0,
-            ),
+            _ok(["podman", "rm", "container123"]),
         ]
 
         cfg = mocker.MagicMock(spec=Config)
-        cfg.image_with_tag = "ghcr.io/onetimesecret/onetimesecret:current"
 
         with pytest.raises(subprocess.CalledProcessError):
             assets.update(cfg, create_volume=False)
 
         # Verify rm was called for cleanup despite cp failure
-        rm_call = mock_run.call_args_list[3]
+        rm_call = mock_run.call_args_list[4]
         assert "rm" in rm_call[0][0]
         assert "container123" in rm_call[0][0]
+
+    def test_update_idempotent_when_volume_exists(self, mocker, tmp_path):
+        """Deploy succeeds even when static_assets volume already exists.
+
+        Reproduces the original bug: podman create fails with
+        "volume with name static_assets already exists" when the image
+        has a VOLUME directive and the named volume already exists.
+
+        The fix uses --image-volume=ignore to prevent podman from
+        auto-creating volumes for image VOLUME directives.
+        """
+        mock_run = mocker.patch("subprocess.run")
+
+        fake_volume_path = tmp_path / "volume_data"
+        fake_volume_path.mkdir()
+        # Create manifest so we exercise the success path
+        manifest_dir = fake_volume_path / "web" / "dist" / ".vite"
+        manifest_dir.mkdir(parents=True)
+        (manifest_dir / "manifest.json").write_text("{}")
+
+        mock_run.side_effect = [
+            # volume.create tolerates existing volume (check=False)
+            _ok(["podman", "volume", "create", "static_assets"]),
+            # volume.mount succeeds (volume already exists)
+            _ok(
+                ["podman", "volume", "mount", "static_assets"],
+                stdout=f"{fake_volume_path}\n",
+            ),
+            # pre-cleanup rm (no leftover container)
+            _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
+            # podman.create succeeds with --image-volume=ignore
+            _ok(
+                [
+                    "podman",
+                    "create",
+                    "--name",
+                    TEMP_CONTAINER_NAME,
+                    "--image-volume",
+                    "ignore",
+                    "image:v1",
+                ],
+                stdout="abc123\n",
+            ),
+            # podman.cp succeeds
+            _ok(["podman", "cp", "abc123:/app/public/.", str(fake_volume_path)]),
+            # podman.rm succeeds
+            _ok(["podman", "rm", "abc123"]),
+        ]
+
+        cfg = mocker.MagicMock(spec=Config)
+
+        # Should not raise — this is the idempotent re-deploy scenario
+        assets.update(cfg, create_volume=True)
+
+        # Verify the create call includes --image-volume ignore
+        create_call = mock_run.call_args_list[3]
+        cmd = create_call[0][0]
+        assert "--image-volume" in cmd
+        assert "ignore" in cmd
+        assert "--name" in cmd
+
+    def test_update_pre_cleans_leftover_temp_container(self, mocker, tmp_path):
+        """Pre-cleanup removes leftover container from interrupted previous run."""
+        mock_run = mocker.patch("subprocess.run")
+
+        fake_volume_path = tmp_path / "volume_data"
+        fake_volume_path.mkdir()
+
+        mock_run.side_effect = [
+            # volume.mount succeeds
+            _ok(
+                ["podman", "volume", "mount", "static_assets"],
+                stdout=f"{fake_volume_path}\n",
+            ),
+            # pre-cleanup rm succeeds (leftover container existed)
+            _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
+            # podman.create succeeds
+            _ok(["podman", "create", "image:tag"], stdout="newcontainer\n"),
+            # podman.cp succeeds
+            _ok(["podman", "cp", "newcontainer:/app/public/.", str(fake_volume_path)]),
+            # podman.rm succeeds
+            _ok(["podman", "rm", "newcontainer"]),
+        ]
+
+        cfg = mocker.MagicMock(spec=Config)
+
+        assets.update(cfg, create_volume=False)
+
+        # Second call (index 1) should be the pre-cleanup rm
+        pre_cleanup = mock_run.call_args_list[1]
+        cmd = pre_cleanup[0][0]
+        assert "rm" in cmd
+        assert TEMP_CONTAINER_NAME in cmd
+
+    def test_update_create_failure_shows_friendly_error(self, mocker, tmp_path):
+        """Container create failure should raise SystemExit with helpful message."""
+        mock_run = mocker.patch("subprocess.run")
+
+        fake_volume_path = tmp_path / "volume_data"
+        fake_volume_path.mkdir()
+
+        mock_run.side_effect = [
+            # volume.mount succeeds
+            _ok(
+                ["podman", "volume", "mount", "static_assets"],
+                stdout=f"{fake_volume_path}\n",
+            ),
+            # pre-cleanup rm
+            _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
+            # podman.create fails
+            subprocess.CalledProcessError(
+                returncode=125,
+                cmd=["podman", "create"],
+                stderr="Error: image not found",
+            ),
+        ]
+
+        cfg = mocker.MagicMock(spec=Config)
+        cfg.resolved_image_with_tag = "ghcr.io/onetimesecret/onetimesecret:v0.23.3"
+
+        with pytest.raises(SystemExit) as exc_info:
+            assets.update(cfg, create_volume=False)
+
+        error_msg = str(exc_info.value)
+        assert "temporary container" in error_msg.lower() or "failed" in error_msg.lower()
