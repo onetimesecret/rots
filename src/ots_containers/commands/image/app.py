@@ -750,13 +750,17 @@ def rm(
             print("Aborted")
             return
 
+    cfg = Config()
+
     for tag in tags:
-        # Try common image patterns
+        # Try common image patterns, including configured image
         images_to_try = [
             f"onetimesecret:{tag}",
-            f"ghcr.io/onetimesecret/onetimesecret:{tag}",
+            f"{cfg.image}:{tag}",
             f"localhost/onetimesecret:{tag}",
         ]
+        if cfg.private_image:
+            images_to_try.append(f"{cfg.private_image}:{tag}")
 
         removed = False
         for image in images_to_try:
