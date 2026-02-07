@@ -2,6 +2,15 @@
 
 """Cloud-init configuration templates with Debian 13 DEB822 apt sources."""
 
+DEFAULT_CADDY_VERSION = "v2.10.2"
+
+DEFAULT_CADDY_PLUGINS = [
+    "github.com/mholt/caddy-l4",
+    "github.com/caddy-dns/hetzner",
+    "github.com/caddy-dns/cloudflare",
+    "github.com/digilolnet/caddy-bunny-ip",
+]
+
 
 def get_debian13_sources_list() -> str:
     """Get just the Debian 13 DEB822 sources.list content.
@@ -33,16 +42,22 @@ def generate_cloudinit_config(
     *,
     include_postgresql: bool = False,
     include_valkey: bool = False,
+    include_xcaddy: bool = False,
     postgresql_gpg_key: str | None = None,
     valkey_gpg_key: str | None = None,
+    caddy_version: str = DEFAULT_CADDY_VERSION,
+    caddy_plugins: list[str] | None = None,
 ) -> str:
     """Generate cloud-init YAML with Debian 13 DEB822-style apt sources.
 
     Args:
         include_postgresql: Include PostgreSQL official repository
         include_valkey: Include Valkey repository
+        include_xcaddy: Include xcaddy repo and build custom Caddy binary
         postgresql_gpg_key: PostgreSQL GPG public key content
         valkey_gpg_key: Valkey GPG public key content
+        caddy_version: Caddy version to build (default: v2.10.2)
+        caddy_plugins: Caddy plugins to include (default: OTS web profile)
 
     Returns:
         Complete cloud-init YAML configuration as string
@@ -124,5 +139,38 @@ def generate_cloudinit_config(
 
     if include_valkey:
         config_parts.append("  - valkey")
+
+    if include_xcaddy:
+        config_parts.extend(
+            [
+                "  - debian-keyring",
+                "  - debian-archive-keyring",
+                "  - apt-transport-https",
+            ]
+        )
+
+    # Add runcmd section for xcaddy repo setup and build
+    if include_xcaddy:
+        plugins = caddy_plugins if caddy_plugins is not None else DEFAULT_CADDY_PLUGINS
+        build_args = " ".join(f"--with {p}" for p in plugins)
+
+        config_parts.extend(
+            [
+                "",
+                "runcmd:",
+                "  # xcaddy: add Cloudsmith apt repository",
+                "  - >-",
+                "    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/gpg.key'",
+                "    | gpg --dearmor -o /usr/share/keyrings/caddy-xcaddy-archive-keyring.gpg",
+                "  - >-",
+                "    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/debian.deb.txt'",
+                "    | tee /etc/apt/sources.list.d/caddy-xcaddy.list",
+                "  - apt-get update",
+                "  - apt-get install -y xcaddy",
+                "  # Build custom Caddy binary with plugins",
+                f"  - CADDY_VERSION={caddy_version} xcaddy build {build_args}",
+                "  - install -m 0755 ./caddy /usr/local/bin/caddy",
+            ]
+        )
 
     return "\n".join(config_parts) + "\n"

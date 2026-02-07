@@ -98,6 +98,35 @@ class TestCloudInitGenerate:
         assert "postgresql-key" in captured.err.lower()
         assert "placeholder" in captured.err.lower()
 
+    def test_generate_with_xcaddy(self, capsys):
+        """Generate with xcaddy should include runcmd section."""
+        with pytest.raises(SystemExit) as exc_info:
+            app(["generate", "--include-xcaddy"])
+
+        assert exc_info.value.code == 0
+
+        captured = capsys.readouterr()
+        output = captured.out
+
+        data = yaml.safe_load(output)
+        assert "runcmd" in data
+        assert "debian-keyring" in data["packages"]
+        # Build command should contain xcaddy
+        build_cmds = [cmd for cmd in data["runcmd"] if "xcaddy build" in cmd]
+        assert len(build_cmds) == 1
+
+    def test_generate_with_xcaddy_custom_version(self, capsys):
+        """Generate with xcaddy and custom version."""
+        with pytest.raises(SystemExit) as exc_info:
+            app(["generate", "--include-xcaddy", "--caddy-version", "v2.9.0"])
+
+        assert exc_info.value.code == 0
+
+        captured = capsys.readouterr()
+        data = yaml.safe_load(captured.out)
+        build_cmd = [cmd for cmd in data["runcmd"] if "xcaddy build" in cmd][0]
+        assert "CADDY_VERSION=v2.9.0" in build_cmd
+
 
 class TestCloudInitValidate:
     """Tests for cloudinit validate command."""

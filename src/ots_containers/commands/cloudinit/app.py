@@ -11,7 +11,7 @@ from typing import Annotated
 
 import cyclopts
 
-from .templates import generate_cloudinit_config
+from .templates import DEFAULT_CADDY_VERSION, generate_cloudinit_config
 
 app = cyclopts.App(
     name="cloudinit",
@@ -42,6 +42,17 @@ def generate(
     include_valkey: Annotated[
         bool, cyclopts.Parameter(help="Include Valkey apt repository")
     ] = False,
+    include_xcaddy: Annotated[
+        bool, cyclopts.Parameter(help="Include xcaddy repo and build custom Caddy (web profile)")
+    ] = False,
+    caddy_version: Annotated[
+        str,
+        cyclopts.Parameter(help="Caddy version to build with xcaddy"),
+    ] = DEFAULT_CADDY_VERSION,
+    caddy_plugins: Annotated[
+        list[str] | None,
+        cyclopts.Parameter(help="Caddy plugins to include (repeatable)"),
+    ] = None,
     postgresql_key: Annotated[
         str | None,
         cyclopts.Parameter(help="Path to PostgreSQL GPG key file"),
@@ -57,12 +68,15 @@ def generate(
     - Debian 13 (Trixie) main repositories in DEB822 format
     - Optional PostgreSQL official repository
     - Optional Valkey repository
+    - Optional xcaddy repo and custom Caddy build (web profile)
     - Package update/upgrade configuration
 
     Example:
         ots-containers cloudinit generate > user-data.yaml
         ots-containers cloudinit generate --output /tmp/cloud-init.yaml
         ots-containers cloudinit generate --include-postgresql --postgresql-key /path/to/pgp.asc
+        ots-containers cloudinit generate --include-xcaddy
+        ots-containers cloudinit generate --include-xcaddy --caddy-version v2.10.2
     """
     # Read GPG keys if provided
     postgresql_gpg = None
@@ -93,8 +107,11 @@ def generate(
     config = generate_cloudinit_config(
         include_postgresql=include_postgresql,
         include_valkey=include_valkey,
+        include_xcaddy=include_xcaddy,
         postgresql_gpg_key=postgresql_gpg,
         valkey_gpg_key=valkey_gpg,
+        caddy_version=caddy_version,
+        caddy_plugins=caddy_plugins,
     )
 
     # Output

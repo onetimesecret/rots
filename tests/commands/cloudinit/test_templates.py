@@ -4,6 +4,8 @@
 import yaml
 
 from ots_containers.commands.cloudinit.templates import (
+    DEFAULT_CADDY_PLUGINS,
+    DEFAULT_CADDY_VERSION,
     generate_cloudinit_config,
     get_debian13_sources_list,
 )
@@ -159,3 +161,95 @@ class TestGetDebian13SourcesList:
         sources = get_debian13_sources_list()
         # Should have blank lines between source blocks
         assert "\n\nTypes: deb" in sources
+
+
+class TestXcaddyCloudInit:
+    """Tests for xcaddy cloud-init template generation."""
+
+    def test_xcaddy_adds_prereq_packages(self):
+        """xcaddy should add keyring and transport packages."""
+        config = generate_cloudinit_config(include_xcaddy=True)
+        data = yaml.safe_load(config)
+
+        packages = data["packages"]
+        assert "debian-keyring" in packages
+        assert "debian-archive-keyring" in packages
+        assert "apt-transport-https" in packages
+
+    def test_xcaddy_adds_runcmd_section(self):
+        """xcaddy should add runcmd with repo setup and build."""
+        config = generate_cloudinit_config(include_xcaddy=True)
+        data = yaml.safe_load(config)
+
+        assert "runcmd" in data
+        runcmd = data["runcmd"]
+
+        # Should have GPG key download, repo file, apt-get update, install, build, install binary
+        assert len(runcmd) == 6
+
+        # GPG key import
+        assert "gpg.key" in runcmd[0]
+        assert "caddy-xcaddy-archive-keyring.gpg" in runcmd[0]
+
+        # Repo file
+        assert "debian.deb.txt" in runcmd[1]
+        assert "caddy-xcaddy.list" in runcmd[1]
+
+        # apt-get update and install
+        assert runcmd[2] == "apt-get update"
+        assert runcmd[3] == "apt-get install -y xcaddy"
+
+        # Build with default plugins
+        assert "xcaddy build" in runcmd[4]
+        for plugin in DEFAULT_CADDY_PLUGINS:
+            assert f"--with {plugin}" in runcmd[4]
+
+        # Install binary
+        assert "install -m 0755" in runcmd[5]
+        assert "/usr/local/bin/caddy" in runcmd[5]
+
+    def test_xcaddy_uses_default_caddy_version(self):
+        """xcaddy build should use DEFAULT_CADDY_VERSION."""
+        config = generate_cloudinit_config(include_xcaddy=True)
+        data = yaml.safe_load(config)
+
+        build_cmd = data["runcmd"][4]
+        assert f"CADDY_VERSION={DEFAULT_CADDY_VERSION}" in build_cmd
+
+    def test_xcaddy_custom_caddy_version(self):
+        """xcaddy build should respect custom caddy version."""
+        config = generate_cloudinit_config(include_xcaddy=True, caddy_version="v2.9.0")
+        data = yaml.safe_load(config)
+
+        build_cmd = data["runcmd"][4]
+        assert "CADDY_VERSION=v2.9.0" in build_cmd
+
+    def test_xcaddy_custom_plugins(self):
+        """xcaddy build should use custom plugin list when provided."""
+        plugins = ["github.com/caddy-dns/cloudflare"]
+        config = generate_cloudinit_config(include_xcaddy=True, caddy_plugins=plugins)
+        data = yaml.safe_load(config)
+
+        build_cmd = data["runcmd"][4]
+        assert "--with github.com/caddy-dns/cloudflare" in build_cmd
+        # Default plugins should not be present
+        assert "caddy-l4" not in build_cmd
+
+    def test_no_xcaddy_means_no_runcmd(self):
+        """Without xcaddy, there should be no runcmd section."""
+        config = generate_cloudinit_config()
+        data = yaml.safe_load(config)
+
+        assert "runcmd" not in data
+
+    def test_xcaddy_valid_yaml(self):
+        """Config with xcaddy should produce valid YAML."""
+        config = generate_cloudinit_config(
+            include_xcaddy=True,
+            include_postgresql=True,
+            include_valkey=True,
+        )
+        data = yaml.safe_load(config)
+        assert isinstance(data, dict)
+        assert "runcmd" in data
+        assert "apt" in data
