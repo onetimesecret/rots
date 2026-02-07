@@ -281,6 +281,10 @@ class TestPullEnvVarResolution:
         )
         mock_record = mocker.patch("ots_containers.commands.image.app.db.record_deployment")
         mock_set_current = mocker.patch("ots_containers.commands.image.app.db.set_current")
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=None,
+        )
 
         # Point db_path to tmp_path so the real filesystem is never consulted
         mocker.patch(
@@ -389,15 +393,24 @@ class TestSetCurrentEnvVarResolution:
         monkeypatch.delenv("TAG", raising=False)
 
     def _mock_externals(self, mocker, tmp_path):
-        """Mock db calls and db_path, return the set_current mock."""
+        """Mock db calls, db_path, and podman subprocess. Return set_current mock."""
         mock_set_current = mocker.patch(
             "ots_containers.commands.image.app.db.set_current",
+            return_value=None,
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
             return_value=None,
         )
         mocker.patch(
             "ots_containers.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
+        )
+        # Mock podman subprocess for image inspect and tag calls
+        mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout="", returncode=0),
         )
         return mock_set_current
 
@@ -432,6 +445,359 @@ class TestSetCurrentEnvVarResolution:
         assert call_args[0][1] == "cli-override/myapp"
         assert "env-var-image" not in call_args[0][1]
         assert call_args[0][2] == "v3.0.0"
+
+
+class TestSetCurrentPodmanTag:
+    """Test that set-current tags images in the podman store.
+
+    Verifies the podman tag calls that mirror alias state in the local
+    image store, so operators can use raw podman commands if needed.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        """Remove IMAGE and TAG env vars so tests start clean."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+
+    def _mock_externals(self, mocker, tmp_path, current_image=None):
+        """Mock db calls, db_path, and podman subprocess.
+
+        Args:
+            current_image: Tuple of (image, tag) to return from
+                get_current_image, or None for no previous CURRENT.
+
+        Returns the subprocess.run mock for asserting podman commands.
+        """
+        mocker.patch(
+            "ots_containers.commands.image.app.db.set_current",
+            return_value=current_image[1] if current_image else None,
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=current_image,
+        )
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mock_run = mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout="", returncode=0),
+        )
+        return mock_run
+
+    def test_set_current_tags_image_as_current(self, mocker, tmp_path, capsys):
+        """set-current should tag the image as :current in podman."""
+        from ots_containers.commands.image.app import set_current
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        set_current(tag="v0.23.3")
+
+        # First call: podman image inspect (verify exists)
+        # Second call: podman tag ... :current
+        calls = mock_run.call_args_list
+        assert len(calls) == 2
+
+        inspect_cmd = calls[0][0][0]
+        assert "image" in inspect_cmd and "inspect" in inspect_cmd
+
+        tag_cmd = calls[1][0][0]
+        assert "tag" in tag_cmd
+        tag_cmd_str = " ".join(tag_cmd)
+        assert "onetimesecret:v0.23.3" in tag_cmd_str
+        assert "onetimesecret:current" in tag_cmd_str
+
+    def test_set_current_tags_previous_as_rollback(self, mocker, tmp_path, capsys):
+        """set-current should tag the previous CURRENT as :rollback."""
+        from ots_containers.commands.image.app import set_current
+
+        prev = ("ghcr.io/onetimesecret/onetimesecret", "v0.22.0")
+        mock_run = self._mock_externals(mocker, tmp_path, current_image=prev)
+
+        set_current(tag="v0.23.3")
+
+        # Calls: inspect, tag :current, tag :rollback
+        calls = mock_run.call_args_list
+        assert len(calls) == 3
+
+        rollback_tag_cmd = " ".join(calls[2][0][0])
+        assert "onetimesecret:v0.22.0" in rollback_tag_cmd
+        assert "onetimesecret:rollback" in rollback_tag_cmd
+
+        captured = capsys.readouterr()
+        assert "ROLLBACK set to previous: v0.22.0" in captured.out
+
+    def test_set_current_fails_if_image_not_local(self, mocker, tmp_path, capsys):
+        """set-current should exit with error if image not found locally."""
+        import subprocess
+
+        from ots_containers.commands.image.app import set_current
+
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=None,
+        )
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        # Make podman image inspect fail (image not found)
+        mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            side_effect=subprocess.CalledProcessError(125, "podman"),
+        )
+        mock_set_current = mocker.patch(
+            "ots_containers.commands.image.app.db.set_current",
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            set_current(tag="v99.0.0")
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "Image not found locally" in captured.out
+        assert "ots image pull --tag v99.0.0" in captured.out
+        # DB should NOT have been updated
+        mock_set_current.assert_not_called()
+
+    def test_set_current_fails_if_podman_tag_fails(self, mocker, tmp_path, capsys):
+        """set-current should exit if podman tag fails (DB unchanged)."""
+        import subprocess
+
+        from ots_containers.commands.image.app import set_current
+
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=None,
+        )
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mock_set_current = mocker.patch(
+            "ots_containers.commands.image.app.db.set_current",
+        )
+
+        call_count = 0
+
+        def inspect_succeeds_tag_fails(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # podman image inspect succeeds
+                return mocker.MagicMock(stdout="", returncode=0)
+            # podman tag fails
+            raise subprocess.CalledProcessError(125, "podman")
+
+        mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            side_effect=inspect_succeeds_tag_fails,
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            set_current(tag="v0.23.3")
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "Failed to tag image in podman" in captured.out
+        mock_set_current.assert_not_called()
+
+
+class TestRollbackPodmanTag:
+    """Test that rollback updates podman tags."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        """Remove IMAGE and TAG env vars so tests start clean."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+
+    def test_rollback_tags_in_podman(self, mocker, tmp_path, capsys):
+        """rollback should tag the new current and old current in podman."""
+        from ots_containers.commands.image.app import rollback
+
+        image = "ghcr.io/onetimesecret/onetimesecret"
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=(image, "v0.23.3"),
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_previous_tags",
+            return_value=[
+                (image, "v0.23.3", "2025-01-01"),
+                (image, "v0.22.0", "2024-12-01"),
+            ],
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.rollback",
+            return_value=(image, "v0.22.0"),
+        )
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mock_run = mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout="", returncode=0),
+        )
+
+        rollback()
+
+        calls = mock_run.call_args_list
+        assert len(calls) == 2
+
+        # First: tag new current
+        current_tag_cmd = " ".join(calls[0][0][0])
+        assert "onetimesecret:v0.22.0" in current_tag_cmd
+        assert "onetimesecret:current" in current_tag_cmd
+
+        # Second: tag old current as rollback
+        rollback_tag_cmd = " ".join(calls[1][0][0])
+        assert "onetimesecret:v0.23.3" in rollback_tag_cmd
+        assert "onetimesecret:rollback" in rollback_tag_cmd
+
+        captured = capsys.readouterr()
+        assert "Rollback complete" in captured.out
+
+    def test_rollback_warns_on_podman_tag_failure(self, mocker, tmp_path, capsys):
+        """rollback should warn but not abort if podman tag fails."""
+        from ots_containers.commands.image.app import rollback
+
+        image = "ghcr.io/onetimesecret/onetimesecret"
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=(image, "v0.23.3"),
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_previous_tags",
+            return_value=[
+                (image, "v0.23.3", "2025-01-01"),
+                (image, "v0.22.0", "2024-12-01"),
+            ],
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.rollback",
+            return_value=(image, "v0.22.0"),
+        )
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            side_effect=Exception("podman tag failed"),
+        )
+
+        # Should NOT raise — rollback continues despite tag failure
+        rollback()
+
+        captured = capsys.readouterr()
+        assert "Warning: podman tag failed" in captured.out
+        assert "Rollback complete" in captured.out
+
+
+class TestPullCurrentPodmanTag:
+    """Test that pull --current tags the image in podman."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        """Remove IMAGE and TAG env vars so tests start clean."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+
+    def test_pull_current_tags_in_podman(self, mocker, monkeypatch, tmp_path, capsys):
+        """pull --current should tag the pulled image as :current."""
+        from ots_containers.commands.image.app import pull
+
+        monkeypatch.setenv("TAG", "v0.23.3")
+
+        mock_run = mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout="", returncode=0),
+        )
+        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch(
+            "ots_containers.commands.image.app.db.set_current",
+            return_value=None,
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=None,
+        )
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        pull(set_as_current=True)
+
+        # Calls: podman pull, podman tag :current
+        calls = mock_run.call_args_list
+        assert len(calls) == 2
+
+        pull_cmd = " ".join(calls[0][0][0])
+        assert "pull" in pull_cmd
+
+        tag_cmd = " ".join(calls[1][0][0])
+        assert "tag" in tag_cmd
+        assert "onetimesecret:v0.23.3" in tag_cmd
+        assert "onetimesecret:current" in tag_cmd
+
+        captured = capsys.readouterr()
+        assert "Set CURRENT to v0.23.3" in captured.out
+
+    def test_pull_current_with_previous_tags_rollback(
+        self,
+        mocker,
+        monkeypatch,
+        tmp_path,
+        capsys,
+    ):
+        """pull --current with existing CURRENT should also tag :rollback."""
+        from ots_containers.commands.image.app import pull
+
+        monkeypatch.setenv("TAG", "v0.23.3")
+        image = "ghcr.io/onetimesecret/onetimesecret"
+
+        mock_run = mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout="", returncode=0),
+        )
+        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch(
+            "ots_containers.commands.image.app.db.set_current",
+            return_value="v0.22.0",
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=(image, "v0.22.0"),
+        )
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        pull(set_as_current=True)
+
+        # Calls: podman pull, podman tag :current, podman tag :rollback
+        calls = mock_run.call_args_list
+        assert len(calls) == 3
+
+        current_tag_cmd = " ".join(calls[1][0][0])
+        assert "onetimesecret:current" in current_tag_cmd
+
+        rollback_tag_cmd = " ".join(calls[2][0][0])
+        assert "onetimesecret:v0.22.0" in rollback_tag_cmd
+        assert "onetimesecret:rollback" in rollback_tag_cmd
 
 
 class TestPullPrivateRegistry:

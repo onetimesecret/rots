@@ -138,6 +138,29 @@ def pull(
 
     # Set as current if requested
     if set_as_current:
+        # Tag in podman before updating the database
+        source_ref = f"{resolved_image}:{resolved_tag}"
+        current_alias = db.get_current_image(cfg.db_path)
+        try:
+            podman.tag(
+                source_ref,
+                f"{resolved_image}:current",
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            if current_alias:
+                prev_image, prev_tag = current_alias
+                podman.tag(
+                    f"{prev_image}:{prev_tag}",
+                    f"{prev_image}:rollback",
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+        except Exception as e:
+            print(f"Warning: podman tag failed ({e}), aliases updated in DB only")
+
         previous = db.set_current(cfg.db_path, resolved_image, resolved_tag)
         if not quiet:
             if previous:
@@ -310,6 +333,8 @@ def set_current(
     """Set the CURRENT image alias.
 
     The previous CURRENT becomes ROLLBACK automatically.
+    Tags the image in the local podman store before updating the database,
+    so the podman image store always reflects the alias state.
 
     Examples:
         ots image set-current v0.23.0
@@ -318,6 +343,40 @@ def set_current(
     cfg = Config()
 
     resolved_image = image or cfg.image
+    source_ref = f"{resolved_image}:{tag}"
+
+    # Verify the source image exists locally before proceeding
+    try:
+        podman.image.inspect(source_ref, check=True, capture_output=True, text=True)
+    except Exception:
+        print(f"Image not found locally: {source_ref}")
+        print(f"Pull it first: ots image pull --tag {tag}")
+        raise SystemExit(1)
+
+    # Tag in podman before updating the database. If podman tag fails,
+    # the database remains unchanged.
+    current_alias = db.get_current_image(cfg.db_path)
+    try:
+        podman.tag(
+            source_ref,
+            f"{resolved_image}:current",
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if current_alias:
+            prev_image, prev_tag = current_alias
+            podman.tag(
+                f"{prev_image}:{prev_tag}",
+                f"{prev_image}:rollback",
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+    except Exception as e:
+        print(f"Failed to tag image in podman: {e}")
+        raise SystemExit(1)
+
     previous = db.set_current(cfg.db_path, resolved_image, tag)
 
     print(f"CURRENT set to {resolved_image}:{tag}")
@@ -363,6 +422,24 @@ def rollback():
     result = db.rollback(cfg.db_path)
     if result:
         image, tag = result
+        # Update podman tags to reflect the new alias state
+        try:
+            podman.tag(
+                f"{image}:{tag}",
+                f"{image}:current",
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            podman.tag(
+                f"{current[0]}:{current[1]}",
+                f"{current[0]}:rollback",
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except Exception as e:
+            print(f"Warning: podman tag failed ({e}), aliases updated in DB only")
         print("\nRollback complete!")
         print(f"  CURRENT: {image}:{tag}")
         print(f"  ROLLBACK: {current[0]}:{current[1]}")
