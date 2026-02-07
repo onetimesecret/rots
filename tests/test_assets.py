@@ -58,6 +58,8 @@ class TestAssetsUpdate:
             _ok(["podman", "volume", "create", "static_assets"]),
             # volume.mount returns empty path
             _ok(["podman", "volume", "mount", "static_assets"], stdout=""),
+            # image.exists succeeds
+            _ok(["podman", "image", "exists"]),
             # pre-cleanup rm (no leftover container)
             _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
             # podman.create succeeds
@@ -73,7 +75,7 @@ class TestAssetsUpdate:
         assets.update(cfg, create_volume=True)
 
         # Verify podman.create was called with --name and --image-volume flags
-        create_call = mock_run.call_args_list[3]
+        create_call = mock_run.call_args_list[4]
         cmd = create_call[0][0]
         assert "--name" in cmd
         assert TEMP_CONTAINER_NAME in cmd
@@ -93,6 +95,8 @@ class TestAssetsUpdate:
                 ["podman", "volume", "mount", "static_assets"],
                 stdout=f"{fake_volume_path}\n",
             ),
+            # image.exists succeeds
+            _ok(["podman", "image", "exists"]),
             # pre-cleanup rm
             _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
             # podman.create succeeds
@@ -125,6 +129,8 @@ class TestAssetsUpdate:
                 ["podman", "volume", "mount", "static_assets"],
                 stdout=f"{fake_volume_path}\n",
             ),
+            # image.exists succeeds
+            _ok(["podman", "image", "exists"]),
             # pre-cleanup rm
             _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
             # podman.create succeeds
@@ -145,7 +151,7 @@ class TestAssetsUpdate:
             assets.update(cfg, create_volume=False)
 
         # Verify rm was called for cleanup despite cp failure
-        rm_call = mock_run.call_args_list[4]
+        rm_call = mock_run.call_args_list[5]
         assert "rm" in rm_call[0][0]
         assert "container123" in rm_call[0][0]
 
@@ -176,6 +182,8 @@ class TestAssetsUpdate:
                 ["podman", "volume", "mount", "static_assets"],
                 stdout=f"{fake_volume_path}\n",
             ),
+            # image.exists succeeds
+            _ok(["podman", "image", "exists"]),
             # pre-cleanup rm (no leftover container)
             _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
             # podman.create succeeds with --image-volume=ignore
@@ -203,7 +211,7 @@ class TestAssetsUpdate:
         assets.update(cfg, create_volume=True)
 
         # Verify the create call includes --image-volume ignore
-        create_call = mock_run.call_args_list[3]
+        create_call = mock_run.call_args_list[4]
         cmd = create_call[0][0]
         assert "--image-volume" in cmd
         assert "ignore" in cmd
@@ -222,6 +230,8 @@ class TestAssetsUpdate:
                 ["podman", "volume", "mount", "static_assets"],
                 stdout=f"{fake_volume_path}\n",
             ),
+            # image.exists succeeds
+            _ok(["podman", "image", "exists"]),
             # pre-cleanup rm succeeds (leftover container existed)
             _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
             # podman.create succeeds
@@ -236,8 +246,8 @@ class TestAssetsUpdate:
 
         assets.update(cfg, create_volume=False)
 
-        # Second call (index 1) should be the pre-cleanup rm
-        pre_cleanup = mock_run.call_args_list[1]
+        # Third call (index 2) should be the pre-cleanup rm
+        pre_cleanup = mock_run.call_args_list[2]
         cmd = pre_cleanup[0][0]
         assert "rm" in cmd
         assert TEMP_CONTAINER_NAME in cmd
@@ -255,6 +265,8 @@ class TestAssetsUpdate:
                 ["podman", "volume", "mount", "static_assets"],
                 stdout=f"{fake_volume_path}\n",
             ),
+            # image.exists succeeds (image is present but create still fails)
+            _ok(["podman", "image", "exists"]),
             # pre-cleanup rm
             _ok(["podman", "rm", TEMP_CONTAINER_NAME]),
             # podman.create fails
@@ -273,3 +285,58 @@ class TestAssetsUpdate:
 
         error_msg = str(exc_info.value)
         assert "temporary container" in error_msg.lower() or "failed" in error_msg.lower()
+
+    def test_update_image_not_found_with_alias_tag(self, mocker, tmp_path):
+        """Missing image with alias tag should suggest set-current."""
+        mock_run = mocker.patch("subprocess.run")
+
+        fake_volume_path = tmp_path / "volume_data"
+        fake_volume_path.mkdir()
+
+        mock_run.side_effect = [
+            # volume.mount succeeds
+            _ok(
+                ["podman", "volume", "mount", "static_assets"],
+                stdout=f"{fake_volume_path}\n",
+            ),
+            # image.exists fails — image not found locally
+            subprocess.CompletedProcess(args=["podman", "image", "exists"], returncode=1),
+        ]
+
+        cfg = mocker.MagicMock(spec=Config)
+        cfg.tag = "current"
+        cfg.resolved_image_with_tag = "registry.example.com/app:current"
+
+        with pytest.raises(SystemExit) as exc_info:
+            assets.update(cfg, create_volume=False)
+
+        error_msg = str(exc_info.value)
+        assert "set-current" in error_msg
+
+    def test_update_image_not_found_with_explicit_tag(self, mocker, tmp_path):
+        """Missing image with explicit tag should suggest pulling."""
+        mock_run = mocker.patch("subprocess.run")
+
+        fake_volume_path = tmp_path / "volume_data"
+        fake_volume_path.mkdir()
+
+        mock_run.side_effect = [
+            # volume.mount succeeds
+            _ok(
+                ["podman", "volume", "mount", "static_assets"],
+                stdout=f"{fake_volume_path}\n",
+            ),
+            # image.exists fails — image not found locally
+            subprocess.CompletedProcess(args=["podman", "image", "exists"], returncode=1),
+        ]
+
+        cfg = mocker.MagicMock(spec=Config)
+        cfg.tag = "v0.23.3"
+        cfg.resolved_image_with_tag = "registry.example.com/app:v0.23.3"
+
+        with pytest.raises(SystemExit) as exc_info:
+            assets.update(cfg, create_volume=False)
+
+        error_msg = str(exc_info.value)
+        assert "not found locally" in error_msg
+        assert "pull" in error_msg.lower()
