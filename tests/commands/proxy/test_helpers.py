@@ -104,7 +104,7 @@ class TestValidateCaddyConfig:
 
         assert "Caddy validation failed" in str(exc_info.value)
 
-    def test_validate_caddy_config_calls_caddy_correctly(self, tmp_path, mocker):
+    def test_validate_caddy_config_calls_caddy_correctly(self, mocker):
         """Should call caddy validate with temp file."""
         from ots_containers.commands.proxy._helpers import validate_caddy_config
 
@@ -120,6 +120,31 @@ class TestValidateCaddyConfig:
         assert call_args[1] == "validate"
         assert call_args[2] == "--config"
         # Fourth arg is temp file path
+
+    def test_validate_caddy_config_passes_caddyfile_adapter(self, mocker):
+        """Regression: must pass --adapter caddyfile to avoid JSON parse errors.
+
+        Without this flag, caddy tries to parse Caddyfile syntax as JSON and
+        fails on '#' comments with 'invalid character looking for beginning of
+        value'. See the fix in _helpers.py line 72.
+        """
+        from ots_containers.commands.proxy._helpers import validate_caddy_config
+
+        mock_result = mocker.Mock()
+        mock_result.returncode = 0
+        mock_run = mocker.patch("subprocess.run", return_value=mock_result)
+
+        validate_caddy_config(
+            "# A comment that would break JSON parsing\nlocalhost:8080 {\n  respond 200\n}"
+        )
+
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args[0][0]
+        assert "--adapter" in call_args, "Missing --adapter flag in caddy validate command"
+        adapter_index = call_args.index("--adapter")
+        assert call_args[adapter_index + 1] == "caddyfile", (
+            f"Expected 'caddyfile' after --adapter, got '{call_args[adapter_index + 1]}'"
+        )
 
     def test_validate_caddy_config_caddy_not_found_raises(self, mocker):
         """Should raise ProxyError when caddy not installed."""

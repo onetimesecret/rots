@@ -20,7 +20,7 @@ from typing import Annotated
 import cyclopts
 
 from ots_containers import db
-from ots_containers.config import DEFAULT_IMAGE, Config
+from ots_containers.config import Config
 from ots_containers.podman import podman
 
 from ..common import JsonOutput, Lines, Quiet, Yes
@@ -41,12 +41,12 @@ def pull(
         ),
     ] = None,
     image: Annotated[
-        str,
+        str | None,
         cyclopts.Parameter(
             name=["--image", "-i"],
-            help="Full image path (default: ghcr.io/onetimesecret/onetimesecret)",
+            help="Full image path (default: from IMAGE env var)",
         ),
-    ] = DEFAULT_IMAGE,
+    ] = None,
     set_as_current: Annotated[
         bool,
         cyclopts.Parameter(
@@ -82,7 +82,8 @@ def pull(
     """
     cfg = Config()
 
-    # Resolve tag from env var if not provided
+    # Resolve image and tag from env vars if not provided
+    resolved_image = image or cfg.image
     resolved_tag = tag or cfg.tag
     if not resolved_tag:
         print("Error: --tag is required (or set TAG env var)")
@@ -93,9 +94,9 @@ def pull(
         if not cfg.private_image:
             print("Error: --private requires OTS_REGISTRY env var to be set")
             raise SystemExit(1)
-        image = cfg.private_image
+        resolved_image = cfg.private_image
 
-    full_image = f"{image}:{resolved_tag}"
+    full_image = f"{resolved_image}:{resolved_tag}"
 
     if not quiet:
         print(f"Pulling {full_image}...")
@@ -118,7 +119,7 @@ def pull(
         print(f"Failed to pull {full_image}: {e}")
         db.record_deployment(
             cfg.db_path,
-            image=image,
+            image=resolved_image,
             tag=resolved_tag,
             action="pull",
             success=False,
@@ -129,7 +130,7 @@ def pull(
     # Record successful pull
     db.record_deployment(
         cfg.db_path,
-        image=image,
+        image=resolved_image,
         tag=resolved_tag,
         action="pull",
         success=True,
@@ -137,7 +138,30 @@ def pull(
 
     # Set as current if requested
     if set_as_current:
-        previous = db.set_current(cfg.db_path, image, resolved_tag)
+        # Tag in podman before updating the database
+        source_ref = f"{resolved_image}:{resolved_tag}"
+        current_alias = db.get_current_image(cfg.db_path)
+        try:
+            podman.tag(
+                source_ref,
+                f"{resolved_image}:current",
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            if current_alias:
+                prev_image, prev_tag = current_alias
+                podman.tag(
+                    f"{prev_image}:{prev_tag}",
+                    f"{prev_image}:rollback",
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+        except Exception as e:
+            print(f"Warning: podman tag failed ({e}), aliases updated in DB only")
+
+        previous = db.set_current(cfg.db_path, resolved_image, resolved_tag)
         if not quiet:
             if previous:
                 print(f"Set CURRENT to {resolved_tag} (previous: {previous})")
@@ -299,16 +323,18 @@ def set_current(
         cyclopts.Parameter(help="Tag to set as CURRENT"),
     ],
     image: Annotated[
-        str,
+        str | None,
         cyclopts.Parameter(
             name=["--image", "-i"],
-            help="Full image path",
+            help="Full image path (default: from IMAGE env var)",
         ),
-    ] = DEFAULT_IMAGE,
+    ] = None,
 ):
     """Set the CURRENT image alias.
 
     The previous CURRENT becomes ROLLBACK automatically.
+    Tags the image in the local podman store before updating the database,
+    so the podman image store always reflects the alias state.
 
     Examples:
         ots image set-current v0.23.0
@@ -316,9 +342,44 @@ def set_current(
     """
     cfg = Config()
 
-    previous = db.set_current(cfg.db_path, image, tag)
+    resolved_image = image or cfg.image
+    source_ref = f"{resolved_image}:{tag}"
 
-    print(f"CURRENT set to {image}:{tag}")
+    # Verify the source image exists locally before proceeding
+    try:
+        podman.image.inspect(source_ref, check=True, capture_output=True, text=True)
+    except Exception:
+        print(f"Image not found locally: {source_ref}")
+        print(f"Pull it first: ots image pull --tag {tag}")
+        raise SystemExit(1)
+
+    # Tag in podman before updating the database. If podman tag fails,
+    # the database remains unchanged.
+    current_alias = db.get_current_image(cfg.db_path)
+    try:
+        podman.tag(
+            source_ref,
+            f"{resolved_image}:current",
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if current_alias:
+            prev_image, prev_tag = current_alias
+            podman.tag(
+                f"{prev_image}:{prev_tag}",
+                f"{prev_image}:rollback",
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+    except Exception as e:
+        print(f"Failed to tag image in podman: {e}")
+        raise SystemExit(1)
+
+    previous = db.set_current(cfg.db_path, resolved_image, tag)
+
+    print(f"CURRENT set to {resolved_image}:{tag}")
     if previous:
         print(f"ROLLBACK set to previous: {previous}")
     else:
@@ -361,6 +422,24 @@ def rollback():
     result = db.rollback(cfg.db_path)
     if result:
         image, tag = result
+        # Update podman tags to reflect the new alias state
+        try:
+            podman.tag(
+                f"{image}:{tag}",
+                f"{image}:current",
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            podman.tag(
+                f"{current[0]}:{current[1]}",
+                f"{current[0]}:rollback",
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except Exception as e:
+            print(f"Warning: podman tag failed ({e}), aliases updated in DB only")
         print("\nRollback complete!")
         print(f"  CURRENT: {image}:{tag}")
         print(f"  ROLLBACK: {current[0]}:{current[1]}")
@@ -748,13 +827,17 @@ def rm(
             print("Aborted")
             return
 
+    cfg = Config()
+
     for tag in tags:
-        # Try common image patterns
+        # Try common image patterns, including configured image
         images_to_try = [
             f"onetimesecret:{tag}",
-            f"ghcr.io/onetimesecret/onetimesecret:{tag}",
+            f"{cfg.image}:{tag}",
             f"localhost/onetimesecret:{tag}",
         ]
+        if cfg.private_image:
+            images_to_try.append(f"{cfg.private_image}:{tag}")
 
         removed = False
         for image in images_to_try:

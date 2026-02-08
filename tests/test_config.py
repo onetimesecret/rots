@@ -274,3 +274,205 @@ class TestHasCustomConfig:
 
         cfg = Config(config_dir=config_dir)
         assert cfg.has_custom_config is True
+
+
+class TestConfigRegistry:
+    """Test Config.registry field from OTS_REGISTRY env var."""
+
+    def test_registry_from_env(self, monkeypatch):
+        """Should read OTS_REGISTRY env var."""
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com/myorg")
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.registry == "registry.example.com/myorg"
+
+    def test_registry_defaults_to_none(self, monkeypatch):
+        """Should default to None when OTS_REGISTRY is absent."""
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.registry is None
+
+
+class TestConfigRegistryAuthFile:
+    """Test Config.registry_auth_file property resolution chain."""
+
+    def test_env_var_overrides_all(self, monkeypatch, tmp_path):
+        """REGISTRY_AUTH_FILE env var should override all other paths."""
+        auth_file = tmp_path / "custom-auth.json"
+        auth_file.touch()
+        monkeypatch.setenv("REGISTRY_AUTH_FILE", str(auth_file))
+        # Set XDG_RUNTIME_DIR too to prove env var takes precedence
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "xdg"))
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.registry_auth_file == auth_file
+
+    def test_explicit_override_takes_highest_priority(self, monkeypatch, tmp_path):
+        """_registry_auth_file field should override even REGISTRY_AUTH_FILE env var."""
+        env_file = tmp_path / "env-auth.json"
+        explicit_file = tmp_path / "explicit-auth.json"
+        monkeypatch.setenv("REGISTRY_AUTH_FILE", str(env_file))
+        from ots_containers.config import Config
+
+        cfg = Config(_registry_auth_file=explicit_file)
+        assert cfg.registry_auth_file == explicit_file
+
+    def test_xdg_runtime_dir_fallback(self, monkeypatch, tmp_path):
+        """Should use XDG_RUNTIME_DIR/containers/auth.json when file exists."""
+        monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
+        xdg_dir = tmp_path / "run" / "user" / "1000"
+        auth_dir = xdg_dir / "containers"
+        auth_dir.mkdir(parents=True)
+        auth_file = auth_dir / "auth.json"
+        auth_file.touch()
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg_dir))
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.registry_auth_file == auth_file
+
+    def test_xdg_runtime_dir_skipped_when_file_missing(self, monkeypatch, tmp_path):
+        """Should skip XDG_RUNTIME_DIR when auth.json does not exist there."""
+        monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
+        xdg_dir = tmp_path / "run" / "user" / "1000"
+        xdg_dir.mkdir(parents=True)
+        # Do NOT create containers/auth.json
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg_dir))
+        from ots_containers.config import Config
+
+        cfg = Config()
+        # Should fall through to user config or system path, not the XDG path
+        assert cfg.registry_auth_file != xdg_dir / "containers" / "auth.json"
+
+    def test_user_config_fallback_on_macos(self, monkeypatch):
+        """On macOS (darwin), should return ~/.config/containers/auth.json."""
+        import sys
+
+        monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        # On macOS (our test platform), should return user config path
+        if sys.platform == "darwin":
+            expected = Path.home() / ".config" / "containers" / "auth.json"
+            assert cfg.registry_auth_file == expected
+
+
+class TestConfigPrivateImage:
+    """Test Config.private_image and private_image_with_tag properties."""
+
+    def test_private_image_none_when_no_registry(self, monkeypatch):
+        """Should return None when registry is None."""
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.private_image is None
+
+    def test_private_image_with_registry(self, monkeypatch):
+        """Should return formatted string when registry is set."""
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com/myorg")
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.private_image == "registry.example.com/myorg/onetimesecret"
+
+    def test_private_image_with_tag_none_when_no_registry(self, monkeypatch):
+        """Should return None when registry is None."""
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.private_image_with_tag is None
+
+    def test_private_image_with_tag(self, monkeypatch):
+        """Should combine registry, image name, and tag."""
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com/myorg")
+        monkeypatch.setenv("TAG", "v2.0.0")
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.private_image_with_tag == "registry.example.com/myorg/onetimesecret:v2.0.0"
+
+    def test_private_image_with_tag_uses_default_tag(self, monkeypatch):
+        """Should use default tag when TAG env var is absent."""
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com/myorg")
+        monkeypatch.delenv("TAG", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.private_image_with_tag == "registry.example.com/myorg/onetimesecret:current"
+
+
+class TestConfigResolveImageTag:
+    """Test Config.resolve_image_tag() with a real SQLite database."""
+
+    def test_resolves_current_alias(self, monkeypatch, tmp_path):
+        """Should resolve 'current' tag to the aliased image and tag from the database."""
+        from ots_containers import db
+        from ots_containers.config import Config
+
+        # Set up a real database
+        db_path = tmp_path / "deployments.db"
+        db.init_db(db_path)
+        db.set_current(db_path, "ghcr.io/onetimesecret/onetimesecret", "v1.5.0")
+
+        # Config points var_dir at tmp_path so db_path resolves there
+        monkeypatch.delenv("TAG", raising=False)
+        cfg = Config(var_dir=tmp_path)
+        assert cfg.db_path == db_path
+
+        # resolve_image_tag should look up "current" and find the alias
+        image, tag = cfg.resolve_image_tag()
+        assert image == "ghcr.io/onetimesecret/onetimesecret"
+        assert tag == "v1.5.0"
+
+    def test_resolves_rollback_alias(self, monkeypatch, tmp_path):
+        """Should resolve 'rollback' tag to the previous image and tag."""
+        from ots_containers import db
+        from ots_containers.config import Config
+
+        db_path = tmp_path / "deployments.db"
+        db.init_db(db_path)
+        # First deploy sets current
+        db.set_current(db_path, "ghcr.io/onetimesecret/onetimesecret", "v1.0.0")
+        # Second deploy moves v1.0.0 to rollback, sets v2.0.0 as current
+        db.set_current(db_path, "ghcr.io/onetimesecret/onetimesecret", "v2.0.0")
+
+        monkeypatch.setenv("TAG", "rollback")
+        cfg = Config(var_dir=tmp_path)
+        image, tag = cfg.resolve_image_tag()
+        assert image == "ghcr.io/onetimesecret/onetimesecret"
+        assert tag == "v1.0.0"
+
+    def test_falls_back_to_literal_tag_when_no_alias(self, monkeypatch, tmp_path):
+        """Should return literal image/tag when 'current' has no alias in the database."""
+        from ots_containers import db
+        from ots_containers.config import Config
+
+        db_path = tmp_path / "deployments.db"
+        db.init_db(db_path)
+        # Database is empty - no aliases set
+
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("IMAGE", raising=False)
+        cfg = Config(var_dir=tmp_path)
+        image, tag = cfg.resolve_image_tag()
+        assert image == "ghcr.io/onetimesecret/onetimesecret"
+        assert tag == "current"
+
+    def test_non_alias_tag_passes_through(self, monkeypatch, tmp_path):
+        """A concrete tag like 'v3.0.0' should pass through without database lookup."""
+        from ots_containers.config import Config
+
+        monkeypatch.setenv("TAG", "v3.0.0")
+        monkeypatch.setenv("IMAGE", "myregistry/myimage")
+        cfg = Config(var_dir=tmp_path)
+        image, tag = cfg.resolve_image_tag()
+        assert image == "myregistry/myimage"
+        assert tag == "v3.0.0"

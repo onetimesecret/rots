@@ -69,7 +69,7 @@ def validate_caddy_config(content: str) -> None:
 
     try:
         result = subprocess.run(
-            ["caddy", "validate", "--config", temp_path],
+            ["caddy", "validate", "--config", temp_path, "--adapter", "caddyfile"],
             capture_output=True,
             text=True,
         )

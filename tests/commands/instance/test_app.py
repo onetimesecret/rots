@@ -952,3 +952,138 @@ class TestSchedulerCommands:
         calls = [c[0][0] for c in mock_restart.call_args_list]
         assert "onetime-scheduler@daily-cleanup" in calls
         assert "onetime-scheduler@weekly-reports" in calls
+
+
+class TestDeployEnvVarResolution:
+    """Test that deploy correctly resolves IMAGE and TAG from env vars.
+
+    These tests use a real Config() so the env var -> config -> resolve_image_tag
+    pipeline is tested end-to-end. TAG is set to a non-alias value (e.g. v1.0.0)
+    so resolve_image_tag returns (cfg.image, cfg.tag) without a db lookup.
+    dry_run=True is used to avoid needing to mock quadlet/assets/systemd.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        """Remove IMAGE and TAG env vars so tests start clean."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+    def test_deploy_dry_run_shows_custom_image_tag(self, mocker, monkeypatch, tmp_path, capsys):
+        """Scenario 18: deploy with IMAGE/TAG env vars should show custom image:tag."""
+        monkeypatch.setenv("IMAGE", "custom.registry.io/myorg/myapp")
+        monkeypatch.setenv("TAG", "v1.0.0")
+
+        # Mock db_path to avoid touching real filesystem
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        instance.deploy(identifiers=("7043",), web=True, dry_run=True)
+
+        captured = capsys.readouterr()
+        assert "custom.registry.io/myorg/myapp:v1.0.0" in captured.out
+        assert "dry-run" in captured.out
+
+    def test_deploy_records_correct_image_tag(self, mocker, monkeypatch, tmp_path, capsys):
+        """Scenario 18b: deploy with IMAGE/TAG env vars flows image to db.record_deployment."""
+        monkeypatch.setenv("IMAGE", "custom.registry.io/myorg/myapp")
+        monkeypatch.setenv("TAG", "v2.5.0")
+
+        # Mock db_path
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        # Mock all external calls needed for non-dry-run deploy
+        mocker.patch("ots_containers.commands.instance.app.assets.update")
+        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("ots_containers.commands.instance.app.systemd.start")
+        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+
+        instance.deploy(identifiers=("7043",), web=True)
+
+        # Verify db.record_deployment was called with the custom image/tag
+        mock_record.assert_called_once()
+        assert mock_record.call_args.kwargs["image"] == "custom.registry.io/myorg/myapp"
+        assert mock_record.call_args.kwargs["tag"] == "v2.5.0"
+
+
+class TestRedeployEnvVarResolution:
+    """Test that redeploy correctly resolves IMAGE and TAG from env vars.
+
+    These tests use a real Config() so the env var -> config -> resolve_image_tag
+    pipeline is tested end-to-end. TAG is set to a non-alias value (e.g. v1.0.0)
+    so resolve_image_tag returns (cfg.image, cfg.tag) without a db lookup.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        """Remove IMAGE and TAG env vars so tests start clean."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+    def test_redeploy_dry_run_shows_custom_image_tag(self, mocker, monkeypatch, tmp_path, capsys):
+        """Scenario 19: redeploy with IMAGE/TAG env vars should show custom image:tag."""
+        monkeypatch.setenv("IMAGE", "custom.registry.io/myorg/myapp")
+        monkeypatch.setenv("TAG", "v1.0.0")
+
+        # Mock db_path
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        # Mock resolve_identifiers to return some instances
+        mocker.patch(
+            "ots_containers.commands.instance.app.resolve_identifiers",
+            return_value={InstanceType.WEB: ["7043"]},
+        )
+
+        instance.redeploy(identifiers=("7043",), web=True, dry_run=True)
+
+        captured = capsys.readouterr()
+        assert "custom.registry.io/myorg/myapp:v1.0.0" in captured.out
+        assert "dry-run" in captured.out
+
+    def test_redeploy_records_correct_image_tag(self, mocker, monkeypatch, tmp_path, capsys):
+        """Scenario 19b: redeploy with IMAGE/TAG env vars flows image to db.record_deployment."""
+        monkeypatch.setenv("IMAGE", "custom.registry.io/myorg/myapp")
+        monkeypatch.setenv("TAG", "v3.0.0")
+
+        # Mock db_path
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        # Mock resolve_identifiers to return some instances
+        mocker.patch(
+            "ots_containers.commands.instance.app.resolve_identifiers",
+            return_value={InstanceType.WEB: ["7043"]},
+        )
+
+        # Mock all external calls needed for non-dry-run redeploy
+        mocker.patch("ots_containers.commands.instance.app.assets.update")
+        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
+        mocker.patch(
+            "ots_containers.commands.instance.app.systemd.container_exists",
+            return_value=True,
+        )
+        mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
+        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+
+        instance.redeploy(identifiers=("7043",), web=True)
+
+        # Verify db.record_deployment was called with the custom image/tag
+        mock_record.assert_called_once()
+        assert mock_record.call_args.kwargs["image"] == "custom.registry.io/myorg/myapp"
+        assert mock_record.call_args.kwargs["tag"] == "v3.0.0"
