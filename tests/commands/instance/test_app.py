@@ -648,11 +648,12 @@ class TestRestartCommand:
 
         mock_restart.assert_called_once_with("onetime-web@7043")
         captured = capsys.readouterr()
-        assert "Restarted onetime-web@7043" in captured.out
+        assert "Restarting onetime-web@7043" in captured.out
 
     def test_restart_multiple(self, mocker, capsys):
-        """restart should call systemd.restart for each instance."""
+        """restart should call systemd.restart for each instance with delay."""
         mock_restart = mocker.patch("ots_containers.commands.instance.app.systemd.restart")
+        mock_sleep = mocker.patch("ots_containers.commands.instance._helpers.time.sleep")
 
         instance.restart(identifiers=("7043", "7044", "7045"), web=True)
 
@@ -661,6 +662,9 @@ class TestRestartCommand:
         assert "onetime-web@7043" in calls
         assert "onetime-web@7044" in calls
         assert "onetime-web@7045" in calls
+        # Default 30s delay between instances
+        assert mock_sleep.call_count == 2  # between 3 instances
+        mock_sleep.assert_called_with(30)
 
 
 class TestLogsCommand:
@@ -833,7 +837,7 @@ class TestSchedulerCommands:
 
         mock_restart.assert_called_once_with("onetime-scheduler@main")
         captured = capsys.readouterr()
-        assert "Restarted onetime-scheduler@main" in captured.out
+        assert "Restarting onetime-scheduler@main" in captured.out
 
     def test_start_scheduler_with_flag(self, mocker, capsys):
         """start --scheduler should call systemd.start for scheduler instances."""

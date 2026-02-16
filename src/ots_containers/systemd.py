@@ -12,6 +12,40 @@ class SystemdNotAvailableError(Exception):
     pass
 
 
+class SystemctlError(Exception):
+    """Raised when a systemctl command fails, with journal context."""
+
+    def __init__(self, unit: str, action: str, journal: str) -> None:
+        self.unit = unit
+        self.action = action
+        self.journal = journal
+        super().__init__(f"{unit} failed to {action}")
+
+
+def _fetch_journal(unit: str, lines: int = 20) -> str:
+    """Fetch recent journal entries for a unit. Best-effort, never raises."""
+    try:
+        result = subprocess.run(
+            ["sudo", "journalctl", "--no-pager", "-n", str(lines), "-u", unit],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return result.stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        return "(could not retrieve journal)"
+
+
+def _run_systemctl(action: str, unit: str) -> None:
+    """Run a systemctl command with diagnostic output on failure."""
+    cmd = ["sudo", "systemctl", action, unit]
+    print(f"  $ {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+    if result.returncode != 0:
+        journal = _fetch_journal(unit)
+        raise SystemctlError(unit, action, journal)
+
+
 def require_systemctl() -> None:
     """Check that systemctl is available, exit with helpful message if not.
 
@@ -176,21 +210,17 @@ def daemon_reload() -> None:
     require_systemctl()
     cmd = ["sudo", "systemctl", "daemon-reload"]
     print(f"  $ {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True)  # no unit context, let CalledProcessError propagate
 
 
 def start(unit: str) -> None:
     require_systemctl()
-    cmd = ["sudo", "systemctl", "start", unit]
-    print(f"  $ {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    _run_systemctl("start", unit)
 
 
 def stop(unit: str) -> None:
     require_systemctl()
-    cmd = ["sudo", "systemctl", "stop", unit]
-    print(f"  $ {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    _run_systemctl("stop", unit)
 
 
 def reset_failed(unit: str) -> None:
@@ -204,9 +234,7 @@ def reset_failed(unit: str) -> None:
 
 def restart(unit: str) -> None:
     require_systemctl()
-    cmd = ["sudo", "systemctl", "restart", unit]
-    print(f"  $ {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    _run_systemctl("restart", unit)
 
 
 def unit_to_container_name(unit: str) -> str:
@@ -235,9 +263,7 @@ def recreate(unit: str) -> None:
     """
     require_systemctl()
     # Stop the systemd unit
-    stop_cmd = ["sudo", "systemctl", "stop", unit]
-    print(f"  $ {' '.join(stop_cmd)}")
-    subprocess.run(stop_cmd, check=True)
+    _run_systemctl("stop", unit)
 
     # Remove the container (Quadlet uses systemd-{name} format with @ -> _)
     container_name = unit_to_container_name(unit)
@@ -246,9 +272,7 @@ def recreate(unit: str) -> None:
     subprocess.run(rm_cmd, check=True)
 
     # Start creates a fresh container from the updated quadlet
-    start_cmd = ["sudo", "systemctl", "start", unit]
-    print(f"  $ {' '.join(start_cmd)}")
-    subprocess.run(start_cmd, check=True)
+    _run_systemctl("start", unit)
 
 
 def status(unit: str, lines: int = 25) -> None:

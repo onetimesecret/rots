@@ -14,6 +14,7 @@ from .config import Config
 from .environment_file import (
     generate_quadlet_secret_lines,
     get_secrets_from_env_file,
+    secret_exists,
 )
 
 # Default environment file path
@@ -119,7 +120,23 @@ def get_secrets_section(env_file_path: Path | None = None) -> str:
     if not secrets:
         return "# No secrets configured (SECRET_VARIABLE_NAMES not set in env file)"
 
-    return generate_quadlet_secret_lines(secrets)
+    # Defense-in-depth: only include secrets that actually exist as podman secrets.
+    # A secret may have been processed in the env file but later deleted from the
+    # podman secret store. Warn rather than letting podman fail at container start.
+    verified = []
+    for spec in secrets:
+        if secret_exists(spec.secret_name):
+            verified.append(spec)
+        else:
+            print(
+                f"Warning: podman secret '{spec.secret_name}' not found, "
+                f"skipping Secret= line for {spec.env_var_name}"
+            )
+
+    if not verified:
+        return "# No secrets configured (none found in podman secret store)"
+
+    return generate_quadlet_secret_lines(verified)
 
 
 def get_config_volumes_section(cfg: Config) -> str:

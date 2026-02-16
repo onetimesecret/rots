@@ -135,6 +135,7 @@ class TestContainerTemplate:
     def test_write_web_template_includes_podman_secrets_from_env_file(self, mocker, tmp_path):
         """Container quadlet should include Secret= directives from env file."""
         mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        mocker.patch("ots_containers.quadlet.secret_exists", return_value=True)
         from ots_containers import quadlet
         from ots_containers.config import Config
 
@@ -460,6 +461,7 @@ class TestWorkerTemplate:
     def test_write_worker_template_includes_secrets(self, mocker, tmp_path):
         """Worker quadlet should include Secret= directives from env file."""
         mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        mocker.patch("ots_containers.quadlet.secret_exists", return_value=True)
         from ots_containers import quadlet
         from ots_containers.config import Config
 
@@ -728,6 +730,7 @@ class TestSchedulerTemplate:
     def test_write_scheduler_template_includes_podman_secrets(self, mocker, tmp_path):
         """Scheduler quadlet should include Secret directives from env file."""
         mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        mocker.patch("ots_containers.quadlet.secret_exists", return_value=True)
         from ots_containers import quadlet
         from ots_containers.config import Config
 
@@ -859,3 +862,77 @@ class TestGetConfigVolumesSection:
         assert f"Volume={config_dir}/config.yaml:/app/etc/config.yaml:ro" in result
         assert f"Volume={config_dir}/auth.yaml:/app/etc/auth.yaml:ro" in result
         assert "logging.yaml" not in result
+
+
+class TestGetSecretsSection:
+    """Test get_secrets_section filtering of non-existent podman secrets."""
+
+    def test_filters_out_nonexistent_podman_secrets(self, mocker, tmp_path):
+        """Should only include Secret= lines for secrets that actually exist in podman.
+
+        When SECRET_VARIABLE_NAMES lists variables that have been processed
+        (_VARNAME=ots_varname) but the corresponding podman secret doesn't
+        actually exist, the Secret= line should be omitted to prevent
+        container start failures.
+        """
+        # Mock secret_exists to simulate: ots_api_key exists, ots_db_password does not
+        mock_secret_exists = mocker.patch(
+            "ots_containers.quadlet.secret_exists",
+            side_effect=lambda name: name == "ots_api_key",
+        )
+
+        from ots_containers.quadlet import get_secrets_section
+
+        env_file = tmp_path / "onetimesecret.env"
+        env_file.write_text(
+            "SECRET_VARIABLE_NAMES=API_KEY,DB_PASSWORD\n"
+            "_API_KEY=ots_api_key\n"
+            "_DB_PASSWORD=ots_db_password\n"
+        )
+
+        result = get_secrets_section(env_file_path=env_file)
+
+        # Only the existing secret should appear in output
+        assert "Secret=ots_api_key,type=env,target=API_KEY" in result
+        assert "Secret=ots_db_password" not in result
+
+        # secret_exists should have been called for each secret
+        assert mock_secret_exists.call_count == 2
+
+    def test_all_secrets_exist(self, mocker, tmp_path):
+        """Should include all Secret= lines when all podman secrets exist."""
+        mocker.patch(
+            "ots_containers.quadlet.secret_exists",
+            return_value=True,
+        )
+
+        from ots_containers.quadlet import get_secrets_section
+
+        env_file = tmp_path / "onetimesecret.env"
+        env_file.write_text(
+            "SECRET_VARIABLE_NAMES=API_KEY,DB_PASSWORD\n"
+            "_API_KEY=ots_api_key\n"
+            "_DB_PASSWORD=ots_db_password\n"
+        )
+
+        result = get_secrets_section(env_file_path=env_file)
+
+        assert "Secret=ots_api_key,type=env,target=API_KEY" in result
+        assert "Secret=ots_db_password,type=env,target=DB_PASSWORD" in result
+
+    def test_no_secrets_exist_returns_fallback(self, mocker, tmp_path):
+        """Should return a comment when no podman secrets exist at all."""
+        mocker.patch(
+            "ots_containers.quadlet.secret_exists",
+            return_value=False,
+        )
+
+        from ots_containers.quadlet import get_secrets_section
+
+        env_file = tmp_path / "onetimesecret.env"
+        env_file.write_text("SECRET_VARIABLE_NAMES=API_KEY\n_API_KEY=ots_api_key\n")
+
+        result = get_secrets_section(env_file_path=env_file)
+
+        # When all secrets are filtered out, should not contain Secret= lines
+        assert "Secret=" not in result

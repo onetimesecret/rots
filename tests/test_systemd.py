@@ -5,6 +5,8 @@ import subprocess
 
 import pytest
 
+from ots_containers.systemd import SystemctlError
+
 
 @pytest.fixture(autouse=True)
 def mock_systemctl_available(mocker):
@@ -181,24 +183,30 @@ class TestStart:
         """Should call sudo systemctl start with unit name."""
         from ots_containers import systemd
 
-        mock_run = mocker.patch("subprocess.run")
+        mock_run = mocker.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0),
+        )
 
         systemd.start("onetime-web@7043")
 
         mock_run.assert_called_once_with(
-            ["sudo", "systemctl", "start", "onetime-web@7043"], check=True
+            ["sudo", "systemctl", "start", "onetime-web@7043"],
+            capture_output=True,
+            text=True,
+            timeout=90,
         )
 
-    def test_start_raises_on_failure(self, mocker):
-        """Should propagate CalledProcessError on failure."""
+    def test_start_raises_systemctl_error_on_failure(self, mocker):
+        """Should raise SystemctlError with journal context on failure."""
         from ots_containers import systemd
 
         mocker.patch(
             "subprocess.run",
-            side_effect=subprocess.CalledProcessError(1, "cmd"),
+            return_value=subprocess.CompletedProcess([], 1, stdout="", stderr=""),
         )
 
-        with pytest.raises(subprocess.CalledProcessError):
+        with pytest.raises(SystemctlError, match="failed to start"):
             systemd.start("onetime-web@7043")
 
 
@@ -209,24 +217,30 @@ class TestStop:
         """Should call sudo systemctl stop with unit name."""
         from ots_containers import systemd
 
-        mock_run = mocker.patch("subprocess.run")
+        mock_run = mocker.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0),
+        )
 
         systemd.stop("onetime-web@7043")
 
         mock_run.assert_called_once_with(
-            ["sudo", "systemctl", "stop", "onetime-web@7043"], check=True
+            ["sudo", "systemctl", "stop", "onetime-web@7043"],
+            capture_output=True,
+            text=True,
+            timeout=90,
         )
 
-    def test_stop_raises_on_failure(self, mocker):
-        """Should propagate CalledProcessError on failure."""
+    def test_stop_raises_systemctl_error_on_failure(self, mocker):
+        """Should raise SystemctlError with journal context on failure."""
         from ots_containers import systemd
 
         mocker.patch(
             "subprocess.run",
-            side_effect=subprocess.CalledProcessError(1, "cmd"),
+            return_value=subprocess.CompletedProcess([], 1, stdout="", stderr=""),
         )
 
-        with pytest.raises(subprocess.CalledProcessError):
+        with pytest.raises(SystemctlError, match="failed to stop"):
             systemd.stop("onetime-web@7043")
 
 
@@ -237,24 +251,30 @@ class TestRestart:
         """Should call sudo systemctl restart with unit name."""
         from ots_containers import systemd
 
-        mock_run = mocker.patch("subprocess.run")
+        mock_run = mocker.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0),
+        )
 
         systemd.restart("onetime-web@7043")
 
         mock_run.assert_called_once_with(
-            ["sudo", "systemctl", "restart", "onetime-web@7043"], check=True
+            ["sudo", "systemctl", "restart", "onetime-web@7043"],
+            capture_output=True,
+            text=True,
+            timeout=90,
         )
 
-    def test_restart_raises_on_failure(self, mocker):
-        """Should propagate CalledProcessError on failure."""
+    def test_restart_raises_systemctl_error_on_failure(self, mocker):
+        """Should raise SystemctlError with journal context on failure."""
         from ots_containers import systemd
 
         mocker.patch(
             "subprocess.run",
-            side_effect=subprocess.CalledProcessError(1, "cmd"),
+            return_value=subprocess.CompletedProcess([], 1, stdout="", stderr=""),
         )
 
-        with pytest.raises(subprocess.CalledProcessError):
+        with pytest.raises(SystemctlError, match="failed to restart"):
             systemd.restart("onetime-web@7043")
 
 
@@ -354,7 +374,10 @@ class TestRecreate:
         """Should stop unit, remove container, then start unit."""
         from ots_containers import systemd
 
-        mock_run = mocker.patch("subprocess.run")
+        mock_run = mocker.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0),
+        )
 
         systemd.recreate("onetime-web@7044")
 
@@ -365,15 +388,15 @@ class TestRecreate:
         assert calls[2][0][0] == ["sudo", "systemctl", "start", "onetime-web@7044"]
 
     def test_recreate_raises_on_stop_failure(self, mocker):
-        """Should propagate error if stop fails."""
+        """Should raise SystemctlError if stop fails."""
         from ots_containers import systemd
 
         mocker.patch(
             "subprocess.run",
-            side_effect=subprocess.CalledProcessError(1, "cmd"),
+            return_value=subprocess.CompletedProcess([], 1, stdout="", stderr=""),
         )
 
-        with pytest.raises(subprocess.CalledProcessError):
+        with pytest.raises(SystemctlError, match="failed to stop"):
             systemd.recreate("onetime-web@7044")
 
 

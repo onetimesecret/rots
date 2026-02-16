@@ -141,18 +141,19 @@ class TestConfigFiles:
     """Test CONFIG_FILES module-level constant."""
 
     def test_config_files_contains_expected_files(self):
-        """CONFIG_FILES should list the three known config files."""
+        """CONFIG_FILES should list the four known config files."""
         from ots_containers.config import CONFIG_FILES
 
         assert "config.yaml" in CONFIG_FILES
         assert "auth.yaml" in CONFIG_FILES
         assert "logging.yaml" in CONFIG_FILES
+        assert "billing.yaml" in CONFIG_FILES
 
     def test_config_files_length(self):
-        """CONFIG_FILES should contain exactly 3 entries."""
+        """CONFIG_FILES should contain exactly 4 entries."""
         from ots_containers.config import CONFIG_FILES
 
-        assert len(CONFIG_FILES) == 3
+        assert len(CONFIG_FILES) == 4
 
     def test_config_files_is_tuple(self):
         """CONFIG_FILES should be a tuple (immutable)."""
@@ -222,13 +223,13 @@ class TestExistingConfigFiles:
         config_dir = tmp_path / "etc"
         config_dir.mkdir()
         (config_dir / "config.yaml").touch()
-        (config_dir / "billing.yaml").touch()  # Not in CONFIG_FILES
+        (config_dir / "random.yaml").touch()  # Not in CONFIG_FILES
 
         cfg = Config(config_dir=config_dir)
         result = cfg.existing_config_files
         assert len(result) == 1
         assert config_dir / "config.yaml" in result
-        assert config_dir / "billing.yaml" not in result
+        assert config_dir / "random.yaml" not in result
 
 
 class TestHasCustomConfig:

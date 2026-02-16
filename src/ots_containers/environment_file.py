@@ -320,9 +320,8 @@ def extract_secrets(env_file: EnvFile) -> tuple[list[SecretSpec], list[str]]:
             continue
 
         # No entry found - neither VARNAME nor _VARNAME exists
+        # Skip adding to secrets list so quadlet won't reference a non-existent secret
         messages.append(f"Warning: {var_name} listed in SECRET_VARIABLE_NAMES but not found")
-        # Still include in secrets list so quadlet line is generated
-        secrets.append(SecretSpec.from_env_var(var_name, value=None))
 
     return secrets, messages
 
@@ -406,12 +405,16 @@ def ensure_podman_secret(secret_name: str, value: str) -> str:
 
 
 def secret_exists(secret_name: str) -> bool:
-    """Check if a podman secret exists."""
-    result = subprocess.run(
-        ["podman", "secret", "exists", secret_name],
-        capture_output=True,
-    )
-    return result.returncode == 0
+    """Check if a podman secret exists. Returns False if podman is unavailable."""
+    try:
+        result = subprocess.run(
+            ["podman", "secret", "exists", secret_name],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
 
 
 def generate_quadlet_secret_lines(secrets: list[SecretSpec]) -> str:

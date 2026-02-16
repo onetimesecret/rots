@@ -296,8 +296,14 @@ class TestExtractSecrets:
         assert secrets[0].env_var_name == "API_KEY"
         assert secrets[0].value is None  # Already processed, no value to extract
 
-    def test_warns_on_missing_secrets(self, tmp_path):
-        """Should warn when secret is listed but not in file."""
+    def test_missing_variable_not_in_secrets_list(self, tmp_path):
+        """Should NOT include missing variables in the secrets list.
+
+        When SECRET_VARIABLE_NAMES lists a variable that doesn't exist in the
+        env file at all (neither as VARNAME=value nor _VARNAME=secret_name),
+        it should be excluded from secrets to avoid referencing non-existent
+        podman secrets in the quadlet template.
+        """
         from ots_containers.environment_file import EnvFile, extract_secrets
 
         env_file = tmp_path / "test.env"
@@ -306,8 +312,49 @@ class TestExtractSecrets:
         parsed = EnvFile.parse(env_file)
         secrets, messages = extract_secrets(parsed)
 
-        assert len(secrets) == 1  # Still included for quadlet generation
+        assert len(secrets) == 0  # Missing variable should NOT be in secrets
         assert any("not found" in msg for msg in messages)
+
+    def test_mixed_processed_unprocessed_and_missing(self, tmp_path):
+        """Should handle a mix of processed, unprocessed, and missing secrets.
+
+        Given SECRET_VARIABLE_NAMES with three vars:
+        - PROCESSED_KEY: already processed (_PROCESSED_KEY=ots_processed_key)
+        - RAW_KEY: unprocessed (RAW_KEY=raw_value)
+        - GHOST_KEY: not in the file at all
+
+        The secrets list should contain only the first two. The messages
+        should contain a warning for the missing GHOST_KEY.
+        """
+        from ots_containers.environment_file import EnvFile, extract_secrets
+
+        env_file = tmp_path / "test.env"
+        env_file.write_text(
+            "SECRET_VARIABLE_NAMES=PROCESSED_KEY,RAW_KEY,GHOST_KEY\n"
+            "_PROCESSED_KEY=ots_processed_key\n"
+            "RAW_KEY=raw_value\n"
+        )
+
+        parsed = EnvFile.parse(env_file)
+        secrets, messages = extract_secrets(parsed)
+
+        # Only the processed and unprocessed entries should appear
+        assert len(secrets) == 2
+        secret_names = [s.env_var_name for s in secrets]
+        assert "PROCESSED_KEY" in secret_names
+        assert "RAW_KEY" in secret_names
+        assert "GHOST_KEY" not in secret_names
+
+        # The processed one should have no value (already handled)
+        processed = next(s for s in secrets if s.env_var_name == "PROCESSED_KEY")
+        assert processed.value is None
+
+        # The unprocessed one should carry its value
+        raw = next(s for s in secrets if s.env_var_name == "RAW_KEY")
+        assert raw.value == "raw_value"
+
+        # Warning for the missing variable
+        assert any("GHOST_KEY" in msg and "not found" in msg for msg in messages)
 
 
 class TestProcessEnvFile:
@@ -393,13 +440,15 @@ class TestGenerateQuadletSecretLines:
         assert "Secret=ots_api_key,type=env,target=API_KEY" in result
         assert "Secret=ots_password,type=env,target=PASSWORD" in result
 
-    def test_empty_secrets_returns_empty(self):
-        """Should return empty string for no secrets."""
+    def test_empty_secrets_returns_empty_string(self):
+        """Should return empty string (not None or whitespace) for no secrets."""
         from ots_containers.environment_file import generate_quadlet_secret_lines
 
         result = generate_quadlet_secret_lines([])
 
         assert result == ""
+        assert isinstance(result, str)
+        assert not result  # falsy
 
 
 class TestGetSecretsFromEnvFile:

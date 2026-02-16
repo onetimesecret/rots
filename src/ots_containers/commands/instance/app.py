@@ -71,7 +71,9 @@ def _list_instances_impl(
                 else:
                     # Worker/scheduler: query by notes containing instance ID
                     deployments = db.get_deployments(
-                        cfg.db_path, limit=1, notes_like=f"%{inst_type.value}_id={id_}%"
+                        cfg.db_path,
+                        limit=1,
+                        notes_like=f"%{inst_type.value}_id={id_}%",
                     )
                 if deployments:
                     dep = deployments[0]
@@ -132,7 +134,9 @@ def _list_instances_impl(
             else:
                 # Worker/scheduler: query by notes containing instance ID
                 deployments = db.get_deployments(
-                    cfg.db_path, limit=1, notes_like=f"%{inst_type.value}_id={id_}%"
+                    cfg.db_path,
+                    limit=1,
+                    notes_like=f"%{inst_type.value}_id={id_}%",
                 )
             if deployments:
                 dep = deployments[0]
@@ -737,17 +741,20 @@ def restart(
     web: WebFlag = False,
     worker: WorkerFlag = False,
     scheduler: SchedulerFlag = False,
+    delay: Delay = 30,
 ):
     """Restart systemd unit(s) for instance(s).
 
     Does NOT regenerate quadlet - use 'redeploy' for that.
     Only restarts running instances; stopped instances are skipped.
+    Waits between instances to allow startup before Caddy health checks.
 
     Examples:
         ots instances restart                       # Restart all running
         ots instances restart --web                 # Restart web instances
         ots instances restart --web 7043 7044       # Restart specific web
         ots instances restart --scheduler main      # Restart specific scheduler
+        ots instances restart --delay 10            # Longer wait between restarts
     """
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True)
@@ -756,15 +763,11 @@ def restart(
         print("No running instances found")
         return
 
-    for inst_type, ids in instances.items():
-        for id_ in ids:
-            unit = systemd.unit_name(inst_type.value, id_)
-            systemd.restart(unit)
-            print(f"Restarted {unit}")
+    def do_restart(inst_type: InstanceType, id_: str) -> None:
+        unit = systemd.unit_name(inst_type.value, id_)
+        systemd.restart(unit)
 
-    hint = format_journalctl_hint(instances)
-    if hint:
-        print(f"\nView logs: {hint}")
+    for_each_instance(instances, delay, do_restart, "Restarting", show_logs_hint=True)
 
 
 @app.command
@@ -1019,6 +1022,20 @@ def shell(
             help="Named volume for persistent data (survives exit)",
         ),
     ] = None,
+    volume: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--volume", "-v"],
+            help="Host path to bind-mount at /app/data (rw, user-mapped)",
+        ),
+    ] = None,
+    env: Annotated[
+        tuple[str, ...],
+        cyclopts.Parameter(
+            name=["--env", "-e"],
+            help="Set container env var (KEY=VALUE, repeatable)",
+        ),
+    ] = (),
     command: Annotated[
         str | None,
         cyclopts.Parameter(
@@ -1046,6 +1063,7 @@ def shell(
 
     By default uses tmpfs at /app/data (data destroyed on exit).
     Use --persistent to create a named volume that survives exit.
+    Use --volume to bind-mount a host directory at /app/data.
     Config is mounted read-only at /app/etc.
 
     Examples:
@@ -1053,7 +1071,16 @@ def shell(
         ots instance shell --persistent upgrade-v024    # named volume survives exit
         ots instance shell -c "bin/ots migrate"         # run command and exit
         ots instance shell --tag v0.24.0                # specific image tag
+        ots instance shell -v ./data                    # bind-mount ./data at /app/data
+        ots instance shell -v ./data -e REDIS_URL=redis://10.0.0.5:6379/0  # with env
+        ots instance shell -e FOO=bar -e BAZ=qux        # multiple env vars, tmpfs default
     """
+    from pathlib import Path
+
+    if persistent and volume:
+        print("Error: --persistent and --volume are mutually exclusive")
+        raise SystemExit(1)
+
     cfg = Config()
 
     # Resolve image/tag (same pattern as run command)
@@ -1084,12 +1111,20 @@ def shell(
         cmd.extend(["--env-file", str(env_file)])
         cmd.extend(build_secret_args(env_file))
 
-    # Data volume: tmpfs (default) or persistent named volume
-    if persistent:
+    # Data volume: bind-mount, persistent named volume, or tmpfs (default)
+    if volume:
+        host_path = Path(volume).resolve()
+        host_path.mkdir(parents=True, exist_ok=True)
+        cmd.extend(["-v", f"{host_path}:/app/data:rw,U"])
+    elif persistent:
         volume_name = f"ots-migration-{persistent}"
         cmd.extend(["-v", f"{volume_name}:/app/data"])
     else:
         cmd.extend(["--tmpfs", "/app/data"])
+
+    # Ad-hoc environment variables
+    for entry in env:
+        cmd.extend(["-e", entry])
 
     # Config overrides (per-file, if any exist on host)
     for f in cfg.existing_config_files:
