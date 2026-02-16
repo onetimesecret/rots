@@ -194,6 +194,7 @@ class TestStart:
             ["sudo", "systemctl", "start", "onetime-web@7043"],
             capture_output=True,
             text=True,
+            timeout=90,
         )
 
     def test_start_raises_systemctl_error_on_failure(self, mocker):
@@ -227,6 +228,7 @@ class TestStop:
             ["sudo", "systemctl", "stop", "onetime-web@7043"],
             capture_output=True,
             text=True,
+            timeout=90,
         )
 
     def test_stop_raises_systemctl_error_on_failure(self, mocker):
@@ -260,6 +262,7 @@ class TestRestart:
             ["sudo", "systemctl", "restart", "onetime-web@7043"],
             capture_output=True,
             text=True,
+            timeout=90,
         )
 
     def test_restart_raises_systemctl_error_on_failure(self, mocker):

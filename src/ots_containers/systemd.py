@@ -40,7 +40,7 @@ def _run_systemctl(action: str, unit: str) -> None:
     """Run a systemctl command with diagnostic output on failure."""
     cmd = ["sudo", "systemctl", action, unit]
     print(f"  $ {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
     if result.returncode != 0:
         journal = _fetch_journal(unit)
         raise SystemctlError(unit, action, journal)

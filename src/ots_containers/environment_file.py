@@ -405,12 +405,16 @@ def ensure_podman_secret(secret_name: str, value: str) -> str:
 
 
 def secret_exists(secret_name: str) -> bool:
-    """Check if a podman secret exists."""
-    result = subprocess.run(
-        ["podman", "secret", "exists", secret_name],
-        capture_output=True,
-    )
-    return result.returncode == 0
+    """Check if a podman secret exists. Returns False if podman is unavailable."""
+    try:
+        result = subprocess.run(
+            ["podman", "secret", "exists", secret_name],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
 
 
 def generate_quadlet_secret_lines(secrets: list[SecretSpec]) -> str:
