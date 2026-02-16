@@ -737,17 +737,20 @@ def restart(
     web: WebFlag = False,
     worker: WorkerFlag = False,
     scheduler: SchedulerFlag = False,
+    delay: Delay = 30,
 ):
     """Restart systemd unit(s) for instance(s).
 
     Does NOT regenerate quadlet - use 'redeploy' for that.
     Only restarts running instances; stopped instances are skipped.
+    Waits between instances to allow startup before Caddy health checks.
 
     Examples:
         ots instances restart                       # Restart all running
         ots instances restart --web                 # Restart web instances
         ots instances restart --web 7043 7044       # Restart specific web
         ots instances restart --scheduler main      # Restart specific scheduler
+        ots instances restart --delay 10            # Longer wait between restarts
     """
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True)
@@ -756,15 +759,11 @@ def restart(
         print("No running instances found")
         return
 
-    for inst_type, ids in instances.items():
-        for id_ in ids:
-            unit = systemd.unit_name(inst_type.value, id_)
-            systemd.restart(unit)
-            print(f"Restarted {unit}")
+    def do_restart(inst_type: InstanceType, id_: str) -> None:
+        unit = systemd.unit_name(inst_type.value, id_)
+        systemd.restart(unit)
 
-    hint = format_journalctl_hint(instances)
-    if hint:
-        print(f"\nView logs: {hint}")
+    for_each_instance(instances, delay, do_restart, "Restarting", show_logs_hint=True)
 
 
 @app.command
