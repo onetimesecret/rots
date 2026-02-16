@@ -43,7 +43,8 @@ def generate(
         bool, cyclopts.Parameter(help="Include Valkey apt repository")
     ] = False,
     include_xcaddy: Annotated[
-        bool, cyclopts.Parameter(help="Include xcaddy repo and build custom Caddy (web profile)")
+        bool,
+        cyclopts.Parameter(help="Include xcaddy repo and build custom Caddy (web profile)"),
     ] = False,
     caddy_version: Annotated[
         str,

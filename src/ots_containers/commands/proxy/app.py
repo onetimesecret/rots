@@ -32,7 +32,7 @@ Template = Annotated[
     Path | None,
     cyclopts.Parameter(
         name=["--template", "-t"],
-        help="Template file path (default: /etc/onetimesecret/Caddyfile.template)",
+        help="Template file path (e.g. /etc/onetimesecret/Caddyfile.template)",
     ),
 ]
 

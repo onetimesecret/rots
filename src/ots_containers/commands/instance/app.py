@@ -71,7 +71,9 @@ def _list_instances_impl(
                 else:
                     # Worker/scheduler: query by notes containing instance ID
                     deployments = db.get_deployments(
-                        cfg.db_path, limit=1, notes_like=f"%{inst_type.value}_id={id_}%"
+                        cfg.db_path,
+                        limit=1,
+                        notes_like=f"%{inst_type.value}_id={id_}%",
                     )
                 if deployments:
                     dep = deployments[0]
@@ -132,7 +134,9 @@ def _list_instances_impl(
             else:
                 # Worker/scheduler: query by notes containing instance ID
                 deployments = db.get_deployments(
-                    cfg.db_path, limit=1, notes_like=f"%{inst_type.value}_id={id_}%"
+                    cfg.db_path,
+                    limit=1,
+                    notes_like=f"%{inst_type.value}_id={id_}%",
                 )
             if deployments:
                 dep = deployments[0]

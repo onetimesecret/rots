@@ -10,7 +10,12 @@ DEFAULT_TAG = "current"
 
 # Config files that ship as defaults in the container image (etc/defaults/*.defaults.yaml).
 # Only files present on the host override the container's built-in defaults.
-CONFIG_FILES: tuple[str, ...] = ("config.yaml", "auth.yaml", "logging.yaml", "billing.yaml")
+CONFIG_FILES: tuple[str, ...] = (
+    "config.yaml",
+    "auth.yaml",
+    "logging.yaml",
+    "billing.yaml",
+)
 
 
 @dataclass

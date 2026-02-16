@@ -63,7 +63,12 @@ def build_secret_args(env_file: Path) -> list[str]:
     secret_specs = get_secrets_from_env_file(env_file)
     args: list[str] = []
     for spec in secret_specs:
-        args.extend(["--secret", f"{spec.secret_name},type=env,target={spec.env_var_name}"])
+        args.extend(
+            [
+                "--secret",
+                f"{spec.secret_name},type=env,target={spec.env_var_name}",
+            ]
+        )
     return args
 
 
