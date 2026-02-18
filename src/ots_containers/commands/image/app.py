@@ -248,12 +248,12 @@ def list_remote(
         ),
     ] = None,
     image: Annotated[
-        str,
+        str | None,
         cyclopts.Parameter(
             name=["--image", "-i"],
-            help="Image name to list tags for",
+            help="Image name to list tags for (default: basename of IMAGE env var)",
         ),
-    ] = "onetimesecret",
+    ] = None,
     quiet: Quiet = False,
 ):
     """List image tags on a remote registry.
@@ -283,7 +283,8 @@ def list_remote(
         raise SystemExit(1)
 
     # Build skopeo command
-    image_ref = f"docker://{reg}/{image}"
+    resolved_image = image or cfg.image.split("/")[-1]
+    image_ref = f"docker://{reg}/{resolved_image}"
     cmd = [
         "skopeo",
         "list-tags",
@@ -673,19 +674,19 @@ def login(
 @app.command
 def push(
     tag: Annotated[
-        str,
+        str | None,
         cyclopts.Parameter(
             name=["--tag", "-t"],
-            help="Image tag to push",
+            help="Image tag to push (default: TAG env var)",
         ),
-    ],
+    ] = None,
     source_image: Annotated[
-        str,
+        str | None,
         cyclopts.Parameter(
             name=["--source", "-s"],
-            help="Source image to push (default: onetimesecret for local builds)",
+            help="Source image to push (default: IMAGE env var or onetimesecret)",
         ),
-    ] = "onetimesecret",
+    ] = None,
     registry: Annotated[
         str | None,
         cyclopts.Parameter(
@@ -714,8 +715,16 @@ def push(
         print("Error: Registry URL required. Use --registry or set OTS_REGISTRY env var")
         raise SystemExit(1)
 
-    source_full = f"{source_image}:{tag}"
-    target_full = f"{reg}/onetimesecret:{tag}"
+    # Resolve tag and source image from args or env vars
+    resolved_tag = tag or cfg.tag
+    if not resolved_tag:
+        print("Error: Tag required. Use --tag or set TAG env var")
+        raise SystemExit(1)
+    src = source_image or cfg.image
+    # Derive target image name from source basename (strip host prefix if present)
+    src_basename = src.split("/")[-1]
+    source_full = f"{src}:{resolved_tag}"
+    target_full = f"{reg}/{src_basename}:{resolved_tag}"
 
     if not quiet:
         print(f"Tagging {source_full} -> {target_full}")
@@ -748,8 +757,8 @@ def push(
     # Record the push action
     db.record_deployment(
         cfg.db_path,
-        image=f"{reg}/onetimesecret",
-        tag=tag,
+        image=f"{reg}/{src_basename}",
+        tag=resolved_tag,
         action="push",
         success=True,
     )
@@ -831,10 +840,11 @@ def rm(
 
     for tag in tags:
         # Try common image patterns, including configured image
+        image_basename = cfg.image.split("/")[-1]
         images_to_try = [
-            f"onetimesecret:{tag}",
+            f"{image_basename}:{tag}",
             f"{cfg.image}:{tag}",
-            f"localhost/onetimesecret:{tag}",
+            f"localhost/{image_basename}:{tag}",
         ]
         if cfg.private_image:
             images_to_try.append(f"{cfg.private_image}:{tag}")

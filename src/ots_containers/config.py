@@ -99,7 +99,8 @@ class Config:
         """Image path for private registry (requires OTS_REGISTRY env var)."""
         if not self.registry:
             return None
-        return f"{self.registry}/onetimesecret"
+        image_basename = self.image.split("/")[-1]
+        return f"{self.registry}/{image_basename}"
 
     @property
     def private_image_with_tag(self) -> str | None:
