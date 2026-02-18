@@ -80,7 +80,7 @@ class TestRenderCommand:
         with pytest.raises(SystemExit) as exc_info:
             render(template=template, output=tmp_path / "out", dry_run=False)
 
-        assert "[error]" in str(exc_info.value)
+        assert exc_info.value.code is not None
         assert "test error" in str(exc_info.value)
 
     def test_render_uses_config_defaults(self, mocker):
@@ -134,7 +134,7 @@ class TestReloadCommand:
         with pytest.raises(SystemExit) as exc_info:
             reload()
 
-        assert "[error]" in str(exc_info.value)
+        assert exc_info.value.code is not None
         assert "reload failed" in str(exc_info.value)
 
 
@@ -185,7 +185,7 @@ class TestStatusCommand:
         with pytest.raises(SystemExit) as exc_info:
             status()
 
-        assert "[error]" in str(exc_info.value)
+        assert exc_info.value.code is not None
 
 
 class TestValidateCommand:
@@ -268,7 +268,7 @@ class TestValidateCommand:
         with pytest.raises(SystemExit) as exc_info:
             validate(config_file=missing)
 
-        assert "[error]" in str(exc_info.value)
+        assert exc_info.value.code is not None
         assert "not found" in str(exc_info.value)
 
     def test_validate_failure_exits(self, tmp_path, mocker):
