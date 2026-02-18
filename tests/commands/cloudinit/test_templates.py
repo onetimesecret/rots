@@ -10,6 +10,10 @@ from ots_containers.commands.cloudinit.templates import (
     get_debian13_sources_list,
 )
 
+_DUMMY_GPG_KEY = (
+    "-----BEGIN PGP PUBLIC KEY BLOCK-----\ntest-key\n-----END PGP PUBLIC KEY BLOCK-----"
+)
+
 
 class TestGenerateCloudInitConfig:
     """Tests for generate_cloudinit_config function."""
@@ -46,7 +50,10 @@ class TestGenerateCloudInitConfig:
 
     def test_config_with_postgresql(self):
         """Config with PostgreSQL should include apt source."""
-        config = generate_cloudinit_config(include_postgresql=True)
+        config = generate_cloudinit_config(
+            include_postgresql=True,
+            postgresql_gpg_key=_DUMMY_GPG_KEY,
+        )
         data = yaml.safe_load(config)
 
         assert "apt" in data
@@ -64,7 +71,10 @@ class TestGenerateCloudInitConfig:
 
     def test_config_with_valkey(self):
         """Config with Valkey should include apt source."""
-        config = generate_cloudinit_config(include_valkey=True)
+        config = generate_cloudinit_config(
+            include_valkey=True,
+            valkey_gpg_key=_DUMMY_GPG_KEY,
+        )
         data = yaml.safe_load(config)
 
         assert "apt" in data
@@ -123,6 +133,8 @@ class TestGenerateCloudInitConfig:
         config = generate_cloudinit_config(
             include_postgresql=True,
             include_valkey=True,
+            postgresql_gpg_key=_DUMMY_GPG_KEY,
+            valkey_gpg_key=_DUMMY_GPG_KEY,
         )
 
         # Should not raise
@@ -260,6 +272,8 @@ class TestXcaddyCloudInit:
             include_xcaddy=True,
             include_postgresql=True,
             include_valkey=True,
+            postgresql_gpg_key=_DUMMY_GPG_KEY,
+            valkey_gpg_key=_DUMMY_GPG_KEY,
         )
         data = yaml.safe_load(config)
         assert isinstance(data, dict)

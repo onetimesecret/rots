@@ -174,7 +174,17 @@ def generate_cloudinit_config(
             ]
         )
 
-    # Add runcmd section for xcaddy repo setup and build
+    # Always include base runcmd: create required OTS directories
+    config_parts.extend(
+        [
+            "",
+            "runcmd:",
+            "  - mkdir -p /etc/onetimesecret /var/lib/onetimesecret",
+            "  - chown onetimesecret:onetimesecret /etc/onetimesecret /var/lib/onetimesecret",
+        ]
+    )
+
+    # Add xcaddy repo setup and build commands
     if include_xcaddy:
         import shlex
 
@@ -184,8 +194,6 @@ def generate_cloudinit_config(
 
         config_parts.extend(
             [
-                "",
-                "runcmd:",
                 "  # xcaddy: add Cloudsmith apt repository",
                 "  - >-",
                 "    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/gpg.key'",
