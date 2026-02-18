@@ -276,7 +276,7 @@ class TestDeployCommand:
         instance.deploy(identifiers=("7143",), web=True)
 
         mock_assets.assert_called_once_with(mock_config, create_volume=True)
-        mock_quadlet.assert_called_once_with(mock_config)
+        mock_quadlet.assert_called_once_with(mock_config, force=False)
 
 
 class TestDeployWorkerCommand:
@@ -303,7 +303,7 @@ class TestDeployWorkerCommand:
 
         instance.deploy(identifiers=("1",), worker=True)
 
-        mock_quadlet.assert_called_once_with(mock_config)
+        mock_quadlet.assert_called_once_with(mock_config, force=False)
 
     def test_deploy_worker_does_not_update_assets(self, mocker, tmp_path):
         """deploy --worker should NOT update static assets."""
