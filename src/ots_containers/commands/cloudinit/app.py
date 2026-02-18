@@ -85,35 +85,24 @@ def generate(
 
     if include_postgresql and postgresql_key:
         postgresql_gpg = Path(postgresql_key).read_text()
-    elif include_postgresql:
-        print(
-            "Warning: --include-postgresql specified but no --postgresql-key provided",
-            file=sys.stderr,
-        )
-        print(
-            "PostgreSQL repository will use inline key placeholder",
-            file=sys.stderr,
-        )
 
     if include_valkey and valkey_key:
         valkey_gpg = Path(valkey_key).read_text()
-    elif include_valkey:
-        print(
-            "Warning: --include-valkey specified but no --valkey-key provided",
-            file=sys.stderr,
-        )
-        print("Valkey repository will use inline key placeholder", file=sys.stderr)
 
     # Generate configuration
-    config = generate_cloudinit_config(
-        include_postgresql=include_postgresql,
-        include_valkey=include_valkey,
-        include_xcaddy=include_xcaddy,
-        postgresql_gpg_key=postgresql_gpg,
-        valkey_gpg_key=valkey_gpg,
-        caddy_version=caddy_version,
-        caddy_plugins=caddy_plugins,
-    )
+    try:
+        config = generate_cloudinit_config(
+            include_postgresql=include_postgresql,
+            include_valkey=include_valkey,
+            include_xcaddy=include_xcaddy,
+            postgresql_gpg_key=postgresql_gpg,
+            valkey_gpg_key=valkey_gpg,
+            caddy_version=caddy_version,
+            caddy_plugins=caddy_plugins,
+        )
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     # Output
     if output:

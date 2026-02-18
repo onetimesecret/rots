@@ -43,32 +43,26 @@ class TestCloudInitGenerate:
         assert "apt" in data
 
     def test_generate_with_postgresql(self, capsys):
-        """Generate with PostgreSQL should include repository."""
+        """--include-postgresql without a key should exit with code 1."""
         with pytest.raises(SystemExit) as exc_info:
             app(["generate", "--include-postgresql"])
 
-        assert exc_info.value.code == 0
+        assert exc_info.value.code == 1
 
         captured = capsys.readouterr()
-        output = captured.out
-
-        data = yaml.safe_load(output)
-        assert "postgresql" in data["apt"]["sources"]
-        assert "postgresql-client" in data["packages"]
+        assert "postgresql" in captured.err.lower()
+        assert "key" in captured.err.lower()
 
     def test_generate_with_valkey(self, capsys):
-        """Generate with Valkey should include repository."""
+        """--include-valkey without a key should exit with code 1."""
         with pytest.raises(SystemExit) as exc_info:
             app(["generate", "--include-valkey"])
 
-        assert exc_info.value.code == 0
+        assert exc_info.value.code == 1
 
         captured = capsys.readouterr()
-        output = captured.out
-
-        data = yaml.safe_load(output)
-        assert "valkey" in data["apt"]["sources"]
-        assert "valkey" in data["packages"]
+        assert "valkey" in captured.err.lower()
+        assert "key" in captured.err.lower()
 
     def test_generate_with_postgresql_key(self, tmp_path, capsys):
         """Generate with PostgreSQL key file should include key content."""
@@ -87,16 +81,16 @@ class TestCloudInitGenerate:
         output = captured.out
         assert "test-key" in output
 
-    def test_generate_warning_when_no_key_provided(self, capsys):
-        """Should warn when repository included but no key provided."""
+    def test_generate_error_when_no_key_provided(self, capsys):
+        """Should exit with code 1 and helpful message when key is missing."""
         with pytest.raises(SystemExit) as exc_info:
             app(["generate", "--include-postgresql"])
 
-        assert exc_info.value.code == 0
+        assert exc_info.value.code == 1
 
         captured = capsys.readouterr()
         assert "postgresql-key" in captured.err.lower()
-        assert "placeholder" in captured.err.lower()
+        assert "curl" in captured.err.lower()
 
     def test_generate_with_xcaddy(self, capsys):
         """Generate with xcaddy should include runcmd section."""
