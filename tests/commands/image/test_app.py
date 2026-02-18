@@ -702,6 +702,119 @@ class TestRollbackPodmanTag:
         assert "Warning: podman tag failed" in captured.out
         assert "Rollback complete" in captured.out
 
+    def test_rollback_without_apply_prints_hint(self, mocker, tmp_path, capsys):
+        """rollback without --apply should print 'To apply: ots instance redeploy'."""
+        from ots_containers.commands.image.app import rollback
+
+        image = "ghcr.io/onetimesecret/onetimesecret"
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=(image, "v0.23.3"),
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_previous_tags",
+            return_value=[
+                (image, "v0.23.3", "2025-01-01"),
+                (image, "v0.22.0", "2024-12-01"),
+            ],
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.rollback",
+            return_value=(image, "v0.22.0"),
+        )
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout="", returncode=0),
+        )
+
+        rollback(apply=False)
+
+        captured = capsys.readouterr()
+        assert "To apply: ots instance redeploy" in captured.out
+
+    def test_rollback_with_apply_calls_redeploy(self, mocker, tmp_path, capsys):
+        """rollback --apply should call redeploy after updating aliases."""
+
+        from ots_containers.commands.image.app import rollback
+
+        image = "ghcr.io/onetimesecret/onetimesecret"
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=(image, "v0.23.3"),
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_previous_tags",
+            return_value=[
+                (image, "v0.23.3", "2025-01-01"),
+                (image, "v0.22.0", "2024-12-01"),
+            ],
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.rollback",
+            return_value=(image, "v0.22.0"),
+        )
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout="", returncode=0),
+        )
+        mock_redeploy = mocker.patch(
+            "ots_containers.commands.instance.app.redeploy",
+        )
+
+        rollback(apply=True, delay=0)
+
+        # Should have called redeploy to apply the rollback
+        mock_redeploy.assert_called_once_with(identifiers=(), delay=0)
+        captured = capsys.readouterr()
+        assert "Applying rollback" in captured.out
+        assert "To apply: ots instance redeploy" not in captured.out
+
+    def test_rollback_with_apply_does_not_print_hint(self, mocker, tmp_path, capsys):
+        """rollback --apply should not print the manual 'To apply:' hint."""
+        from ots_containers.commands.image.app import rollback
+
+        image = "ghcr.io/onetimesecret/onetimesecret"
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=(image, "v0.23.3"),
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_previous_tags",
+            return_value=[
+                (image, "v0.23.3", "2025-01-01"),
+                (image, "v0.22.0", "2024-12-01"),
+            ],
+        )
+        mocker.patch(
+            "ots_containers.commands.image.app.db.rollback",
+            return_value=(image, "v0.22.0"),
+        )
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout="", returncode=0),
+        )
+        mocker.patch("ots_containers.commands.instance.app.redeploy")
+
+        rollback(apply=True, delay=0)
+
+        captured = capsys.readouterr()
+        assert "To apply: ots instance redeploy" not in captured.out
+
 
 class TestPullCurrentPodmanTag:
     """Test that pull --current tags the image in podman."""

@@ -356,12 +356,12 @@ class TestEnableDisableWithoutSystemctl:
 
     def test_enable_without_systemctl(self, mocker, capsys):
         """enable should exit with code 1 and a helpful message when systemctl is absent."""
-        import ots_containers.commands.instance.app as instance_app
+        from ots_containers.commands.instance.app import enable
 
         mocker.patch("shutil.which", return_value=None)
 
         with pytest.raises(SystemExit) as exc_info:
-            instance_app.enable()
+            enable()
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -369,12 +369,12 @@ class TestEnableDisableWithoutSystemctl:
 
     def test_disable_without_systemctl(self, mocker, capsys):
         """disable should exit with code 1 and a helpful message when systemctl is absent."""
-        import ots_containers.commands.instance.app as instance_app
+        from ots_containers.commands.instance.app import disable
 
         mocker.patch("shutil.which", return_value=None)
 
         with pytest.raises(SystemExit) as exc_info:
-            instance_app.disable()
+            disable()
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -429,7 +429,7 @@ class TestExecShellFallback:
 
     def test_exec_uses_command_override_when_provided(self, mocker):
         """exec_shell with --command should use that command, not host $SHELL."""
-        import ots_containers.commands.instance.app as instance_app
+        from ots_containers.commands.instance.app import exec_shell
 
         mocker.patch("shutil.which", return_value="/usr/bin/systemctl")
         mock_run = mocker.patch("subprocess.run")
@@ -441,7 +441,7 @@ class TestExecShellFallback:
             return_value={},
         )
 
-        instance_app.exec_shell(command="/bin/bash")
+        exec_shell(command="/bin/bash")
         # No running instances found means no subprocess.run call to podman exec
         mock_run.assert_not_called()
 
@@ -453,8 +453,8 @@ class TestExecShellFallback:
         """
         import os
 
-        import ots_containers.commands.instance.app as instance_app
         from ots_containers.commands.instance.annotations import InstanceType
+        from ots_containers.commands.instance.app import exec_shell
 
         mocker.patch("shutil.which", return_value="/usr/bin/systemctl")
         mocker.patch(
@@ -469,7 +469,7 @@ class TestExecShellFallback:
         mock_run.return_value = subprocess.CompletedProcess([], 0)
 
         host_shell = os.environ.get("SHELL", "/bin/sh")
-        instance_app.exec_shell(command="")
+        exec_shell(command="")
 
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
