@@ -673,19 +673,19 @@ def login(
 @app.command
 def push(
     tag: Annotated[
-        str,
+        str | None,
         cyclopts.Parameter(
             name=["--tag", "-t"],
-            help="Image tag to push",
+            help="Image tag to push (default: TAG env var)",
         ),
-    ],
+    ] = None,
     source_image: Annotated[
-        str,
+        str | None,
         cyclopts.Parameter(
             name=["--source", "-s"],
-            help="Source image to push (default: onetimesecret for local builds)",
+            help="Source image to push (default: IMAGE env var or onetimesecret)",
         ),
-    ] = "onetimesecret",
+    ] = None,
     registry: Annotated[
         str | None,
         cyclopts.Parameter(
@@ -714,8 +714,14 @@ def push(
         print("Error: Registry URL required. Use --registry or set OTS_REGISTRY env var")
         raise SystemExit(1)
 
-    source_full = f"{source_image}:{tag}"
-    target_full = f"{reg}/onetimesecret:{tag}"
+    # Resolve tag and source image from args or env vars
+    resolved_tag = tag or cfg.tag
+    if not resolved_tag:
+        print("Error: Tag required. Use --tag or set TAG env var")
+        raise SystemExit(1)
+    src = source_image or cfg.image
+    source_full = f"{src}:{resolved_tag}"
+    target_full = f"{reg}/onetimesecret:{resolved_tag}"
 
     if not quiet:
         print(f"Tagging {source_full} -> {target_full}")
@@ -749,7 +755,7 @@ def push(
     db.record_deployment(
         cfg.db_path,
         image=f"{reg}/onetimesecret",
-        tag=tag,
+        tag=resolved_tag,
         action="push",
         success=True,
     )
