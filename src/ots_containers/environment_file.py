@@ -382,6 +382,10 @@ def ensure_podman_secret(secret_name: str, value: str) -> str:
     Returns:
         "created" if new, "replaced" if existing was overwritten
     """
+    from .systemd import require_podman
+
+    require_podman()
+
     # Check if secret exists
     result = subprocess.run(
         ["podman", "secret", "exists", secret_name],

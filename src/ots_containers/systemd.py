@@ -70,6 +70,31 @@ def require_systemctl() -> None:
         raise SystemExit(1)
 
 
+def require_podman() -> None:
+    """Check that podman is available, exit with helpful message if not.
+
+    Call this at the start of any function that shells out to podman directly.
+    """
+    if not shutil.which("podman"):
+        print(
+            "Error: podman not found. This command requires Podman to be installed.",
+            file=sys.stderr,
+        )
+        print(
+            "\nInstall Podman: https://podman.io/docs/installation",
+            file=sys.stderr,
+        )
+        print(
+            "  Linux (Debian/Ubuntu): sudo apt-get install -y podman",
+            file=sys.stderr,
+        )
+        print(
+            "  macOS: brew install podman && podman machine init && podman machine start",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
 def unit_name(instance_type: str, identifier: str) -> str:
     """Build a systemd unit name for an OTS instance.
 

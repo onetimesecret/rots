@@ -6,7 +6,15 @@ from pathlib import Path
 
 # Default image registry (public)
 DEFAULT_IMAGE = "ghcr.io/onetimesecret/onetimesecret"
-DEFAULT_TAG = "current"
+
+# Sentinel value for the default tag.  The leading '@' makes it an invalid
+# OCI registry tag so it can never be confused with a real tag on the registry.
+# When TAG env var is not set, the tool resolves the CURRENT DB alias.
+# This prevents accidental pulls of a registry tag literally named "current".
+DEFAULT_TAG = "@current"
+
+# Default environment file path (infrastructure env vars for OTS containers)
+DEFAULT_ENV_FILE = Path("/etc/default/onetimesecret")
 
 # Config files that ship as defaults in the container image (etc/defaults/*.defaults.yaml).
 # Only files present on the host override the container's built-in defaults.
@@ -170,19 +178,27 @@ class Config:
     def resolve_image_tag(self) -> tuple[str, str]:
         """Resolve image and tag, checking database aliases if tag is an alias.
 
-        If tag is 'current' or 'rollback', looks up the actual tag from the
-        deployment database. Falls back to the literal tag if no alias found.
+        Sentinel tags (@current, @rollback) and bare alias names (current,
+        rollback) are looked up in the deployment database. Falls back to the
+        literal tag if no alias is found.
 
         Returns (image, tag) tuple.
         """
         from . import db
 
-        # Check if tag is an alias
-        if self.tag.lower() in ("current", "rollback"):
-            alias = db.get_alias(self.db_path, self.tag)
+        # Normalize: strip the leading '@' from sentinel values so the lookup
+        # key is the plain alias name ("current", "rollback").
+        tag_key = self.tag.lstrip("@")
+
+        # Check if tag is an alias name (sentinel or bare)
+        if tag_key.lower() in ("current", "rollback"):
+            alias = db.get_alias(self.db_path, tag_key)
             if alias:
                 return (alias.image, alias.tag)
 
+        # Not an alias (or alias not set) — return as-is.
+        # Callers that need a real tag (e.g. pull) should check for the
+        # sentinel '@current' / '@rollback' and raise an appropriate error.
         return (self.image, self.tag)
 
     @property

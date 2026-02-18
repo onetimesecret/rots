@@ -27,6 +27,7 @@ import cyclopts
 from . import __version__
 from .commands import assets as assets_cmd
 from .commands import cloudinit, env, image, init, instance, proxy, service
+from .commands import db as db_cmd
 from .podman import podman
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ app.command(proxy.app)
 app.command(service.app)
 app.command(cloudinit.app)
 app.command(env.app)
+app.command(db_cmd.app)
 
 
 def _configure_logging(verbose: bool) -> None:

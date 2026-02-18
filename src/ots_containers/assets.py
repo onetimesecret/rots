@@ -5,11 +5,13 @@ from pathlib import Path
 
 from .config import Config
 from .podman import podman
+from .systemd import require_podman
 
 TEMP_CONTAINER_NAME = "ots-asset-sync-tmp"
 
 
 def update(cfg: Config, create_volume: bool = True) -> None:
+    require_podman()
     if create_volume:
         podman.volume.create("static_assets", capture_output=True, check=False)
 
