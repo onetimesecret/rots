@@ -92,6 +92,26 @@ def pull(
         print("Error: --tag is required (or set TAG env var)")
         raise SystemExit(1)
 
+    # Reject sentinel and bare alias names as pull targets.
+    # '@current', '@rollback' are sentinels; 'current', 'rollback' are alias names.
+    # None of these are valid OCI registry tags to pull — they are resolved locally
+    # by the DB alias system.  An explicit concrete tag (e.g. 'v0.23.0') is required.
+    tag_key = resolved_tag.lstrip("@")
+    if tag_key.lower() in ("current", "rollback"):
+        alias = db.get_alias(cfg.db_path, tag_key)
+        if alias:
+            print(
+                f"Error: '{resolved_tag}' is a DB alias pointing to {alias.image}:{alias.tag}.\n"
+                f"To pull that version, use:  ots image pull --tag {alias.tag}"
+            )
+        else:
+            print(
+                f"Error: '{resolved_tag}' is a DB alias sentinel but no alias is set.\n"
+                "Provide an explicit tag:  ots image pull --tag v0.23.0\n"
+                "Or set a CURRENT alias first:  ots image set-current --tag <tag>"
+            )
+        raise SystemExit(1)
+
     # Use private registry if requested
     if private:
         if not cfg.private_image:
@@ -391,7 +411,25 @@ def set_current(
 
 
 @app.command
-def rollback():
+def rollback(
+    apply: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=["--apply"],
+            help=(
+                "Automatically redeploy all running instances after updating the alias. "
+                "Without --apply, only the CURRENT/ROLLBACK aliases are updated."
+            ),
+        ),
+    ] = False,
+    delay: Annotated[
+        int,
+        cyclopts.Parameter(
+            name=["--delay", "-d"],
+            help="Seconds between instance redeployments when --apply is used (default: 5)",
+        ),
+    ] = 5,
+):
     """Roll back to the previous deployment.
 
     Uses the deployment timeline to find the previous successful deployment,
@@ -401,8 +439,14 @@ def rollback():
     The current CURRENT becomes ROLLBACK, and the previous deployment
     becomes the new CURRENT.
 
+    Use --apply to also redeploy all running instances atomically after the
+    alias update, avoiding a state mismatch between the alias and what's
+    running.
+
     Examples:
-        ots image rollback
+        ots image rollback            # Update aliases only
+        ots image rollback --apply    # Update aliases and redeploy
+        ots image rollback --apply --delay 10  # Longer delay between instances
     """
     cfg = Config()
 
@@ -447,7 +491,14 @@ def rollback():
         print("\nRollback complete!")
         print(f"  CURRENT: {image}:{tag}")
         print(f"  ROLLBACK: {current[0]}:{current[1]}")
-        print("\nTo apply: ots instance redeploy")
+
+        if apply:
+            print("\nApplying rollback: redeploying all running instances...")
+            from ..instance.app import redeploy
+
+            redeploy(identifiers=(), delay=delay)
+        else:
+            print("\nTo apply: ots instance redeploy")
     else:
         print("Rollback failed - no previous deployment found")
         raise SystemExit(1)

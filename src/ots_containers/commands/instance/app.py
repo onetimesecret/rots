@@ -380,6 +380,7 @@ def deploy(
     delay: Delay = 5,
     dry_run: DryRun = False,
     quiet: Quiet = False,
+    json_output: JsonOutput = False,
     force: Annotated[
         bool,
         cyclopts.Parameter(
@@ -416,6 +417,9 @@ def deploy(
         ots instances deploy --web 7043 --force     # Skip secrets check (not recommended)
         ots instances deploy --web 7043 --wait-timeout 60  # Wait up to 60s for health
     """
+    import datetime
+    import json as json_mod
+
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
 
     # Deploy requires identifiers AND type
@@ -430,7 +434,7 @@ def deploy(
 
     # Resolve image/tag (handles CURRENT/ROLLBACK aliases)
     image, tag = cfg.resolve_image_tag()
-    if not quiet:
+    if not quiet and not json_output:
         print(f"Image: {image}:{tag}")
         if cfg.has_custom_config:
             mounted = [f.name for f in cfg.existing_config_files]
@@ -439,8 +443,21 @@ def deploy(
             print("Config: using container built-in defaults")
 
     if dry_run:
-        print(f"[dry-run] Would deploy {itype.value}: {', '.join(identifiers)}")
+        result = {
+            "action": "deploy",
+            "dry_run": True,
+            "instance_type": itype.value,
+            "identifiers": list(identifiers),
+            "image": image,
+            "tag": tag,
+        }
+        if json_output:
+            print(json_mod.dumps(result, indent=2))
+        else:
+            print(f"[dry-run] Would deploy {itype.value}: {', '.join(identifiers)}")
         return
+
+    deploy_results: list[dict] = []
 
     with deploy_lock():
         # Write appropriate quadlet template.
@@ -464,7 +481,7 @@ def deploy(
                 systemd.start(unit)
                 # Optionally wait for the unit to become active
                 if wait_timeout > 0:
-                    if not quiet:
+                    if not quiet and not json_output:
                         print(f"  Waiting up to {wait_timeout}s for {unit} to become active...")
                     systemd.wait_for_healthy(unit, timeout=wait_timeout)
                 # Record successful deployment
@@ -476,6 +493,17 @@ def deploy(
                     port=port,
                     success=True,
                     notes=base_notes,
+                )
+                deploy_results.append(
+                    {
+                        "unit": unit,
+                        "instance_type": inst_type.value,
+                        "identifier": id_,
+                        "success": True,
+                        "image": image,
+                        "tag": tag,
+                        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                    }
                 )
             except systemd.HealthCheckTimeoutError as e:
                 fail_notes = (
@@ -491,6 +519,18 @@ def deploy(
                     port=port,
                     success=False,
                     notes=fail_notes,
+                )
+                deploy_results.append(
+                    {
+                        "unit": unit,
+                        "instance_type": inst_type.value,
+                        "identifier": id_,
+                        "success": False,
+                        "error": str(e),
+                        "image": image,
+                        "tag": tag,
+                        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                    }
                 )
                 print(f"  ERROR: {e}", file=sys.stderr)
                 raise SystemExit(1) from None
@@ -509,10 +549,34 @@ def deploy(
                     success=False,
                     notes=fail_notes,
                 )
+                deploy_results.append(
+                    {
+                        "unit": unit,
+                        "instance_type": inst_type.value,
+                        "identifier": id_,
+                        "success": False,
+                        "error": str(e),
+                        "image": image,
+                        "tag": tag,
+                        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                    }
+                )
                 raise
 
         instances = {itype: list(identifiers)}
-        for_each_instance(instances, delay, do_deploy, "Deploying", show_logs_hint=True)
+        for_each_instance(instances, delay, do_deploy, "Deploying", show_logs_hint=not json_output)
+
+    if json_output:
+        print(
+            json_mod.dumps(
+                {
+                    "action": "deploy",
+                    "success": all(r["success"] for r in deploy_results),
+                    "instances": deploy_results,
+                },
+                indent=2,
+            )
+        )
 
 
 @app.command
@@ -532,6 +596,7 @@ def redeploy(
     ] = False,
     dry_run: DryRun = False,
     quiet: Quiet = False,
+    json_output: JsonOutput = False,
     wait_timeout: Annotated[
         int,
         cyclopts.Parameter(
@@ -561,18 +626,24 @@ def redeploy(
         ots instances redeploy --force              # Force teardown+recreate
         ots instances redeploy --wait-timeout 60    # Wait up to 60s for health
     """
+    import datetime
+    import json as json_mod
+
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True)
 
     if not instances:
-        print("No running instances found")
+        if json_output:
+            print(json_mod.dumps({"action": "redeploy", "success": True, "instances": []}))
+        else:
+            print("No running instances found")
         return
 
     cfg = Config()
 
     # Resolve image/tag (handles CURRENT/ROLLBACK aliases)
     image, tag = cfg.resolve_image_tag()
-    if not quiet:
+    if not quiet and not json_output:
         print(f"Image: {image}:{tag}")
         if cfg.has_custom_config:
             mounted = [f.name for f in cfg.existing_config_files]
@@ -582,9 +653,26 @@ def redeploy(
 
     if dry_run:
         verb = "force redeploy" if force else "redeploy"
-        for inst_type, ids in instances.items():
-            print(f"[dry-run] Would {verb} {inst_type.value}: {', '.join(ids)}")
+        dry_items = [{"instance_type": t.value, "identifiers": ids} for t, ids in instances.items()]
+        if json_output:
+            print(
+                json_mod.dumps(
+                    {
+                        "action": "redeploy",
+                        "dry_run": True,
+                        "image": image,
+                        "tag": tag,
+                        "instances": dry_items,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            for inst_type, ids in instances.items():
+                print(f"[dry-run] Would {verb} {inst_type.value}: {', '.join(ids)}")
         return
+
+    redeploy_results: list[dict] = []
 
     with deploy_lock():
         # Write quadlet templates for each type being redeployed.
@@ -611,20 +699,23 @@ def redeploy(
             )
 
             if force:
-                print(f"Stopping {unit}")
+                if not json_output:
+                    print(f"Stopping {unit}")
                 systemd.stop(unit)
 
             try:
                 if force or not systemd.container_exists(unit):
-                    print(f"Starting {unit}")
+                    if not json_output:
+                        print(f"Starting {unit}")
                     systemd.start(unit)
                 else:
-                    print(f"Recreating {unit}")
+                    if not json_output:
+                        print(f"Recreating {unit}")
                     systemd.recreate(unit)
 
                 # Optionally wait for the unit to become active
                 if wait_timeout > 0:
-                    if not quiet:
+                    if not quiet and not json_output:
                         print(f"  Waiting up to {wait_timeout}s for {unit} to become active...")
                     systemd.wait_for_healthy(unit, timeout=wait_timeout)
 
@@ -636,6 +727,17 @@ def redeploy(
                     port=port,
                     success=True,
                     notes=base_notes,
+                )
+                redeploy_results.append(
+                    {
+                        "unit": unit,
+                        "instance_type": inst_type.value,
+                        "identifier": id_,
+                        "success": True,
+                        "image": image,
+                        "tag": tag,
+                        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                    }
                 )
             except systemd.HealthCheckTimeoutError as e:
                 fail_notes = (
@@ -651,6 +753,18 @@ def redeploy(
                     port=port,
                     success=False,
                     notes=fail_notes,
+                )
+                redeploy_results.append(
+                    {
+                        "unit": unit,
+                        "instance_type": inst_type.value,
+                        "identifier": id_,
+                        "success": False,
+                        "error": str(e),
+                        "image": image,
+                        "tag": tag,
+                        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                    }
                 )
                 print(f"  ERROR: {e}", file=sys.stderr)
                 raise SystemExit(1) from None
@@ -669,10 +783,34 @@ def redeploy(
                     success=False,
                     notes=fail_notes,
                 )
+                redeploy_results.append(
+                    {
+                        "unit": unit,
+                        "instance_type": inst_type.value,
+                        "identifier": id_,
+                        "success": False,
+                        "error": str(e),
+                        "image": image,
+                        "tag": tag,
+                        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                    }
+                )
                 raise
 
         verb = "Force redeploying" if force else "Redeploying"
-        for_each_instance(instances, delay, do_redeploy, verb, show_logs_hint=True)
+        for_each_instance(instances, delay, do_redeploy, verb, show_logs_hint=not json_output)
+
+    if json_output:
+        print(
+            json_mod.dumps(
+                {
+                    "action": "redeploy",
+                    "success": all(r["success"] for r in redeploy_results),
+                    "instances": redeploy_results,
+                },
+                indent=2,
+            )
+        )
 
 
 @app.command
@@ -685,6 +823,7 @@ def undeploy(
     delay: Delay = 5,
     dry_run: DryRun = False,
     yes: Yes = False,
+    json_output: JsonOutput = False,
 ):
     """Stop systemd service for instance(s).
 
@@ -696,15 +835,23 @@ def undeploy(
         ots instances undeploy --web 7043 7044      # Undeploy specific web
         ots instances undeploy --scheduler main     # Undeploy specific scheduler
         ots instances undeploy -y                   # Skip confirmation
+        ots instances undeploy --json               # JSON output
     """
+    import datetime
+    import json as json_mod
+
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True)
 
     if not instances:
-        print("No running instances found")
+        if json_output:
+            print(json_mod.dumps({"action": "undeploy", "success": True, "instances": []}))
+        else:
+            print("No running instances found")
         return
 
-    if not yes and not dry_run:
+    # --json implies --yes (non-interactive)
+    if not yes and not dry_run and not json_output:
         items = []
         for inst_type, ids in instances.items():
             items.append(f"{inst_type.value}: {', '.join(ids)}")
@@ -715,12 +862,26 @@ def undeploy(
             return
 
     if dry_run:
-        for inst_type, ids in instances.items():
-            print(f"[dry-run] Would undeploy {inst_type.value}: {', '.join(ids)}")
+        dry_items = [{"instance_type": t.value, "identifiers": ids} for t, ids in instances.items()]
+        if json_output:
+            print(
+                json_mod.dumps(
+                    {
+                        "action": "undeploy",
+                        "dry_run": True,
+                        "instances": dry_items,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            for inst_type, ids in instances.items():
+                print(f"[dry-run] Would undeploy {inst_type.value}: {', '.join(ids)}")
         return
 
     cfg = Config()
     image, tag = cfg.resolve_image_tag()
+    undeploy_results: list[dict] = []
 
     def do_undeploy(inst_type: InstanceType, id_: str) -> None:
         unit = systemd.unit_name(inst_type.value, id_)
@@ -740,6 +901,15 @@ def undeploy(
                 success=True,
                 notes=None if inst_type == InstanceType.WEB else f"{inst_type.value}_id={id_}",
             )
+            undeploy_results.append(
+                {
+                    "unit": unit,
+                    "instance_type": inst_type.value,
+                    "identifier": id_,
+                    "success": True,
+                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                }
+            )
         except Exception as e:
             port = int(id_) if inst_type == InstanceType.WEB else 0
             fail_notes = (
@@ -756,9 +926,31 @@ def undeploy(
                 success=False,
                 notes=fail_notes,
             )
+            undeploy_results.append(
+                {
+                    "unit": unit,
+                    "instance_type": inst_type.value,
+                    "identifier": id_,
+                    "success": False,
+                    "error": str(e),
+                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                }
+            )
             raise
 
     for_each_instance(instances, delay, do_undeploy, "Undeploying")
+
+    if json_output:
+        print(
+            json_mod.dumps(
+                {
+                    "action": "undeploy",
+                    "success": all(r["success"] for r in undeploy_results),
+                    "instances": undeploy_results,
+                },
+                indent=2,
+            )
+        )
 
 
 @app.command
@@ -966,6 +1158,7 @@ def status(
     web: WebFlag = False,
     worker: WorkerFlag = False,
     scheduler: SchedulerFlag = False,
+    json_output: JsonOutput = False,
 ):
     """Show systemd status for instance(s).
 
@@ -974,19 +1167,48 @@ def status(
         ots instances status --web                  # Status of web instances
         ots instances status --web 7043 7044        # Status of specific web
         ots instances status --scheduler            # Status of scheduler instances
+        ots instances status --json                 # JSON output
     """
+    import json as json_mod
+
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=False)
 
     if not instances:
-        print("No configured instances found")
+        if json_output:
+            print(json_mod.dumps({"instances": []}))
+        else:
+            print("No configured instances found")
         return
 
-    for inst_type, ids in instances.items():
-        for id_ in ids:
-            unit = systemd.unit_name(inst_type.value, id_)
-            systemd.status(unit)
-            print()
+    if json_output:
+        results = []
+        for inst_type, ids in instances.items():
+            for id_ in ids:
+                unit = systemd.unit_name(inst_type.value, id_)
+                result = subprocess.run(
+                    ["systemctl", "is-active", unit],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                active_state = result.stdout.strip()
+                results.append(
+                    {
+                        "unit": unit,
+                        "instance_type": inst_type.value,
+                        "identifier": id_,
+                        "active_state": active_state,
+                        "active": active_state == "active",
+                    }
+                )
+        print(json_mod.dumps({"instances": results}, indent=2))
+    else:
+        for inst_type, ids in instances.items():
+            for id_ in ids:
+                unit = systemd.unit_name(inst_type.value, id_)
+                systemd.status(unit)
+                print()
 
 
 @app.command

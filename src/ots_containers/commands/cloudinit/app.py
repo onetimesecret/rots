@@ -145,8 +145,8 @@ def validate(
     try:
         config_path = Path(file_path)
         if not config_path.exists():
-            print(f"[error] File not found: {file_path}", file=sys.stderr)
-            sys.exit(1)
+            print(f"File not found: {file_path}", file=sys.stderr)
+            raise SystemExit(1)
 
         content = config_path.read_text()
         data = yaml.safe_load(content)
@@ -164,17 +164,18 @@ def validate(
                 errors.append("apt.sources_list doesn't appear to use DEB822 format")
 
         if errors:
-            print(f"[error] Validation failed for {file_path}:", file=sys.stderr)
+            print(f"Validation failed for {file_path}:", file=sys.stderr)
             for error in errors:
                 print(f"  - {error}", file=sys.stderr)
-            sys.exit(1)
+            raise SystemExit(1)
         else:
             print(f"[ok] {file_path} is valid")
 
     except yaml.YAMLError as e:
-        print(f"[error] Invalid YAML in {file_path}:", file=sys.stderr)
+        print(f"Invalid YAML in {file_path}:", file=sys.stderr)
         print(f"  {e}", file=sys.stderr)
-        sys.exit(1)
+        raise SystemExit(1)
+    except SystemExit:
+        raise
     except Exception as e:
-        print(f"[error] Validation failed: {e}", file=sys.stderr)
-        sys.exit(1)
+        raise SystemExit(f"Validation failed: {e}") from e

@@ -165,6 +165,13 @@ def init(
             help="Enable service at boot",
         ),
     ] = True,
+    force: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=["--force", "-f"],
+            help="Overwrite existing config and recreate instance (not idempotent by default)",
+        ),
+    ] = False,
     dry_run: DryRun = False,
 ):
     """Initialize a new service instance.
@@ -172,10 +179,14 @@ def init(
     Creates config files, sets up directories, optionally starts service.
     Config is copy-on-write from package default to /etc/<pkg>/instances/.
 
+    Idempotent by default: if the config already exists, prints a notice and
+    skips all modifications. Use --force to overwrite the existing config.
+
     Examples:
         ots service init valkey 6379
         ots service init redis 6380 --port 6380 --bind 0.0.0.0
         ots service init valkey 6379 --dry-run
+        ots service init valkey 6379 --force   # Overwrite existing config
     """
     pkg = get_package(package)
     if port is not None:
@@ -195,11 +206,17 @@ def init(
     print()
 
     if dry_run:
-        print("[dry-run] Would create:")
-        print(f"  Config: {pkg.config_file(instance)}")
-        print(f"  Data:   {pkg.data_dir / instance}")
-        if not no_secrets and pkg.secrets:
-            print(f"  Secrets: {pkg.secrets_file(instance)}")
+        config_exists = pkg.config_file(instance).exists()
+        if config_exists and not force:
+            print(f"[dry-run] Config already exists: {pkg.config_file(instance)}")
+            print("[dry-run] Would skip (use --force to overwrite)")
+        else:
+            verb = "overwrite" if config_exists else "create"
+            print(f"[dry-run] Would {verb}:")
+            print(f"  Config: {pkg.config_file(instance)}")
+            print(f"  Data:   {pkg.data_dir / instance}")
+            if not no_secrets and pkg.secrets:
+                print(f"  Secrets: {pkg.secrets_file(instance)}")
         return
 
     # Check for default service conflict
@@ -211,8 +228,25 @@ def init(
         config_path = copy_default_config(pkg, instance)
         print(f"  Created: {config_path}")
     except FileExistsError:
-        print(f"  Config already exists: {pkg.config_file(instance)}")
-        config_path = pkg.config_file(instance)
+        if not force:
+            # Idempotent: skip all modifications when config already exists
+            print(f"  Config already exists: {pkg.config_file(instance)}")
+            print("  Skipping config modifications (use --force to overwrite)")
+            print()
+            print(f"Instance '{instance}' already configured.")
+            print(f"  Status: ots service status {package} {instance}")
+            return
+        # --force: delete and recreate from package default
+        import os
+
+        os.unlink(pkg.config_file(instance))
+        print("  Removed existing config (--force)")
+        try:
+            config_path = copy_default_config(pkg, instance)
+            print(f"  Recreated: {config_path}")
+        except FileNotFoundError as e:
+            print(f"  ERROR: {e}")
+            raise SystemExit(1)
     except FileNotFoundError as e:
         print(f"  ERROR: {e}")
         raise SystemExit(1)

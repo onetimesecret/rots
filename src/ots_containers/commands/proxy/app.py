@@ -83,7 +83,7 @@ def render(
         print(f"[ok] Rendered {tpl} -> {out}")
 
     except ProxyError as e:
-        raise SystemExit(f"[error] {e}") from e
+        raise SystemExit(str(e)) from e
 
 
 @app.command
@@ -99,7 +99,7 @@ def reload() -> None:
         reload_caddy()
         print("[ok] Caddy reloaded")
     except ProxyError as e:
-        raise SystemExit(f"[error] {e}") from e
+        raise SystemExit(str(e)) from e
 
 
 @app.command
@@ -121,7 +121,7 @@ def status() -> None:
         if result.stderr:
             print(result.stderr)
     except Exception as e:
-        raise SystemExit(f"[error] Failed to get Caddy status: {e}") from e
+        raise SystemExit(f"Failed to get Caddy status: {e}") from e
 
 
 @app.command
@@ -146,7 +146,7 @@ def validate(
     file_path = config_file or cfg.proxy_config
 
     if not file_path.exists():
-        raise SystemExit(f"[error] Config file not found: {file_path}")
+        raise SystemExit(f"Config file not found: {file_path}")
 
     try:
         result = subprocess.run(
@@ -159,8 +159,8 @@ def validate(
             if result.stdout.strip():
                 print(result.stdout)
         else:
-            print(f"[error] Validation failed for {file_path}")
+            print(f"Validation failed for {file_path}")
             print(result.stderr)
             raise SystemExit(1)
     except FileNotFoundError as e:
-        raise SystemExit("[error] caddy not found in PATH") from e
+        raise SystemExit("caddy not found in PATH") from e

@@ -5,7 +5,6 @@
 Process environment files to extract secrets and prepare for container deployment.
 """
 
-import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -64,14 +63,14 @@ def process(
 
     if not path.exists():
         print(f"Error: Environment file not found: {path}")
-        return 1
+        raise SystemExit(1)
 
     parsed = EnvFile.parse(path)
 
     if not parsed.secret_variable_names:
         print("Error: No SECRET_VARIABLE_NAMES defined in environment file.")
         print("Add a line like: SECRET_VARIABLE_NAMES=VAR1,VAR2,VAR3")
-        return 1
+        raise SystemExit(1)
 
     # Header
     print(f"Processing: {path}", end="")
@@ -114,14 +113,12 @@ def process(
     print()
     if has_errors:
         print("Errors found. All secrets must have values.")
-        return 1
+        raise SystemExit(1)
 
     if dry_run:
         print("Dry-run complete. Run without --dry-run to apply changes.")
     elif file_was_modified:
         print(f"Updated: {path}")
-
-    return 0
 
 
 @app.default
@@ -150,7 +147,7 @@ def show(
 
     if not path.exists():
         print(f"Error: Environment file not found: {path}")
-        return 1
+        raise SystemExit(1)
 
     parsed = EnvFile.parse(path)
 
@@ -171,7 +168,7 @@ def show(
             print(f"File: {path}")
             print("Warning: No SECRET_VARIABLE_NAMES defined.")
             print("Add a line like: SECRET_VARIABLE_NAMES=VAR1,VAR2,VAR3")
-        return 0
+        return
 
     secrets, messages = extract_secrets(parsed)
 
@@ -207,7 +204,7 @@ def show(
                 }
             )
         print(json.dumps(data, indent=2))
-        return 0
+        return
 
     print(f"File: {path}")
     print(f"SECRET_VARIABLE_NAMES: {parsed.get('SECRET_VARIABLE_NAMES')}")
@@ -244,8 +241,6 @@ def show(
         for msg in messages:
             print(msg)
 
-    return 0
-
 
 @app.command(name="quadlet-lines")
 def quadlet_lines(
@@ -268,9 +263,11 @@ def quadlet_lines(
     """
     path = env_file or DEFAULT_ENV_FILE
 
+    import sys
+
     if not path.exists():
         print(f"Error: Environment file not found: {path}", file=sys.stderr)
-        return 1
+        raise SystemExit(1)
 
     parsed = EnvFile.parse(path)
 
@@ -279,7 +276,7 @@ def quadlet_lines(
             "Error: No SECRET_VARIABLE_NAMES defined in environment file.",
             file=sys.stderr,
         )
-        return 1
+        raise SystemExit(1)
 
     secrets, messages = extract_secrets(parsed)
 
@@ -288,14 +285,12 @@ def quadlet_lines(
     if errors:
         for err in errors:
             print(f"Error: {err}", file=sys.stderr)
-        return 1
+        raise SystemExit(1)
 
     print("# Secrets via Podman secret store (not on disk)")
     print("# These are injected as environment variables at container start")
     for spec in secrets:
         print(spec.quadlet_line)
-
-    return 0
 
 
 @app.command
@@ -321,13 +316,13 @@ def verify(
 
     if not path.exists():
         print(f"Error: Environment file not found: {path}")
-        return 1
+        raise SystemExit(1)
 
     parsed = EnvFile.parse(path)
 
     if not parsed.secret_variable_names:
         print("No SECRET_VARIABLE_NAMES defined - nothing to verify.")
-        return 0
+        return
 
     print(f"Verifying secrets for: {path}")
     print()
@@ -346,7 +341,6 @@ def verify(
     print()
     if all_ok:
         print("All secrets verified.")
-        return 0
     else:
         print("Missing secrets detected. Run 'ots env process' to create them.")
-        return 1
+        raise SystemExit(1)
