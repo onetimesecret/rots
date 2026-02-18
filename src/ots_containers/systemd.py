@@ -284,13 +284,20 @@ def disable(unit: str) -> None:
 def unit_to_container_name(unit: str) -> str:
     """Convert systemd unit name to Quadlet container name.
 
-    Quadlet names containers as: systemd-{unit_with_underscores}
-    Example: onetime-web@7044 -> systemd-onetime-web_7044
+    Quadlet names containers as: systemd-{unit_with_separator}
+    Example: onetime-web@7044 -> systemd-onetime-web--7044
+
+    Uses ``--`` (double dash) as the separator between the template base name
+    and the instance identifier.  A single ``_`` was previously used but is
+    ambiguous because ``_`` can also appear in unit names, making it impossible
+    to distinguish ``onetime-web@7043`` from a hypothetical ``onetime-web_7043``.
+    Double dashes are the conventional systemd escaping character and will not
+    collide with naturally occurring underscores in unit names.
     """
     # Remove .service suffix if present
     name = unit.removesuffix(".service")
-    # Replace @ with _ (Quadlet convention)
-    name = name.replace("@", "_")
+    # Replace @ with -- (distinctive separator that won't collide with underscores)
+    name = name.replace("@", "--")
     return f"systemd-{name}"
 
 
@@ -369,13 +376,23 @@ class HealthCheckTimeoutError(Exception):
         )
 
 
-def wait_for_healthy(unit: str, timeout: int = 60, poll_interval: float = 2.0) -> None:
+def wait_for_healthy(
+    unit: str,
+    timeout: int = 60,
+    poll_interval: float = 2.0,
+    consecutive_failures_threshold: int = 3,
+) -> None:
     """Poll systemctl until the unit is active or timeout is reached.
 
     Args:
         unit: Systemd unit name (e.g., "onetime-web@7043")
         timeout: Maximum seconds to wait (default: 60)
         poll_interval: Seconds between checks (default: 2.0)
+        consecutive_failures_threshold: Number of consecutive "failed" polls
+            required before treating the failure as terminal and stopping early
+            (default: 3).  A single "failed" reading can be transient — the unit
+            may be in the process of restarting — so we tolerate a few before
+            giving up.
 
     Raises:
         HealthCheckTimeoutError: If the unit is not active within ``timeout`` seconds.
@@ -385,6 +402,7 @@ def wait_for_healthy(unit: str, timeout: int = 60, poll_interval: float = 2.0) -
     require_systemctl()
     deadline = time.monotonic() + timeout
     last_state = "unknown"
+    consecutive_failures = 0
 
     while time.monotonic() < deadline:
         result = subprocess.run(
@@ -397,10 +415,21 @@ def wait_for_healthy(unit: str, timeout: int = 60, poll_interval: float = 2.0) -
         if result.returncode == 0 and last_state == "active":
             logger.debug("%s is active", unit)
             return
-        # Stop early on terminal failure states — no point continuing to poll
         if last_state == "failed":
-            break
-        logger.debug("%s is %s, waiting...", unit, last_state)
+            consecutive_failures += 1
+            logger.debug(
+                "%s is failed (consecutive: %d/%d), waiting...",
+                unit,
+                consecutive_failures,
+                consecutive_failures_threshold,
+            )
+            # Only exit early once the failure has persisted across multiple
+            # consecutive polls — a transient "failed" during restart is normal.
+            if consecutive_failures >= consecutive_failures_threshold:
+                break
+        else:
+            consecutive_failures = 0
+            logger.debug("%s is %s, waiting...", unit, last_state)
         time.sleep(poll_interval)
 
     raise HealthCheckTimeoutError(unit, timeout, last_state)
