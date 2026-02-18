@@ -356,7 +356,7 @@ class TestEnableDisableWithoutSystemctl:
 
     def test_enable_without_systemctl(self, mocker, capsys):
         """enable should exit with code 1 and a helpful message when systemctl is absent."""
-        from ots_containers.commands.instance import app as instance_app
+        import ots_containers.commands.instance.app as instance_app
 
         mocker.patch("shutil.which", return_value=None)
 
@@ -369,7 +369,7 @@ class TestEnableDisableWithoutSystemctl:
 
     def test_disable_without_systemctl(self, mocker, capsys):
         """disable should exit with code 1 and a helpful message when systemctl is absent."""
-        from ots_containers.commands.instance import app as instance_app
+        import ots_containers.commands.instance.app as instance_app
 
         mocker.patch("shutil.which", return_value=None)
 
@@ -429,7 +429,7 @@ class TestExecShellFallback:
 
     def test_exec_uses_command_override_when_provided(self, mocker):
         """exec_shell with --command should use that command, not host $SHELL."""
-        from ots_containers.commands.instance import app as instance_app
+        import ots_containers.commands.instance.app as instance_app
 
         mocker.patch("shutil.which", return_value="/usr/bin/systemctl")
         mock_run = mocker.patch("subprocess.run")
@@ -453,7 +453,7 @@ class TestExecShellFallback:
         """
         import os
 
-        from ots_containers.commands.instance import app as instance_app
+        import ots_containers.commands.instance.app as instance_app
         from ots_containers.commands.instance.annotations import InstanceType
 
         mocker.patch("shutil.which", return_value="/usr/bin/systemctl")
