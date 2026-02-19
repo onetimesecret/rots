@@ -34,7 +34,7 @@ classifiers = [
 dependencies = ["cyclopts>=3.9", "podman>=5.0", "pyyaml>=6.0"]
 
 [project.optional-dependencies]
-dev = ["pre-commit>=3.0", "pyright>=1.1.390"]
+dev = ["pre-commit>=3.0", "pyright>=1.1.390", "ruff>=0.9"]
 test = ["pytest>=8.0", "pytest-mock>=3.14", "pytest-cov>=6.0", "coverage>=7.10"]
 
 [project.scripts]
