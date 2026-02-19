@@ -192,7 +192,7 @@ class TestVersionCommand:
         from ots_containers import __version__
         from ots_containers.cli import version
 
-        mocker.patch("subprocess.run", side_effect=Exception("git not found"))
+        mocker.patch("subprocess.run", side_effect=FileNotFoundError("git not found"))
         version()
         captured = capsys.readouterr()
         assert __version__ in captured.out
