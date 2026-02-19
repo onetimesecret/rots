@@ -398,7 +398,7 @@ def deploy(
             name=["--wait"],
             help=(
                 "Block until the HTTP health endpoint returns 200 (web instances only). "
-                "Polls http://localhost:{port}/health for up to 60s. "
+                "Polls http://localhost:{port}/health for up to 60s (or --wait-timeout). "
                 "Records success=False in deployment history if health check times out."
             ),
         ),
@@ -551,8 +551,10 @@ def deploy(
                 # Optionally wait for HTTP health check (web instances only)
                 if wait and inst_type == InstanceType.WEB:
                     if not quiet and not json_output:
-                        print(f"  Waiting up to 60s for http://localhost:{port}/health ...")
-                    systemd.wait_for_http_healthy(port, timeout=60)
+                        timeout_s = wait_timeout or 60
+                        url = f"http://localhost:{port}/health"
+                        print(f"  Waiting up to {timeout_s}s for {url} ...")
+                    systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60)
                 # Record successful deployment
                 db.record_deployment(
                     cfg.db_path,
@@ -694,7 +696,7 @@ def redeploy(
             name=["--wait"],
             help=(
                 "Block until the HTTP health endpoint returns 200 (web instances only). "
-                "Polls http://localhost:{port}/health for up to 60s. "
+                "Polls http://localhost:{port}/health for up to 60s (or --wait-timeout). "
                 "Records success=False in deployment history if health check times out."
             ),
         ),
@@ -882,8 +884,10 @@ def redeploy(
                 # Optionally wait for HTTP health check (web instances only)
                 if wait and inst_type == InstanceType.WEB:
                     if not quiet and not json_output:
-                        print(f"  Waiting up to 60s for http://localhost:{port}/health ...")
-                    systemd.wait_for_http_healthy(port, timeout=60)
+                        timeout_s = wait_timeout or 60
+                        url = f"http://localhost:{port}/health"
+                        print(f"  Waiting up to {timeout_s}s for {url} ...")
+                    systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60)
 
                 db.record_deployment(
                     cfg.db_path,
@@ -2021,7 +2025,7 @@ def metrics(
                     timeout=10,
                 )
                 active_state = state_result.stdout.strip()
-            except Exception:
+            except (subprocess.SubprocessError, OSError):
                 active_state = "unknown"
 
             # Get podman stats (non-streaming, single snapshot)
@@ -2045,7 +2049,7 @@ def metrics(
                     # podman stats --format json returns a list
                     if isinstance(raw, list) and raw:
                         stats_data = raw[0]
-            except (subprocess.TimeoutExpired, json_mod.JSONDecodeError, Exception):
+            except (subprocess.SubprocessError, OSError, json_mod.JSONDecodeError):
                 stats_data = None
 
             entry: dict = {
@@ -2085,7 +2089,7 @@ def metrics(
         f"{'CPU%':<8} {'MEM':<20} {'MEM%':<8} {'NET IN/OUT':<24}"
     )
     print(header)
-    print("-" * 120)
+    print("-" * len(header))
 
     for entry in results:
         net_io = f"{entry['net_input']}/{entry['net_output']}"
