@@ -397,7 +397,7 @@ class TestDoctorCommand:
         mocker.patch("ots_containers.environment_file.EnvFile.parse", return_value=parsed_mock)
         mocker.patch("ots_containers.environment_file.secret_exists", return_value=True)
 
-        mocker.patch("subprocess.run", side_effect=Exception("timeout"))
+        mocker.patch("subprocess.run", side_effect=TimeoutError("timeout"))
 
         from ots_containers.cli import doctor
 
