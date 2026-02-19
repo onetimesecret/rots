@@ -13,7 +13,16 @@ import cyclopts
 from ots_containers import assets, db, quadlet, systemd
 from ots_containers.config import Config
 
-from ..common import DryRun, Follow, JsonOutput, Lines, Quiet, Yes
+from ..common import (
+    EXIT_FAILURE,
+    EXIT_PARTIAL,
+    DryRun,
+    Follow,
+    JsonOutput,
+    Lines,
+    Quiet,
+    Yes,
+)
 from ._helpers import (
     build_secret_args,
     deploy_lock,
@@ -614,8 +623,9 @@ def deploy(
                         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                     }
                 )
+                # Print the error but do not abort — allow remaining instances to proceed.
+                # The caller will use EXIT_PARTIAL if some succeeded and some failed.
                 print(f"  ERROR: {e}", file=sys.stderr)
-                raise SystemExit(1) from None
             except Exception as e:
                 fail_notes = (
                     str(e)
@@ -652,17 +662,23 @@ def deploy(
     if post_hook and all(r["success"] for r in deploy_results):
         run_hook(post_hook, "post-hook", quiet=quiet or json_output)
 
+    all_ok = all(r["success"] for r in deploy_results)
+    any_ok = any(r["success"] for r in deploy_results)
+
     if json_output:
         print(
             json_mod.dumps(
                 {
                     "action": "deploy",
-                    "success": all(r["success"] for r in deploy_results),
+                    "success": all_ok,
                     "instances": deploy_results,
                 },
                 indent=2,
             )
         )
+
+    if deploy_results and not all_ok:
+        raise SystemExit(EXIT_PARTIAL if any_ok else EXIT_FAILURE)
 
 
 @app.command
@@ -938,8 +954,9 @@ def redeploy(
                         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                     }
                 )
+                # Print the error but do not abort — allow remaining instances to proceed.
+                # The caller will use EXIT_PARTIAL if some succeeded and some failed.
                 print(f"  ERROR: {e}", file=sys.stderr)
-                raise SystemExit(1) from None
             except Exception as e:
                 fail_notes = (
                     str(e)
@@ -976,17 +993,23 @@ def redeploy(
     if post_hook and all(r["success"] for r in redeploy_results):
         run_hook(post_hook, "post-hook", quiet=quiet or json_output)
 
+    all_ok = all(r["success"] for r in redeploy_results)
+    any_ok = any(r["success"] for r in redeploy_results)
+
     if json_output:
         print(
             json_mod.dumps(
                 {
                     "action": "redeploy",
-                    "success": all(r["success"] for r in redeploy_results),
+                    "success": all_ok,
                     "instances": redeploy_results,
                 },
                 indent=2,
             )
         )
+
+    if redeploy_results and not all_ok:
+        raise SystemExit(EXIT_PARTIAL if any_ok else EXIT_FAILURE)
 
 
 @app.command

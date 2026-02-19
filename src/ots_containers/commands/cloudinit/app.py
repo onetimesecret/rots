@@ -62,11 +62,28 @@ def generate(
         str | None,
         cyclopts.Parameter(help="Path to Valkey GPG key file"),
     ] = None,
+    ssh_authorized_key: Annotated[
+        list[str] | None,
+        cyclopts.Parameter(help="SSH public key to add to the default user (repeatable)"),
+    ] = None,
+    timezone: Annotated[
+        str,
+        cyclopts.Parameter(help="System timezone (e.g. UTC, America/New_York)"),
+    ] = "UTC",
+    hostname: Annotated[
+        str | None,
+        cyclopts.Parameter(help="System hostname"),
+    ] = None,
 ):
     """Generate cloud-init configuration with Debian 13 apt sources.
 
-    Generates a cloud-init YAML file with:
+    Generates an opinionated cloud-init YAML file that takes a fresh Debian 13
+    VM to a running OneTimeSecret instance in a single boot:
+
     - Debian 13 (Trixie) main repositories in DEB822 format
+    - onetimesecret system user/group created at boot
+    - /etc/default/onetimesecret scaffolded for operator configuration
+    - podman socket enabled; ots-containers init invoked via runcmd
     - Optional PostgreSQL official repository
     - Optional Valkey repository
     - Optional xcaddy repo and custom Caddy build (web profile)
@@ -78,6 +95,8 @@ def generate(
         ots-containers cloudinit generate --include-postgresql --postgresql-key /path/to/pgp.asc
         ots-containers cloudinit generate --include-xcaddy
         ots-containers cloudinit generate --include-xcaddy --caddy-version v2.10.2
+        ots-containers cloudinit generate --timezone America/New_York --hostname ots-prod-1
+        ots-containers cloudinit generate --ssh-authorized-key "ssh-ed25519 AAAA..."
     """
     # Read GPG keys if provided
     postgresql_gpg = None
@@ -99,6 +118,9 @@ def generate(
             valkey_gpg_key=valkey_gpg,
             caddy_version=caddy_version,
             caddy_plugins=caddy_plugins,
+            ssh_authorized_keys=ssh_authorized_key or None,
+            timezone=timezone,
+            hostname=hostname,
         )
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)

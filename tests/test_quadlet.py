@@ -1,6 +1,8 @@
 # tests/test_quadlet.py
 """Tests for quadlet module - Podman quadlet file generation."""
 
+import pytest
+
 
 class TestContainerTemplate:
     """Test web container quadlet template generation."""
@@ -213,6 +215,22 @@ class TestContainerTemplate:
         assert "After=local-fs.target network-online.target" in content
         assert "Wants=network-online.target" in content
         assert "WantedBy=multi-user.target" in content
+
+    def test_write_web_template_includes_timeout_stop_sec(self, mocker, tmp_path):
+        """Web quadlet should have TimeoutStopSec for connection draining."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            web_template_path=tmp_path / "onetime-web@.container",
+            var_dir=tmp_path / "var",
+        )
+
+        quadlet.write_web_template(cfg, force=True)
+
+        content = cfg.web_template_path.read_text()
+        assert "TimeoutStopSec=30" in content
 
     def test_write_web_template_valkey_dependency_when_configured(self, mocker, tmp_path):
         """write_web_template should add After= and Wants= for Valkey when configured."""
@@ -1009,3 +1027,38 @@ class TestGetSecretsSection:
 
         # When all secrets are filtered out, should not contain Secret= lines
         assert "Secret=" not in result
+
+    def test_missing_env_file_exits_with_precondition_code(self, tmp_path):
+        """Missing env file without --force should exit with code 3 (precondition not met)."""
+        from ots_containers.quadlet import get_secrets_section
+
+        with pytest.raises(SystemExit) as exc_info:
+            get_secrets_section(env_file_path=tmp_path / "nonexistent.env")
+
+        assert exc_info.value.code == 3  # EXIT_PRECOND
+
+    def test_empty_secret_names_exits_with_precondition_code(self, tmp_path):
+        """Env file with no SECRET_VARIABLE_NAMES without --force exits with code 3."""
+        from ots_containers.quadlet import get_secrets_section
+
+        env_file = tmp_path / "onetimesecret.env"
+        env_file.write_text("REDIS_URL=redis://localhost\n")  # No SECRET_VARIABLE_NAMES
+
+        with pytest.raises(SystemExit) as exc_info:
+            get_secrets_section(env_file_path=env_file)
+
+        assert exc_info.value.code == 3  # EXIT_PRECOND
+
+    def test_no_podman_secrets_exits_with_precondition_code(self, mocker, tmp_path):
+        """No existing podman secrets without --force exits with code 3."""
+        mocker.patch("ots_containers.quadlet.secret_exists", return_value=False)
+
+        from ots_containers.quadlet import get_secrets_section
+
+        env_file = tmp_path / "onetimesecret.env"
+        env_file.write_text("SECRET_VARIABLE_NAMES=API_KEY\n_API_KEY=ots_api_key\n")
+
+        with pytest.raises(SystemExit) as exc_info:
+            get_secrets_section(env_file_path=env_file)
+
+        assert exc_info.value.code == 3  # EXIT_PRECOND

@@ -1099,3 +1099,109 @@ class TestRegistryEnvVarResolution:
         mock_record.assert_called_once()
         assert mock_record.call_args.kwargs["image"] == "registry.example.com/onetimesecret"
         assert mock_record.call_args.kwargs["tag"] == "v1.0.0"
+
+
+class TestPushEnvVarResolution:
+    """Test that push resolves TAG and IMAGE from env vars.
+
+    push() reads TAG via cfg.tag and IMAGE via cfg.image when no CLI flags are
+    given.  Only external side effects (podman subprocess, db) are mocked.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        """Remove relevant env vars so tests start clean."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+    def _mock_externals(self, mocker, tmp_path):
+        """Mock podman subprocess and db calls, return the subprocess mock."""
+        mock_run = mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout="", returncode=0),
+        )
+        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        return mock_run
+
+    def test_push_uses_tag_env_var_when_no_cli_flag(self, mocker, monkeypatch, tmp_path):
+        """Scenario: TAG env var (no --tag flag) should be used as the image tag."""
+        from ots_containers.commands.image.app import push
+
+        monkeypatch.setenv("TAG", "v1.2.3")
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        push()
+
+        # podman.tag and podman.push are both called
+        assert mock_run.call_count == 2
+        tag_cmd = " ".join(mock_run.call_args_list[0][0][0])
+        # Source should include the env-var tag
+        assert "v1.2.3" in tag_cmd
+        push_cmd = " ".join(mock_run.call_args_list[1][0][0])
+        assert "v1.2.3" in push_cmd
+
+    def test_push_derives_src_basename_from_image_env_var(self, mocker, monkeypatch, tmp_path):
+        """Scenario: IMAGE env var constructs source_full and target_full correctly."""
+        from ots_containers.commands.image.app import push
+
+        monkeypatch.setenv("IMAGE", "ghcr.io/myorg/myapp")
+        monkeypatch.setenv("TAG", "v2.0.0")
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        push()
+
+        assert mock_run.call_count == 2
+        tag_cmd = " ".join(mock_run.call_args_list[0][0][0])
+        # source_full = IMAGE:TAG
+        assert "ghcr.io/myorg/myapp:v2.0.0" in tag_cmd
+        # target_full = REGISTRY/basename:TAG  (basename of "ghcr.io/myorg/myapp" is "myapp")
+        assert "registry.example.com/myapp:v2.0.0" in tag_cmd
+
+    def test_push_strips_registry_prefix_from_image_env_var(self, mocker, monkeypatch, tmp_path):
+        """Scenario: custom IMAGE env var with registry host produces correct target basename."""
+        from ots_containers.commands.image.app import push
+
+        monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
+        monkeypatch.setenv("TAG", "v3.0.0")
+        monkeypatch.setenv("OTS_REGISTRY", "myreg.example.com")
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        push()
+
+        assert mock_run.call_count == 2
+        tag_cmd = " ".join(mock_run.call_args_list[0][0][0])
+        # basename of "docker.io/myorg/myapp" is "myapp"
+        assert "myreg.example.com/myapp:v3.0.0" in tag_cmd
+        # source should use the full IMAGE reference
+        assert "docker.io/myorg/myapp:v3.0.0" in tag_cmd
+
+    def test_push_missing_tag_exits_with_error(self, mocker, monkeypatch, tmp_path, capsys):
+        """Scenario: push with no --tag and TAG env var set to empty exits with code 1."""
+        from ots_containers.commands.image.app import push
+
+        # Setting TAG to empty string causes cfg.tag to return "" (falsy)
+        monkeypatch.setenv("TAG", "")
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            push()
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "Tag required" in captured.out

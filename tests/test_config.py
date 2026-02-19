@@ -409,6 +409,26 @@ class TestConfigPrivateImage:
         cfg = Config()
         assert cfg.private_image_with_tag == "registry.example.com/myorg/onetimesecret:@current"
 
+    def test_private_image_custom_image_derives_basename(self, monkeypatch):
+        """IMAGE env var with multi-segment path uses only the last segment as basename."""
+        monkeypatch.setenv("IMAGE", "docker.io/myorg/customapp")
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+        from ots_containers.config import Config
+
+        cfg = Config()
+        # basename of "docker.io/myorg/customapp" is "customapp"
+        assert cfg.private_image == "registry.example.com/customapp"
+
+    def test_private_image_deep_registry_path_basename(self, monkeypatch):
+        """IMAGE with three path components strips all but the last as basename."""
+        monkeypatch.setenv("IMAGE", "registry.corp.com/team/webapp")
+        monkeypatch.setenv("OTS_REGISTRY", "myreg.example.com")
+        from ots_containers.config import Config
+
+        cfg = Config()
+        # basename of "registry.corp.com/team/webapp" is "webapp"
+        assert cfg.private_image == "myreg.example.com/webapp"
+
 
 class TestConfigResolveImageTag:
     """Test Config.resolve_image_tag() with a real SQLite database."""

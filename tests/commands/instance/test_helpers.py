@@ -352,3 +352,60 @@ class TestRunHook:
 
         captured = capsys.readouterr()
         assert "pre-hook" not in captured.out
+
+    def test_hook_receives_correct_command_string(self, mocker):
+        """subprocess.run should receive the exact command string provided."""
+        from ots_containers.commands.instance._helpers import run_hook
+
+        mock_run = mocker.patch(
+            "subprocess.run",
+            return_value=mocker.MagicMock(returncode=0),
+        )
+
+        run_hook("./scripts/scan.sh --verbose", "pre-hook")
+
+        call_args = mock_run.call_args[0]
+        assert call_args[0] == "./scripts/scan.sh --verbose"
+
+    def test_verbose_mode_prints_progress_messages(self, mocker, capsys):
+        """quiet=False (default) should print stage name and pass confirmation."""
+        from ots_containers.commands.instance._helpers import run_hook
+
+        mocker.patch(
+            "subprocess.run",
+            return_value=mocker.MagicMock(returncode=0),
+        )
+
+        run_hook("echo ok", "pre-hook", quiet=False)
+
+        captured = capsys.readouterr()
+        assert "pre-hook" in captured.out
+        assert "passed" in captured.out
+
+    def test_failed_hook_error_message_includes_exit_code(self, mocker, capsys):
+        """Error output should include the non-zero exit code."""
+        from ots_containers.commands.instance._helpers import run_hook
+
+        mocker.patch(
+            "subprocess.run",
+            return_value=mocker.MagicMock(returncode=42),
+        )
+
+        with pytest.raises(SystemExit):
+            run_hook("./scan.sh", "pre-hook")
+
+        captured = capsys.readouterr()
+        assert "42" in captured.err
+
+    def test_successful_hook_returns_none(self, mocker):
+        """run_hook should return None when the hook exits 0."""
+        from ots_containers.commands.instance._helpers import run_hook
+
+        mocker.patch(
+            "subprocess.run",
+            return_value=mocker.MagicMock(returncode=0),
+        )
+
+        result = run_hook("echo ok", "post-hook")
+
+        assert result is None
