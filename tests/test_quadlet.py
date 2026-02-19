@@ -1,6 +1,8 @@
 # tests/test_quadlet.py
 """Tests for quadlet module - Podman quadlet file generation."""
 
+import pytest
+
 
 class TestContainerTemplate:
     """Test web container quadlet template generation."""
@@ -213,6 +215,22 @@ class TestContainerTemplate:
         assert "After=local-fs.target network-online.target" in content
         assert "Wants=network-online.target" in content
         assert "WantedBy=multi-user.target" in content
+
+    def test_write_web_template_includes_timeout_stop_sec(self, mocker, tmp_path):
+        """Web quadlet should have TimeoutStopSec for connection draining."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            web_template_path=tmp_path / "onetime-web@.container",
+            var_dir=tmp_path / "var",
+        )
+
+        quadlet.write_web_template(cfg, force=True)
+
+        content = cfg.web_template_path.read_text()
+        assert "TimeoutStopSec=30" in content
 
     def test_write_web_template_valkey_dependency_when_configured(self, mocker, tmp_path):
         """write_web_template should add After= and Wants= for Valkey when configured."""
@@ -1009,3 +1027,273 @@ class TestGetSecretsSection:
 
         # When all secrets are filtered out, should not contain Secret= lines
         assert "Secret=" not in result
+
+    def test_missing_env_file_exits_with_precondition_code(self, tmp_path):
+        """Missing env file without --force should exit with code 3 (precondition not met)."""
+        from ots_containers.quadlet import get_secrets_section
+
+        with pytest.raises(SystemExit) as exc_info:
+            get_secrets_section(env_file_path=tmp_path / "nonexistent.env")
+
+        assert exc_info.value.code == 3  # EXIT_PRECOND
+
+    def test_empty_secret_names_exits_with_precondition_code(self, tmp_path):
+        """Env file with no SECRET_VARIABLE_NAMES without --force exits with code 3."""
+        from ots_containers.quadlet import get_secrets_section
+
+        env_file = tmp_path / "onetimesecret.env"
+        env_file.write_text("REDIS_URL=redis://localhost\n")  # No SECRET_VARIABLE_NAMES
+
+        with pytest.raises(SystemExit) as exc_info:
+            get_secrets_section(env_file_path=env_file)
+
+        assert exc_info.value.code == 3  # EXIT_PRECOND
+
+    def test_no_podman_secrets_exits_with_precondition_code(self, mocker, tmp_path):
+        """No existing podman secrets without --force exits with code 3."""
+        mocker.patch("ots_containers.quadlet.secret_exists", return_value=False)
+
+        from ots_containers.quadlet import get_secrets_section
+
+        env_file = tmp_path / "onetimesecret.env"
+        env_file.write_text("SECRET_VARIABLE_NAMES=API_KEY\n_API_KEY=ots_api_key\n")
+
+        with pytest.raises(SystemExit) as exc_info:
+            get_secrets_section(env_file_path=env_file)
+
+        assert exc_info.value.code == 3  # EXIT_PRECOND
+
+    def test_missing_env_file_force_returns_comment(self, tmp_path, capsys):
+        """get_secrets_section(force=True) with missing env file returns comment, prints WARNING."""
+        from ots_containers.quadlet import get_secrets_section
+
+        result = get_secrets_section(
+            env_file_path=tmp_path / "nonexistent.env",
+            force=True,
+        )
+
+        assert "No secrets configured" in result
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+
+    def test_no_secret_names_force_returns_comment(self, tmp_path, capsys):
+        """get_secrets_section(force=True) with no SECRET_VARIABLE_NAMES returns comment."""
+        from ots_containers.quadlet import get_secrets_section
+
+        env_file = tmp_path / "onetimesecret.env"
+        env_file.write_text("REDIS_URL=redis://localhost\n")  # No SECRET_VARIABLE_NAMES
+
+        result = get_secrets_section(env_file_path=env_file, force=True)
+
+        assert "No secrets configured" in result
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+
+    def test_write_web_template_missing_env_propagates_system_exit(self, mocker, tmp_path):
+        """write_web_template() without force propagates SystemExit(3) when env file missing."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            web_template_path=tmp_path / "onetime-web@.container",
+            var_dir=tmp_path / "var",
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            quadlet.write_web_template(cfg, env_file_path=tmp_path / "nonexistent.env")
+
+        assert exc_info.value.code == 3  # EXIT_PRECOND
+
+
+class TestWriteTemplatesForce:
+    """Tests for force= parameter across write_*_template functions."""
+
+    def test_write_web_template_force_skips_system_exit(self, mocker, tmp_path, capsys):
+        """write_web_template(force=True) should complete when env file is missing."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            web_template_path=tmp_path / "onetime-web@.container",
+            var_dir=tmp_path / "var",
+        )
+
+        # Should not raise SystemExit
+        quadlet.write_web_template(cfg, env_file_path=tmp_path / "nonexistent.env", force=True)
+
+        assert cfg.web_template_path.exists()
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+
+    def test_write_worker_template_force_skips_system_exit(self, mocker, tmp_path, capsys):
+        """write_worker_template(force=True) should complete when env file is missing."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            worker_template_path=tmp_path / "onetime-worker@.container",
+            var_dir=tmp_path / "var",
+        )
+
+        quadlet.write_worker_template(cfg, env_file_path=tmp_path / "nonexistent.env", force=True)
+
+        assert cfg.worker_template_path.exists()
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+
+    def test_write_scheduler_template_force_skips_system_exit(self, mocker, tmp_path, capsys):
+        """write_scheduler_template(force=True) should complete when env file is missing."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            scheduler_template_path=tmp_path / "onetime-scheduler@.container",
+            var_dir=tmp_path / "var",
+        )
+
+        quadlet.write_scheduler_template(
+            cfg, env_file_path=tmp_path / "nonexistent.env", force=True
+        )
+
+        assert cfg.scheduler_template_path.exists()
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+
+    def test_write_web_template_no_force_raises_system_exit(self, mocker, tmp_path):
+        """write_web_template() without force=True raises SystemExit(3) for missing env."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            web_template_path=tmp_path / "onetime-web@.container",
+            var_dir=tmp_path / "var",
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            quadlet.write_web_template(cfg, env_file_path=tmp_path / "nonexistent.env")
+
+        assert exc_info.value.code == 3
+
+    def test_write_worker_template_no_force_raises_system_exit(self, mocker, tmp_path):
+        """write_worker_template() without force=True raises SystemExit(3) for missing env."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            worker_template_path=tmp_path / "onetime-worker@.container",
+            var_dir=tmp_path / "var",
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            quadlet.write_worker_template(cfg, env_file_path=tmp_path / "nonexistent.env")
+
+        assert exc_info.value.code == 3
+
+    def test_write_scheduler_template_no_force_raises_system_exit(self, mocker, tmp_path):
+        """write_scheduler_template() without force=True raises SystemExit(3) for missing env."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            scheduler_template_path=tmp_path / "onetime-scheduler@.container",
+            var_dir=tmp_path / "var",
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            quadlet.write_scheduler_template(cfg, env_file_path=tmp_path / "nonexistent.env")
+
+        assert exc_info.value.code == 3
+
+
+class TestGetResourceLimitsSection:
+    """Tests for get_resource_limits_section()."""
+
+    def test_both_limits_set(self):
+        """Should include MemoryMax and CPUQuota when both config fields are set."""
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(memory_max="1G", cpu_quota="80%")
+        result = quadlet.get_resource_limits_section(cfg)
+        assert "MemoryMax=1G" in result
+        assert "CPUQuota=80%" in result
+
+    def test_only_memory_max_set(self):
+        """Should include only MemoryMax when cpu_quota is None."""
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(memory_max="512M", cpu_quota=None)
+        result = quadlet.get_resource_limits_section(cfg)
+        assert "MemoryMax=512M" in result
+        assert "CPUQuota" not in result
+
+    def test_only_cpu_quota_set(self):
+        """Should include only CPUQuota when memory_max is None."""
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(memory_max=None, cpu_quota="50%")
+        result = quadlet.get_resource_limits_section(cfg)
+        assert "CPUQuota=50%" in result
+        assert "MemoryMax" not in result
+
+    def test_both_none_returns_empty_string(self):
+        """Should return empty string when neither limit is configured."""
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(memory_max=None, cpu_quota=None)
+        result = quadlet.get_resource_limits_section(cfg)
+        assert result == ""
+
+    def test_write_web_template_includes_resource_limits(self, mocker, tmp_path, monkeypatch):
+        """Written web quadlet should include MemoryMax= when memory_max is configured."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        monkeypatch.delenv("MEMORY_MAX", raising=False)
+        monkeypatch.delenv("CPU_QUOTA", raising=False)
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            web_template_path=tmp_path / "onetime-web@.container",
+            var_dir=tmp_path / "var",
+            memory_max="2G",
+            cpu_quota="75%",
+        )
+
+        quadlet.write_web_template(cfg, force=True)
+
+        content = cfg.web_template_path.read_text()
+        assert "MemoryMax=2G" in content
+        assert "CPUQuota=75%" in content
+
+    def test_write_web_template_no_resource_limits_section_when_unset(
+        self, mocker, tmp_path, monkeypatch
+    ):
+        """Written web quadlet should not contain MemoryMax/CPUQuota when not configured."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        monkeypatch.delenv("MEMORY_MAX", raising=False)
+        monkeypatch.delenv("CPU_QUOTA", raising=False)
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            web_template_path=tmp_path / "onetime-web@.container",
+            var_dir=tmp_path / "var",
+            memory_max=None,
+            cpu_quota=None,
+        )
+
+        quadlet.write_web_template(cfg, force=True)
+
+        content = cfg.web_template_path.read_text()
+        assert "MemoryMax" not in content
+        assert "CPUQuota" not in content

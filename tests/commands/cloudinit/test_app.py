@@ -121,6 +121,67 @@ class TestCloudInitGenerate:
         build_cmd = [cmd for cmd in data["runcmd"] if "xcaddy build" in cmd][0]
         assert "CADDY_VERSION=v2.9.0" in build_cmd
 
+    def test_generate_with_timezone(self, capsys):
+        """--timezone should set the timezone field."""
+        with pytest.raises(SystemExit) as exc_info:
+            app(["generate", "--timezone", "Europe/Berlin"])
+
+        assert exc_info.value.code == 0
+
+        captured = capsys.readouterr()
+        data = yaml.safe_load(captured.out)
+        assert data["timezone"] == "Europe/Berlin"
+
+    def test_generate_with_hostname(self, capsys):
+        """--hostname should set the hostname field."""
+        with pytest.raises(SystemExit) as exc_info:
+            app(["generate", "--hostname", "ots-prod-1"])
+
+        assert exc_info.value.code == 0
+
+        captured = capsys.readouterr()
+        data = yaml.safe_load(captured.out)
+        assert data["hostname"] == "ots-prod-1"
+
+    def test_generate_with_ssh_authorized_key(self, capsys):
+        """--ssh-authorized-key should add the key to ssh_authorized_keys."""
+        test_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test@example.com"
+        with pytest.raises(SystemExit) as exc_info:
+            app(["generate", "--ssh-authorized-key", test_key])
+
+        assert exc_info.value.code == 0
+
+        captured = capsys.readouterr()
+        data = yaml.safe_load(captured.out)
+        assert "ssh_authorized_keys" in data
+        assert test_key in data["ssh_authorized_keys"]
+
+    def test_generate_always_includes_ots_user(self, capsys):
+        """Generated config should always include the onetimesecret system user."""
+        with pytest.raises(SystemExit) as exc_info:
+            app(["generate"])
+
+        assert exc_info.value.code == 0
+
+        captured = capsys.readouterr()
+        data = yaml.safe_load(captured.out)
+        assert "users" in data
+        user_names = [u.get("name") for u in data["users"]]
+        assert "onetimesecret" in user_names
+
+    def test_generate_always_includes_ots_env_file(self, capsys):
+        """Generated config should always write /etc/default/onetimesecret."""
+        with pytest.raises(SystemExit) as exc_info:
+            app(["generate"])
+
+        assert exc_info.value.code == 0
+
+        captured = capsys.readouterr()
+        data = yaml.safe_load(captured.out)
+        assert "write_files" in data
+        file_paths = [f["path"] for f in data["write_files"]]
+        assert "/etc/default/onetimesecret" in file_paths
+
 
 class TestCloudInitValidate:
     """Tests for cloudinit validate command."""

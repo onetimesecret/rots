@@ -92,9 +92,11 @@ def process(
     file_was_modified = False
     for msg in messages:
         if "secret created:" in msg:
-            print(f"  [created]  {msg.split(': ', 1)[-1]}")
+            secret_name = msg.split(": ", 1)[-1]
+            print(f"  [created]  {secret_name}  (stored in podman secret store)")
         elif "secret replaced:" in msg:
-            print(f"  [replaced] {msg.split(': ', 1)[-1]}")
+            secret_name = msg.split(": ", 1)[-1]
+            print(f"  [replaced] {secret_name}  (updated in podman secret store)")
         elif "empty" in msg.lower():
             var = msg.split()[1] if len(msg.split()) > 1 else "unknown"
             print(f"  [error]    {var} is empty")

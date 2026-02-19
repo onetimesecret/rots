@@ -18,6 +18,11 @@ from .environment_file import (
     secret_exists,
 )
 
+# EXIT_PRECOND (3) is intentionally not imported from commands.common to avoid
+# a circular import: quadlet -> commands -> env -> quadlet.
+# The value matches commands.common.EXIT_PRECOND.
+_EXIT_PRECOND = 3
+
 # Default environment file path
 DEFAULT_ENV_FILE = Path("/etc/default/onetimesecret")
 
@@ -65,6 +70,12 @@ Wants=network-online.target{valkey_wants}
 [Service]
 Restart=on-failure
 RestartSec=5
+# Allow in-flight HTTP requests to complete before the container exits.
+# On SIGTERM, the Ruby/Puma process stops accepting new connections and
+# drains the request queue; this window gives it time to do so.
+# Caddy upstream health checks (HealthInterval=30s) will detect the
+# removed backend and stop routing new requests within one check cycle.
+TimeoutStopSec=30
 {resource_limits_section}
 [Container]
 Image={image}
@@ -115,8 +126,10 @@ def get_secrets_section(env_file_path: Path | None = None, *, force: bool = Fals
         Multi-line string with Secret= directives
 
     Raises:
-        SystemExit(1): When env file is missing or no secrets are configured,
-                       unless force=True.
+        SystemExit(3): When env file is missing or no secrets are configured,
+            unless force=True.  Exit code 3 (precondition not met) signals to
+            CI pipelines that no destructive action was taken — the required
+            configuration was simply absent.
     """
     env_path = env_file_path or DEFAULT_ENV_FILE
 
@@ -141,7 +154,8 @@ def get_secrets_section(env_file_path: Path | None = None, *, force: bool = Fals
         if force:
             print(f"WARNING: {msg}", file=sys.stderr)
             return "# No secrets configured (env file not found - deployed with --force)"
-        raise SystemExit(msg)
+        print(msg, file=sys.stderr)
+        raise SystemExit(_EXIT_PRECOND)
 
     secrets = get_secrets_from_env_file(env_path)
     if not secrets:
@@ -161,7 +175,8 @@ def get_secrets_section(env_file_path: Path | None = None, *, force: bool = Fals
         if force:
             print(f"WARNING: {msg}", file=sys.stderr)
             return "# No secrets configured (SECRET_VARIABLE_NAMES not set - deployed with --force)"
-        raise SystemExit(msg)
+        print(msg, file=sys.stderr)
+        raise SystemExit(_EXIT_PRECOND)
 
     # Defense-in-depth: only include secrets that actually exist as podman secrets.
     # A secret may have been processed in the env file but later deleted from the
@@ -201,7 +216,8 @@ def get_secrets_section(env_file_path: Path | None = None, *, force: bool = Fals
         if force:
             print(f"WARNING: {msg}", file=sys.stderr)
             return "# No secrets configured (no podman secrets found - deployed with --force)"
-        raise SystemExit(msg)
+        print(msg, file=sys.stderr)
+        raise SystemExit(_EXIT_PRECOND)
 
     return generate_quadlet_secret_lines(verified)
 
@@ -265,6 +281,68 @@ def _get_valkey_unit_dependencies(cfg: Config) -> tuple[str, str]:
     return f" {cfg.valkey_service}", f"\nWants={cfg.valkey_service}"
 
 
+def _build_fmt_vars(
+    template: str,
+    cfg: Config,
+    env_file_path: Path | None,
+    *,
+    force: bool,
+    extra_vars: dict | None = None,
+) -> dict:
+    """Build the format variables dict for a quadlet template.
+
+    Shared by both ``_write_template`` (which writes to disk) and
+    ``render_template`` (dry-run, no disk I/O).
+    """
+    secrets_section = get_secrets_section(env_file_path, force=force)
+    config_volumes_section = get_config_volumes_section(cfg)
+
+    fmt_vars: dict = {
+        "image": cfg.resolved_image_with_tag,
+        "config_dir": cfg.config_dir,
+        "secrets_section": secrets_section,
+        "config_volumes_section": config_volumes_section,
+        "resource_limits_section": get_resource_limits_section(cfg),
+    }
+    if extra_vars:
+        fmt_vars.update(extra_vars)
+    return fmt_vars
+
+
+def render_web_template(
+    cfg: Config, env_file_path: Path | None = None, *, force: bool = False
+) -> str:
+    """Render the web quadlet template content without writing to disk.
+
+    Used by dry-run to preview what would be written.
+    """
+    valkey_after, valkey_wants = _get_valkey_unit_dependencies(cfg)
+    fmt_vars = _build_fmt_vars(
+        WEB_TEMPLATE,
+        cfg,
+        env_file_path,
+        force=force,
+        extra_vars={"valkey_after": valkey_after, "valkey_wants": valkey_wants},
+    )
+    return WEB_TEMPLATE.format(**fmt_vars)
+
+
+def render_worker_template(
+    cfg: Config, env_file_path: Path | None = None, *, force: bool = False
+) -> str:
+    """Render the worker quadlet template content without writing to disk."""
+    fmt_vars = _build_fmt_vars(WORKER_TEMPLATE, cfg, env_file_path, force=force)
+    return WORKER_TEMPLATE.format(**fmt_vars)
+
+
+def render_scheduler_template(
+    cfg: Config, env_file_path: Path | None = None, *, force: bool = False
+) -> str:
+    """Render the scheduler quadlet template content without writing to disk."""
+    fmt_vars = _build_fmt_vars(SCHEDULER_TEMPLATE, cfg, env_file_path, force=force)
+    return SCHEDULER_TEMPLATE.format(**fmt_vars)
+
+
 def _write_template(
     template: str,
     path: Path,
@@ -291,19 +369,7 @@ def _write_template(
         extra_vars: Additional ``str.format`` keyword arguments (e.g.
                     ``valkey_after``, ``valkey_wants`` for the web template).
     """
-    secrets_section = get_secrets_section(env_file_path, force=force)
-    config_volumes_section = get_config_volumes_section(cfg)
-
-    fmt_vars: dict = {
-        "image": cfg.resolved_image_with_tag,
-        "config_dir": cfg.config_dir,
-        "secrets_section": secrets_section,
-        "config_volumes_section": config_volumes_section,
-        "resource_limits_section": get_resource_limits_section(cfg),
-    }
-    if extra_vars:
-        fmt_vars.update(extra_vars)
-
+    fmt_vars = _build_fmt_vars(template, cfg, env_file_path, force=force, extra_vars=extra_vars)
     content = template.format(**fmt_vars)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)

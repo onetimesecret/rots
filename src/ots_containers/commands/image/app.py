@@ -15,6 +15,7 @@ Maintains CURRENT and ROLLBACK aliases in SQLite database for:
 """
 
 import logging
+import subprocess
 from pathlib import Path
 from typing import Annotated
 
@@ -138,7 +139,7 @@ def pull(
         podman.pull(full_image, **pull_kwargs)
         if not quiet:
             print(f"Successfully pulled {full_image}")
-    except Exception as e:
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"Failed to pull {full_image}: {e}")
         db.record_deployment(
             cfg.db_path,
@@ -181,7 +182,7 @@ def pull(
                     capture_output=True,
                     text=True,
                 )
-        except Exception as e:
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
             print(f"Warning: podman tag failed ({e}), aliases updated in DB only")
 
         previous = db.set_current(cfg.db_path, resolved_image, resolved_tag)
@@ -372,7 +373,7 @@ def set_current(
     # Verify the source image exists locally before proceeding
     try:
         podman.image.inspect(source_ref, check=True, capture_output=True, text=True)
-    except Exception:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         print(f"Image not found locally: {source_ref}")
         print(f"Pull it first: ots image pull --tag {tag}")
         raise SystemExit(1)

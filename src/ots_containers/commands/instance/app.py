@@ -2,6 +2,7 @@
 
 """Instance management app and commands for OTS containers."""
 
+import difflib
 import logging
 import subprocess
 import sys
@@ -12,7 +13,16 @@ import cyclopts
 from ots_containers import assets, db, quadlet, systemd
 from ots_containers.config import Config
 
-from ..common import DryRun, Follow, JsonOutput, Lines, Quiet, Yes
+from ..common import (
+    EXIT_FAILURE,
+    EXIT_PARTIAL,
+    DryRun,
+    Follow,
+    JsonOutput,
+    Lines,
+    Quiet,
+    Yes,
+)
 from ._helpers import (
     build_secret_args,
     deploy_lock,
@@ -20,6 +30,7 @@ from ._helpers import (
     format_command,
     format_journalctl_hint,
     resolve_identifiers,
+    run_hook,
 )
 from .annotations import (
     Delay,
@@ -51,6 +62,7 @@ def _list_instances_impl(
 
     if not instances:
         print("No configured instances found")
+        print("Deploy one first: ots instances deploy --help")
         return
 
     cfg = Config()
@@ -163,31 +175,8 @@ def _list_instances_impl(
             print(row)
 
 
-@app.command(name="list")
-def list_cmd(
-    identifiers: Identifiers = (),
-    instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
-    json_output: JsonOutput = False,
-):
-    """List instances with status, image, and deployment info.
-
-    Auto-discovers all instances if no identifiers specified.
-
-    Examples:
-        ots instances list                       # List all instances
-        ots instances list --web                 # List web instances only
-        ots instances list --web 7043 7044       # List specific web instances
-        ots instances list --worker              # List worker instances
-        ots instances list --json                # JSON output
-    """
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    _list_instances_impl(identifiers, itype, json_output)
-
-
 @app.default
+@app.command(name="list")
 def list_instances(
     identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
@@ -201,9 +190,10 @@ def list_instances(
     Auto-discovers all instances if no identifiers specified.
 
     Examples:
-        ots instances                            # List all instances
+        ots instances                            # List all instances (default)
+        ots instances list                       # List all instances (explicit)
         ots instances --web                      # List web instances only
-        ots instances --web 7043 7044            # List specific web instances
+        ots instances list --web 7043 7044       # List specific web instances
         ots instances --worker                   # List worker instances
         ots instances --scheduler                # List scheduler instances
         ots instances --json                     # JSON output
@@ -402,6 +392,38 @@ def deploy(
             ),
         ),
     ] = 0,
+    wait: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=["--wait"],
+            help=(
+                "Block until the HTTP health endpoint returns 200 (web instances only). "
+                "Polls http://localhost:{port}/health for up to 60s (or --wait-timeout). "
+                "Records success=False in deployment history if health check times out."
+            ),
+        ),
+    ] = False,
+    pre_hook: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--pre-hook"],
+            help=(
+                "Shell command to run before deployment. "
+                "Aborts deploy if the command exits non-zero. "
+                "Example: --pre-hook './scripts/scan.sh'"
+            ),
+        ),
+    ] = None,
+    post_hook: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--post-hook"],
+            help=(
+                "Shell command to run after successful deployment. "
+                "Example: --post-hook './scripts/notify.sh'"
+            ),
+        ),
+    ] = None,
 ):
     """Deploy new instance(s) using quadlet and Podman secrets.
 
@@ -415,7 +437,10 @@ def deploy(
         ots instances deploy --worker billing       # Deploy 'billing' worker
         ots instances deploy --scheduler main       # Deploy scheduler
         ots instances deploy --web 7043 --force     # Skip secrets check (not recommended)
-        ots instances deploy --web 7043 --wait-timeout 60  # Wait up to 60s for health
+        ots instances deploy --web 7043 --wait-timeout 60  # Wait up to 60s for systemd active
+        ots instances deploy --web 7043 --wait      # Wait up to 60s for HTTP health check
+        ots instances deploy --web 7043 --pre-hook './scan.sh'   # Validate before deploy
+        ots instances deploy --web 7043 --post-hook './notify.sh'  # Notify after deploy
     """
     import datetime
     import json as json_mod
@@ -443,6 +468,29 @@ def deploy(
             print("Config: using container built-in defaults")
 
     if dry_run:
+        # Render the quadlet template and diff vs existing file (if any).
+        # force=True here: dry-run is a preview; secrets may not be fully
+        # configured yet and we don't want that to block the diff output.
+        if itype == InstanceType.WEB:
+            template_path = cfg.web_template_path
+            new_content = quadlet.render_web_template(cfg, force=True)
+        elif itype == InstanceType.WORKER:
+            template_path = cfg.worker_template_path
+            new_content = quadlet.render_worker_template(cfg, force=True)
+        else:
+            template_path = cfg.scheduler_template_path
+            new_content = quadlet.render_scheduler_template(cfg, force=True)
+
+        old_content = template_path.read_text() if template_path.exists() else ""
+        diff_lines = list(
+            difflib.unified_diff(
+                old_content.splitlines(keepends=True),
+                new_content.splitlines(keepends=True),
+                fromfile=f"a/{template_path.name}",
+                tofile=f"b/{template_path.name}",
+            )
+        )
+
         result = {
             "action": "deploy",
             "dry_run": True,
@@ -450,12 +498,28 @@ def deploy(
             "identifiers": list(identifiers),
             "image": image,
             "tag": tag,
+            "quadlet_path": str(template_path),
+            "quadlet_changed": bool(diff_lines),
         }
         if json_output:
+            result["quadlet_diff"] = "".join(diff_lines)
             print(json_mod.dumps(result, indent=2))
         else:
             print(f"[dry-run] Would deploy {itype.value}: {', '.join(identifiers)}")
+            print(f"Quadlet: {template_path}")
+            if diff_lines:
+                print("--- quadlet diff ---")
+                print("".join(diff_lines), end="")
+            elif old_content:
+                print("(quadlet unchanged)")
+            else:
+                print("--- new quadlet ---")
+                print(new_content, end="")
         return
+
+    # Execute pre-deploy hook (aborts if it exits non-zero)
+    if pre_hook and not dry_run:
+        run_hook(pre_hook, "pre-hook", quiet=quiet or json_output)
 
     deploy_results: list[dict] = []
 
@@ -479,11 +543,18 @@ def deploy(
             base_notes = None if inst_type == InstanceType.WEB else f"{inst_type.value}_id={id_}"
             try:
                 systemd.start(unit)
-                # Optionally wait for the unit to become active
+                # Optionally wait for the unit to become active (systemd state)
                 if wait_timeout > 0:
                     if not quiet and not json_output:
                         print(f"  Waiting up to {wait_timeout}s for {unit} to become active...")
                     systemd.wait_for_healthy(unit, timeout=wait_timeout)
+                # Optionally wait for HTTP health check (web instances only)
+                if wait and inst_type == InstanceType.WEB:
+                    if not quiet and not json_output:
+                        timeout_s = wait_timeout or 60
+                        url = f"http://localhost:{port}/health"
+                        print(f"  Waiting up to {timeout_s}s for {url} ...")
+                    systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60)
                 # Record successful deployment
                 db.record_deployment(
                     cfg.db_path,
@@ -505,7 +576,7 @@ def deploy(
                         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                     }
                 )
-            except systemd.HealthCheckTimeoutError as e:
+            except (systemd.HealthCheckTimeoutError, systemd.HttpHealthCheckTimeoutError) as e:
                 fail_notes = (
                     f"health-timeout: {e}"
                     if inst_type == InstanceType.WEB
@@ -532,8 +603,9 @@ def deploy(
                         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                     }
                 )
+                # Print the error but do not abort — allow remaining instances to proceed.
+                # The caller will use EXIT_PARTIAL if some succeeded and some failed.
                 print(f"  ERROR: {e}", file=sys.stderr)
-                raise SystemExit(1) from None
             except Exception as e:
                 fail_notes = (
                     str(e)
@@ -566,17 +638,27 @@ def deploy(
         instances = {itype: list(identifiers)}
         for_each_instance(instances, delay, do_deploy, "Deploying", show_logs_hint=not json_output)
 
+    # Execute post-deploy hook (runs only when all instances deployed successfully)
+    if post_hook and all(r["success"] for r in deploy_results):
+        run_hook(post_hook, "post-hook", quiet=quiet or json_output)
+
+    all_ok = all(r["success"] for r in deploy_results)
+    any_ok = any(r["success"] for r in deploy_results)
+
     if json_output:
         print(
             json_mod.dumps(
                 {
                     "action": "deploy",
-                    "success": all(r["success"] for r in deploy_results),
+                    "success": all_ok,
                     "instances": deploy_results,
                 },
                 indent=2,
             )
         )
+
+    if deploy_results and not all_ok:
+        raise SystemExit(EXIT_PARTIAL if any_ok else EXIT_FAILURE)
 
 
 @app.command
@@ -608,6 +690,38 @@ def redeploy(
             ),
         ),
     ] = 0,
+    wait: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=["--wait"],
+            help=(
+                "Block until the HTTP health endpoint returns 200 (web instances only). "
+                "Polls http://localhost:{port}/health for up to 60s (or --wait-timeout). "
+                "Records success=False in deployment history if health check times out."
+            ),
+        ),
+    ] = False,
+    pre_hook: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--pre-hook"],
+            help=(
+                "Shell command to run before redeployment. "
+                "Aborts redeploy if the command exits non-zero. "
+                "Example: --pre-hook './scripts/scan.sh'"
+            ),
+        ),
+    ] = None,
+    post_hook: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--post-hook"],
+            help=(
+                "Shell command to run after successful redeployment. "
+                "Example: --post-hook './scripts/notify.sh'"
+            ),
+        ),
+    ] = None,
 ):
     """Regenerate quadlet and restart containers.
 
@@ -624,7 +738,10 @@ def redeploy(
         ots instances redeploy --web 7043 7044      # Redeploy specific web
         ots instances redeploy --scheduler main     # Redeploy specific scheduler
         ots instances redeploy --force              # Force teardown+recreate
-        ots instances redeploy --wait-timeout 60    # Wait up to 60s for health
+        ots instances redeploy --wait-timeout 60    # Wait up to 60s for systemd active
+        ots instances redeploy --web 7043 --wait    # Wait up to 60s for HTTP health check
+        ots instances redeploy --pre-hook './scan.sh'    # Validate before redeploy
+        ots instances redeploy --post-hook './notify.sh'  # Notify after redeploy
     """
     import datetime
     import json as json_mod
@@ -637,6 +754,8 @@ def redeploy(
             print(json_mod.dumps({"action": "redeploy", "success": True, "instances": []}))
         else:
             print("No running instances found")
+            print("Start existing instances with: ots instances start")
+            print("Or deploy new ones with:       ots instances deploy --help")
         return
 
     cfg = Config()
@@ -654,6 +773,32 @@ def redeploy(
     if dry_run:
         verb = "force redeploy" if force else "redeploy"
         dry_items = [{"instance_type": t.value, "identifiers": ids} for t, ids in instances.items()]
+
+        # Collect quadlet diffs for each type being redeployed.
+        # force=True here: dry-run is a preview; don't block on missing secrets.
+        quadlet_diffs: dict[str, str] = {}
+        for inst_type in instances:
+            if inst_type == InstanceType.WEB:
+                template_path = cfg.web_template_path
+                new_content = quadlet.render_web_template(cfg, force=True)
+            elif inst_type == InstanceType.WORKER:
+                template_path = cfg.worker_template_path
+                new_content = quadlet.render_worker_template(cfg, force=True)
+            else:
+                template_path = cfg.scheduler_template_path
+                new_content = quadlet.render_scheduler_template(cfg, force=True)
+
+            old_content = template_path.read_text() if template_path.exists() else ""
+            diff_lines = list(
+                difflib.unified_diff(
+                    old_content.splitlines(keepends=True),
+                    new_content.splitlines(keepends=True),
+                    fromfile=f"a/{template_path.name}",
+                    tofile=f"b/{template_path.name}",
+                )
+            )
+            quadlet_diffs[inst_type.value] = "".join(diff_lines)
+
         if json_output:
             print(
                 json_mod.dumps(
@@ -663,6 +808,7 @@ def redeploy(
                         "image": image,
                         "tag": tag,
                         "instances": dry_items,
+                        "quadlet_diffs": quadlet_diffs,
                     },
                     indent=2,
                 )
@@ -670,7 +816,24 @@ def redeploy(
         else:
             for inst_type, ids in instances.items():
                 print(f"[dry-run] Would {verb} {inst_type.value}: {', '.join(ids)}")
+            for inst_type_val, diff_text in quadlet_diffs.items():
+                if inst_type_val == InstanceType.WEB.value:
+                    tpath = cfg.web_template_path
+                elif inst_type_val == InstanceType.WORKER.value:
+                    tpath = cfg.worker_template_path
+                else:
+                    tpath = cfg.scheduler_template_path
+                print(f"Quadlet ({inst_type_val}): {tpath}")
+                if diff_text:
+                    print("--- quadlet diff ---")
+                    print(diff_text, end="")
+                else:
+                    print("(quadlet unchanged)")
         return
+
+    # Execute pre-redeploy hook (aborts if it exits non-zero)
+    if pre_hook and not dry_run:
+        run_hook(pre_hook, "pre-hook", quiet=quiet or json_output)
 
     redeploy_results: list[dict] = []
 
@@ -713,11 +876,18 @@ def redeploy(
                         print(f"Recreating {unit}")
                     systemd.recreate(unit)
 
-                # Optionally wait for the unit to become active
+                # Optionally wait for the unit to become active (systemd state)
                 if wait_timeout > 0:
                     if not quiet and not json_output:
                         print(f"  Waiting up to {wait_timeout}s for {unit} to become active...")
                     systemd.wait_for_healthy(unit, timeout=wait_timeout)
+                # Optionally wait for HTTP health check (web instances only)
+                if wait and inst_type == InstanceType.WEB:
+                    if not quiet and not json_output:
+                        timeout_s = wait_timeout or 60
+                        url = f"http://localhost:{port}/health"
+                        print(f"  Waiting up to {timeout_s}s for {url} ...")
+                    systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60)
 
                 db.record_deployment(
                     cfg.db_path,
@@ -739,7 +909,7 @@ def redeploy(
                         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                     }
                 )
-            except systemd.HealthCheckTimeoutError as e:
+            except (systemd.HealthCheckTimeoutError, systemd.HttpHealthCheckTimeoutError) as e:
                 fail_notes = (
                     f"health-timeout: {e}"
                     if inst_type == InstanceType.WEB
@@ -766,8 +936,9 @@ def redeploy(
                         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                     }
                 )
+                # Print the error but do not abort — allow remaining instances to proceed.
+                # The caller will use EXIT_PARTIAL if some succeeded and some failed.
                 print(f"  ERROR: {e}", file=sys.stderr)
-                raise SystemExit(1) from None
             except Exception as e:
                 fail_notes = (
                     str(e)
@@ -800,17 +971,27 @@ def redeploy(
         verb = "Force redeploying" if force else "Redeploying"
         for_each_instance(instances, delay, do_redeploy, verb, show_logs_hint=not json_output)
 
+    # Execute post-redeploy hook (runs only when all instances redeployed successfully)
+    if post_hook and all(r["success"] for r in redeploy_results):
+        run_hook(post_hook, "post-hook", quiet=quiet or json_output)
+
+    all_ok = all(r["success"] for r in redeploy_results)
+    any_ok = any(r["success"] for r in redeploy_results)
+
     if json_output:
         print(
             json_mod.dumps(
                 {
                     "action": "redeploy",
-                    "success": all(r["success"] for r in redeploy_results),
+                    "success": all_ok,
                     "instances": redeploy_results,
                 },
                 indent=2,
             )
         )
+
+    if redeploy_results and not all_ok:
+        raise SystemExit(EXIT_PARTIAL if any_ok else EXIT_FAILURE)
 
 
 @app.command
@@ -828,6 +1009,10 @@ def undeploy(
     """Stop systemd service for instance(s).
 
     Stops systemd service. Records action to timeline for audit.
+
+    Note: Podman volumes (static_assets) are NOT removed by undeploy.
+    To reclaim disk space after all instances are stopped, run:
+        ots instances cleanup
 
     Examples:
         ots instances undeploy                      # Undeploy all running
@@ -848,6 +1033,7 @@ def undeploy(
             print(json_mod.dumps({"action": "undeploy", "success": True, "instances": []}))
         else:
             print("No running instances found")
+            print("List all configured instances with: ots instances list")
         return
 
     # --json implies --yes (non-interactive)
@@ -976,6 +1162,7 @@ def start(
 
     if not instances:
         print("No configured instances found")
+        print("Deploy one first: ots instances deploy --help")
         return
 
     for inst_type, ids in instances.items():
@@ -1013,6 +1200,7 @@ def stop(
 
     if not instances:
         print("No running instances found")
+        print("List all configured instances with: ots instances list")
         return
 
     for inst_type, ids in instances.items():
@@ -1049,6 +1237,7 @@ def restart(
 
     if not instances:
         print("No running instances found")
+        print("Start existing instances with: ots instances start")
         return
 
     def do_restart(inst_type: InstanceType, id_: str) -> None:
@@ -1082,6 +1271,7 @@ def enable(
 
     if not instances:
         print("No configured instances found")
+        print("Deploy one first: ots instances deploy --help")
         return
 
     for inst_type, ids in instances.items():
@@ -1124,6 +1314,7 @@ def disable(
 
     if not instances:
         print("No configured instances found")
+        print("List all configured instances with: ots instances list")
         return
 
     if not yes:
@@ -1179,6 +1370,7 @@ def status(
             print(json_mod.dumps({"instances": []}))
         else:
             print("No configured instances found")
+            print("Deploy one first: ots instances deploy --help")
         return
 
     if json_output:
@@ -1318,6 +1510,7 @@ def exec_shell(
 
     if not instances:
         print("No running instances found")
+        print("Start existing instances with: ots instances start")
         return
 
     shell = command or os.environ.get("SHELL", "/bin/sh")
@@ -1706,4 +1899,416 @@ def config_transform(
         subprocess.run(
             ["podman", "volume", "rm", "-f", volume_name],
             capture_output=True,
+        )
+
+
+@app.command
+def cleanup(
+    yes: Yes = False,
+    json_output: JsonOutput = False,
+):
+    """Remove the static_assets Podman volume to reclaim disk space.
+
+    The 'static_assets' volume is created during deploy but is NOT removed
+    by 'undeploy'. Run this after all instances are stopped to free disk.
+
+    This is safe to run when no instances are running; if instances are still
+    running they will continue to serve cached assets until restarted.
+
+    Examples:
+        ots instances cleanup          # Prompt for confirmation
+        ots instances cleanup -y       # Skip confirmation
+        ots instances cleanup --json   # JSON output
+    """
+    import json as json_mod
+
+    volume_name = "static_assets"
+
+    if not yes and not json_output:
+        print(f"This will remove the Podman volume '{volume_name}'.")
+        response = input("Continue? [y/N] ")
+        if response.lower() not in ("y", "yes"):
+            print("Aborted")
+            return
+
+    try:
+        result = subprocess.run(
+            ["podman", "volume", "rm", volume_name],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            outcome = {"success": True, "volume": volume_name, "removed": True}
+            if json_output:
+                print(json_mod.dumps(outcome, indent=2))
+            else:
+                print(f"Removed volume: {volume_name}")
+        else:
+            # Volume may not exist - treat as success (idempotent)
+            stderr = result.stderr.strip()
+            if "no such volume" in stderr.lower() or "no such container" in stderr.lower():
+                outcome = {
+                    "success": True,
+                    "volume": volume_name,
+                    "removed": False,
+                    "message": "volume not found",
+                }
+                if json_output:
+                    print(json_mod.dumps(outcome, indent=2))
+                else:
+                    print(f"Volume '{volume_name}' not found (already removed or never created)")
+            else:
+                outcome = {"success": False, "volume": volume_name, "error": stderr}
+                if json_output:
+                    print(json_mod.dumps(outcome, indent=2))
+                else:
+                    print(f"Failed to remove volume '{volume_name}': {stderr}")
+                raise SystemExit(1)
+    except FileNotFoundError:
+        msg = "podman not found - is Podman installed?"
+        if json_output:
+            print(json_mod.dumps({"success": False, "error": msg}))
+        else:
+            print(f"Error: {msg}")
+        raise SystemExit(1)
+
+
+@app.command
+def metrics(
+    identifiers: Identifiers = (),
+    instance_type: TypeSelector = None,
+    web: WebFlag = False,
+    worker: WorkerFlag = False,
+    scheduler: SchedulerFlag = False,
+    json_output: JsonOutput = False,
+):
+    """Show resource usage metrics for instance(s).
+
+    Shells out to 'podman stats --no-stream' to collect per-container
+    CPU, memory, network I/O, and block I/O metrics. Also reports
+    systemd active state for each unit.
+
+    Containers must be running for podman stats to return data.
+
+    Examples:
+        ots instances metrics                    # Metrics for all instances
+        ots instances metrics --web              # Web instances only
+        ots instances metrics --web 7043         # Specific instance
+        ots instances metrics --json             # JSON output
+    """
+    import json as json_mod
+
+    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    instances = resolve_identifiers(identifiers, itype, running_only=False)
+
+    if not instances:
+        if json_output:
+            print(json_mod.dumps({"instances": []}))
+        else:
+            print("No configured instances found")
+            print("Deploy one first: ots instances deploy --help")
+        return
+
+    results = []
+
+    for inst_type, ids in instances.items():
+        for id_ in ids:
+            unit = systemd.unit_name(inst_type.value, id_)
+            container = systemd.unit_to_container_name(unit)
+
+            # Get systemd active state
+            try:
+                state_result = subprocess.run(
+                    ["systemctl", "is-active", f"{unit}.service"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                active_state = state_result.stdout.strip()
+            except (subprocess.SubprocessError, OSError):
+                active_state = "unknown"
+
+            # Get podman stats (non-streaming, single snapshot)
+            stats_data = None
+            try:
+                stats_result = subprocess.run(
+                    [
+                        "podman",
+                        "stats",
+                        "--no-stream",
+                        "--format",
+                        "json",
+                        container,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                if stats_result.returncode == 0 and stats_result.stdout.strip():
+                    raw = json_mod.loads(stats_result.stdout)
+                    # podman stats --format json returns a list
+                    if isinstance(raw, list) and raw:
+                        stats_data = raw[0]
+            except (subprocess.SubprocessError, OSError, json_mod.JSONDecodeError):
+                stats_data = None
+
+            entry: dict = {
+                "unit": unit,
+                "container": container,
+                "instance_type": inst_type.value,
+                "identifier": id_,
+                "active_state": active_state,
+            }
+
+            if stats_data:
+                entry["cpu_percent"] = stats_data.get("CPU", "n/a")
+                entry["mem_usage"] = stats_data.get("MemUsage", "n/a")
+                entry["mem_percent"] = stats_data.get("MemPerc", "n/a")
+                entry["net_input"] = stats_data.get("NetInput", "n/a")
+                entry["net_output"] = stats_data.get("NetOutput", "n/a")
+                entry["block_input"] = stats_data.get("BlockInput", "n/a")
+                entry["block_output"] = stats_data.get("BlockOutput", "n/a")
+            else:
+                entry["cpu_percent"] = "n/a"
+                entry["mem_usage"] = "n/a"
+                entry["mem_percent"] = "n/a"
+                entry["net_input"] = "n/a"
+                entry["net_output"] = "n/a"
+                entry["block_input"] = "n/a"
+                entry["block_output"] = "n/a"
+
+            results.append(entry)
+
+    if json_output:
+        print(json_mod.dumps({"instances": results}, indent=2))
+        return
+
+    # Table output
+    header = (
+        f"{'TYPE':<10} {'ID':<10} {'UNIT':<28} {'STATE':<10} "
+        f"{'CPU%':<8} {'MEM':<20} {'MEM%':<8} {'NET IN/OUT':<24}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for entry in results:
+        net_io = f"{entry['net_input']}/{entry['net_output']}"
+        row = (
+            f"{entry['instance_type']:<10} {entry['identifier']:<10} "
+            f"{entry['unit']:<28} {entry['active_state']:<10} "
+            f"{entry['cpu_percent']:<8} {entry['mem_usage']:<20} "
+            f"{entry['mem_percent']:<8} {net_io:<24}"
+        )
+        print(row)
+
+
+@app.command
+def rollback(
+    identifiers: Identifiers = (),
+    instance_type: TypeSelector = None,
+    web: WebFlag = False,
+    worker: WorkerFlag = False,
+    scheduler: SchedulerFlag = False,
+    delay: Delay = 5,
+    dry_run: DryRun = False,
+    yes: Yes = False,
+    json_output: JsonOutput = False,
+):
+    """Roll back running instances to the previous deployment.
+
+    Queries the deployment timeline for the previous successful image/tag,
+    updates the CURRENT/ROLLBACK aliases in the database, then redeploys
+    all targeted running instances with the rolled-back tag.
+
+    Comparable to 'helm rollback' or 'kamal rollback': the alias update
+    and instance redeployment happen in one step.
+
+    Use --dry-run to preview what would happen without making changes.
+
+    Examples:
+        ots instances rollback                        # Rollback all running
+        ots instances rollback --web                  # Rollback web instances
+        ots instances rollback --web 7043 7044        # Rollback specific web
+        ots instances rollback --dry-run              # Preview only
+        ots instances rollback -y                     # Skip confirmation
+        ots instances rollback --json                 # JSON output
+    """
+    import datetime
+    import json as json_mod
+
+    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    cfg = Config()
+
+    # Determine rollback target from the deployment timeline
+    previous = db.get_previous_tags(cfg.db_path, limit=5)
+    if len(previous) < 2:
+        msg = "No previous deployment found in history - cannot roll back"
+        if json_output:
+            print(json_mod.dumps({"action": "rollback", "success": False, "error": msg}))
+        else:
+            print(f"Error: {msg}")
+        raise SystemExit(1)
+
+    current_image, current_tag, _ = previous[0]
+    rollback_image, rollback_tag, rollback_ts = previous[1]
+
+    if dry_run:
+        instances = resolve_identifiers(identifiers, itype, running_only=True)
+        dry_items = [{"instance_type": t.value, "identifiers": ids} for t, ids in instances.items()]
+        result = {
+            "action": "rollback",
+            "dry_run": True,
+            "from": {"image": current_image, "tag": current_tag},
+            "to": {"image": rollback_image, "tag": rollback_tag, "last_deployed": rollback_ts},
+            "instances": dry_items,
+        }
+        if json_output:
+            print(json_mod.dumps(result, indent=2))
+        else:
+            print(f"[dry-run] Would roll back from {current_image}:{current_tag}")
+            print(f"         to {rollback_image}:{rollback_tag} (last deployed: {rollback_ts})")
+            if instances:
+                for inst_type_key, ids in instances.items():
+                    print(f"[dry-run] Would redeploy {inst_type_key.value}: {', '.join(ids)}")
+            else:
+                print("[dry-run] No running instances found to redeploy")
+        return
+
+    # Confirm unless --yes or --json
+    if not yes and not json_output:
+        print(f"Rolling back from {current_image}:{current_tag}")
+        print(f"           to    {rollback_image}:{rollback_tag} (last deployed: {rollback_ts})")
+        response = input("Continue? [y/N] ")
+        if response.lower() not in ("y", "yes"):
+            print("Aborted")
+            return
+
+    # Update DB aliases (CURRENT -> ROLLBACK, rollback_tag -> CURRENT)
+    rollback_result = db.rollback(cfg.db_path)
+    if rollback_result is None:
+        msg = "Rollback failed - deployment timeline returned no result"
+        if json_output:
+            print(json_mod.dumps({"action": "rollback", "success": False, "error": msg}))
+        else:
+            print(f"Error: {msg}")
+        raise SystemExit(1)
+
+    new_image, new_tag = rollback_result
+
+    if not json_output:
+        print(
+            f"Aliases updated: CURRENT={new_image}:{new_tag},"
+            f" ROLLBACK={current_image}:{current_tag}"
+        )
+
+    # Redeploy running instances with the rolled-back image/tag
+    instances = resolve_identifiers(identifiers, itype, running_only=True)
+
+    if not instances:
+        msg_extra = "No running instances to redeploy"
+        if json_output:
+            print(
+                json_mod.dumps(
+                    {
+                        "action": "rollback",
+                        "success": True,
+                        "image": new_image,
+                        "tag": new_tag,
+                        "message": msg_extra,
+                        "instances": [],
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(msg_extra)
+        return
+
+    redeploy_results: list[dict] = []
+
+    with deploy_lock():
+        # Write quadlet templates for each instance type being redeployed
+        if InstanceType.WEB in instances:
+            assets.update(cfg, create_volume=False)
+            quadlet.write_web_template(cfg)
+        if InstanceType.WORKER in instances:
+            quadlet.write_worker_template(cfg)
+        if InstanceType.SCHEDULER in instances:
+            quadlet.write_scheduler_template(cfg)
+
+        def do_rollback_redeploy(inst_type: InstanceType, id_: str) -> None:
+            unit = systemd.unit_name(inst_type.value, id_)
+            port = int(id_) if inst_type == InstanceType.WEB else 0
+            base_notes = (
+                f"rollback from {current_tag}"
+                if inst_type == InstanceType.WEB
+                else f"{inst_type.value}_id={id_}; rollback from {current_tag}"
+            )
+            try:
+                systemd.recreate(unit)
+                db.record_deployment(
+                    cfg.db_path,
+                    image=new_image,
+                    tag=new_tag,
+                    action=f"rollback-{inst_type.value}",
+                    port=port,
+                    success=True,
+                    notes=base_notes,
+                )
+                redeploy_results.append(
+                    {
+                        "unit": unit,
+                        "instance_type": inst_type.value,
+                        "identifier": id_,
+                        "success": True,
+                        "image": new_image,
+                        "tag": new_tag,
+                        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                    }
+                )
+            except Exception as e:
+                fail_notes = (
+                    f"rollback from {current_tag}; error={e}"
+                    if inst_type == InstanceType.WEB
+                    else f"{inst_type.value}_id={id_}; rollback from {current_tag}; error={e}"
+                )
+                db.record_deployment(
+                    cfg.db_path,
+                    image=new_image,
+                    tag=new_tag,
+                    action=f"rollback-{inst_type.value}",
+                    port=port,
+                    success=False,
+                    notes=fail_notes,
+                )
+                redeploy_results.append(
+                    {
+                        "unit": unit,
+                        "instance_type": inst_type.value,
+                        "identifier": id_,
+                        "success": False,
+                        "error": str(e),
+                        "image": new_image,
+                        "tag": new_tag,
+                        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                    }
+                )
+                raise
+
+        for_each_instance(
+            instances, delay, do_rollback_redeploy, "Rolling back", show_logs_hint=not json_output
+        )
+
+    if json_output:
+        print(
+            json_mod.dumps(
+                {
+                    "action": "rollback",
+                    "success": all(r["success"] for r in redeploy_results),
+                    "image": new_image,
+                    "tag": new_tag,
+                    "instances": redeploy_results,
+                },
+                indent=2,
+            )
         )

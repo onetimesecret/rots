@@ -989,3 +989,442 @@ class TestWaitForHealthy:
                 poll_interval=0.01,
                 consecutive_failures_threshold=1,
             )
+
+
+class TestSystemctlErrorOnPortConflict:
+    """Verify that a port-conflict start failure surfaces as a SystemctlError.
+
+    In production, if port 7043 is already bound by another process, podman
+    will fail to start the container. systemctl propagates the failure and
+    returns a non-zero exit code, which _run_systemctl converts to
+    SystemctlError. These tests confirm that behaviour.
+    """
+
+    def test_start_raises_systemctl_error_when_port_in_use(self, mocker):
+        """start() must raise SystemctlError when systemctl reports non-zero exit."""
+        from ots_containers import systemd
+        from ots_containers.systemd import SystemctlError
+
+        # Simulate: systemctl start fails (port conflict → podman error → non-zero)
+        failed_result = subprocess.CompletedProcess(
+            args=["sudo", "systemctl", "start", "onetime-web@7043"],
+            returncode=1,
+            stdout="",
+            stderr="",
+        )
+        mocker.patch("subprocess.run", return_value=failed_result)
+
+        with pytest.raises(SystemctlError) as exc_info:
+            systemd.start("onetime-web@7043")
+
+        assert exc_info.value.unit == "onetime-web@7043"
+        assert exc_info.value.action == "start"
+
+    def test_systemctl_error_message_identifies_unit_and_action(self, mocker):
+        """SystemctlError str representation must name the unit and action."""
+        from ots_containers import systemd
+        from ots_containers.systemd import SystemctlError
+
+        mocker.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 1, stdout="", stderr=""),
+        )
+
+        with pytest.raises(SystemctlError) as exc_info:
+            systemd.start("onetime-web@7143")
+
+        err_str = str(exc_info.value)
+        assert "onetime-web@7143" in err_str
+        assert "start" in err_str
+
+    def test_journal_context_attached_to_error(self, mocker):
+        """SystemctlError should carry journal output from _fetch_journal."""
+        from ots_containers import systemd
+        from ots_containers.systemd import SystemctlError
+
+        journal_text = "Error: address already in use: bind: 0.0.0.0:7043"
+
+        def fake_run(cmd, **kwargs):
+            if "journalctl" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout=journal_text)
+            # systemctl start fails
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        mocker.patch("subprocess.run", side_effect=fake_run)
+
+        with pytest.raises(SystemctlError) as exc_info:
+            systemd.start("onetime-web@7043")
+
+        assert exc_info.value.journal == journal_text
+
+
+class TestQuadletWritePermissionError:
+    """Verify behaviour when /etc/containers/systemd/ is not writable.
+
+    The quadlet _write_template function calls path.write_text(content).
+    If the directory is owned by root and the process is unprivileged,
+    Python raises PermissionError. We confirm the error propagates
+    unchanged so callers (deploy command) can handle or surface it.
+    """
+
+    def test_write_template_propagates_permission_error(self, tmp_path, mocker):
+        """PermissionError from path.write_text must propagate out of _write_template."""
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = mocker.MagicMock(spec=Config)
+        cfg.existing_config_files = []
+        cfg.memory_max = None
+        cfg.cpu_quota = None
+        cfg.valkey_service = None
+        cfg.config_dir = tmp_path / "etc"
+        cfg.resolved_image_with_tag = "ghcr.io/test/image:v1.0.0"
+
+        # secrets section: use a real env file with no secrets → force bypasses check
+        env_file = tmp_path / "onetimesecret"
+        env_file.write_text("")  # empty → no secrets
+
+        # Use WORKER_TEMPLATE which needs no extra_vars (no valkey placeholders)
+        target = tmp_path / "quadlet" / "onetime-worker@.container"
+
+        # Patch path.write_text on the Path class to simulate a permission denied
+        # error only for our specific target path
+        original_write = type(target).write_text
+
+        def patched_write(self, *args, **kwargs):
+            if self == target:
+                raise PermissionError(f"[Errno 13] Permission denied: '{target}'")
+            return original_write(self, *args, **kwargs)
+
+        mocker.patch.object(type(target), "write_text", patched_write)
+
+        # Also mock daemon_reload so it doesn't try real systemctl
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+
+        with pytest.raises(PermissionError, match="Permission denied"):
+            quadlet._write_template(
+                quadlet.WORKER_TEMPLATE,
+                target,
+                cfg,
+                env_file,
+                force=True,  # skip secrets check
+            )
+
+
+class TestWaitForHttpHealthy:
+    """Test wait_for_http_healthy polling logic."""
+
+    def test_returns_immediately_when_health_endpoint_returns_200(self, mocker):
+        """Should return without sleeping when endpoint responds 200 on first poll."""
+        from ots_containers import systemd
+
+        mock_response = mocker.MagicMock()
+        mock_response.__enter__ = mocker.MagicMock(return_value=mock_response)
+        mock_response.__exit__ = mocker.MagicMock(return_value=False)
+        mock_response.status = 200
+        mocker.patch("urllib.request.urlopen", return_value=mock_response)
+        mock_sleep = mocker.patch("time.sleep")
+
+        systemd.wait_for_http_healthy(7043, timeout=10)
+
+        mock_sleep.assert_not_called()
+
+    def test_raises_timeout_error_when_endpoint_never_responds(self, mocker):
+        """Should raise HttpHealthCheckTimeoutError when endpoint stays unavailable."""
+        import urllib.error
+
+        from ots_containers import systemd
+        from ots_containers.systemd import HttpHealthCheckTimeoutError
+
+        mocker.patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError("Connection refused"),
+        )
+        mocker.patch("time.sleep")
+        times = iter([0.0, 0.0, 5.0, 5.0, 11.0])
+        mocker.patch("time.monotonic", side_effect=times)
+
+        with pytest.raises(HttpHealthCheckTimeoutError) as exc_info:
+            systemd.wait_for_http_healthy(7043, timeout=10)
+
+        assert exc_info.value.port == 7043
+        assert exc_info.value.timeout == 10
+
+    def test_retries_on_connection_error_then_succeeds(self, mocker):
+        """Should retry and succeed after initial connection errors."""
+        import urllib.error
+
+        from ots_containers import systemd
+
+        mock_response = mocker.MagicMock()
+        mock_response.__enter__ = mocker.MagicMock(return_value=mock_response)
+        mock_response.__exit__ = mocker.MagicMock(return_value=False)
+        mock_response.status = 200
+
+        mocker.patch(
+            "urllib.request.urlopen",
+            side_effect=[
+                urllib.error.URLError("Connection refused"),
+                mock_response,
+            ],
+        )
+        mock_sleep = mocker.patch("time.sleep")
+
+        systemd.wait_for_http_healthy(7043, timeout=30, poll_interval=0.1)
+
+        assert mock_sleep.call_count == 1
+
+    def test_retries_on_non_200_response(self, mocker):
+        """Should retry when endpoint returns a non-200 status code."""
+
+        from ots_containers import systemd
+
+        # First response: 503, second response: 200
+        mock_bad = mocker.MagicMock()
+        mock_bad.__enter__ = mocker.MagicMock(return_value=mock_bad)
+        mock_bad.__exit__ = mocker.MagicMock(return_value=False)
+        mock_bad.status = 503
+
+        mock_ok = mocker.MagicMock()
+        mock_ok.__enter__ = mocker.MagicMock(return_value=mock_ok)
+        mock_ok.__exit__ = mocker.MagicMock(return_value=False)
+        mock_ok.status = 200
+
+        mocker.patch(
+            "urllib.request.urlopen",
+            side_effect=[mock_bad, mock_ok],
+        )
+        mock_sleep = mocker.patch("time.sleep")
+
+        systemd.wait_for_http_healthy(7043, timeout=30, poll_interval=0.1)
+
+        assert mock_sleep.call_count == 1
+
+    def test_error_message_includes_port_and_timeout(self, mocker):
+        """Error message should reference the port and timeout."""
+        import urllib.error
+
+        from ots_containers import systemd
+        from ots_containers.systemd import HttpHealthCheckTimeoutError
+
+        mocker.patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError("refused"),
+        )
+        mocker.patch("time.sleep")
+        mocker.patch("time.monotonic", side_effect=iter([0.0, 0.0, 11.0]))
+
+        with pytest.raises(HttpHealthCheckTimeoutError) as exc_info:
+            systemd.wait_for_http_healthy(7043, timeout=10)
+
+        msg = str(exc_info.value)
+        assert "7043" in msg
+        assert "10" in msg
+
+    def test_polls_correct_url(self, mocker):
+        """Should poll http://localhost:{port}/health."""
+        import urllib.error
+
+        from ots_containers import systemd
+
+        calls = []
+
+        def capture_urlopen(url, timeout=None):
+            calls.append(url)
+            raise urllib.error.URLError("refused")
+
+        mocker.patch("urllib.request.urlopen", side_effect=capture_urlopen)
+        mocker.patch("time.sleep")
+        mocker.patch("time.monotonic", side_effect=iter([0.0, 0.0, 11.0]))
+
+        try:
+            systemd.wait_for_http_healthy(7044, timeout=10)
+        except Exception:
+            pass
+
+        assert calls[0] == "http://localhost:7044/health"
+
+
+class TestDiscoverInstancesSharedImpl:
+    """Direct tests for the _discover_instances shared implementation.
+
+    These target _discover_instances() itself to ensure the shared logic is
+    fully covered independent of the public wrappers (discover_web_instances,
+    discover_worker_instances, discover_scheduler_instances).
+    """
+
+    def test_unit_type_used_in_systemctl_pattern(self, mocker):
+        """The unit_type arg must appear in the systemctl list-units glob pattern."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = ""
+        mock_run = mocker.patch("subprocess.run", return_value=mock_result)
+
+        systemd._discover_instances("scheduler")
+
+        mock_run.assert_called_once_with(
+            [
+                "systemctl",
+                "list-units",
+                "onetime-scheduler@*",
+                "--plain",
+                "--no-legend",
+                "--all",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+    def test_regex_extracts_identifier_for_arbitrary_unit_type(self, mocker):
+        """Pattern must correctly extract the identifier segment for any unit type."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        # Simulate a hypothetical "relay" unit type
+        mock_result.stdout = (
+            "onetime-relay@primary.service loaded active running OTS Relay primary\n"
+            "onetime-relay@secondary.service loaded active running OTS Relay secondary\n"
+        )
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        ids = systemd._discover_instances("relay")
+
+        assert ids == ["primary", "secondary"]
+
+    def test_running_only_filters_inactive_for_arbitrary_type(self, mocker):
+        """running_only=True must exclude non-running units for any unit type."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = (
+            "onetime-relay@primary.service loaded active running OTS Relay primary\n"
+            "onetime-relay@secondary.service loaded inactive dead OTS Relay secondary\n"
+            "onetime-relay@tertiary.service loaded failed failed OTS Relay tertiary\n"
+        )
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        ids = systemd._discover_instances("relay", running_only=True)
+
+        assert ids == ["primary"]
+
+    def test_running_only_false_returns_all_loaded_units(self, mocker):
+        """running_only=False (default) must include all loaded units regardless of state."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = (
+            "onetime-relay@primary.service loaded active running OTS Relay primary\n"
+            "onetime-relay@secondary.service loaded inactive dead OTS Relay secondary\n"
+            "onetime-relay@tertiary.service loaded failed failed OTS Relay tertiary\n"
+        )
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        ids = systemd._discover_instances("relay", running_only=False)
+
+        assert ids == ["primary", "secondary", "tertiary"]
+
+    def test_non_digit_identifiers_returned_as_strings(self, mocker):
+        """Named (non-numeric) identifiers must be returned as plain strings."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = (
+            "onetime-worker@billing.service loaded active running OTS Worker billing\n"
+            "onetime-worker@emails.service loaded active running OTS Worker emails\n"
+        )
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        ids = systemd._discover_instances("worker")
+
+        # Must be str, not int
+        for id_ in ids:
+            assert isinstance(id_, str), f"Expected str, got {type(id_)} for {id_!r}"
+        assert ids == ["billing", "emails"]
+
+    def test_numeric_identifiers_also_returned_as_strings(self, mocker):
+        """Numeric identifiers returned by _discover_instances are strings too.
+
+        The int conversion (for web ports) happens in discover_web_instances(),
+        not in the shared _discover_instances() helper.
+        """
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = (
+            "onetime-worker@1.service loaded active running OTS Worker 1\n"
+            "onetime-worker@2.service loaded active running OTS Worker 2\n"
+        )
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        ids = systemd._discover_instances("worker")
+
+        # _discover_instances always returns strings
+        assert ids == ["1", "2"]
+        for id_ in ids:
+            assert isinstance(id_, str)
+
+    def test_lines_with_fewer_than_four_parts_are_skipped(self, mocker):
+        """Lines with < 4 columns must be silently ignored."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = (
+            "onetime-worker@1.service loaded\n"  # only 2 parts - skip
+            "onetime-worker@2.service loaded active running OTS Worker 2\n"  # valid
+        )
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        ids = systemd._discover_instances("worker")
+
+        assert ids == ["2"]
+
+    def test_unloaded_units_are_skipped(self, mocker):
+        """Units with load state != 'loaded' must be excluded."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = (
+            "onetime-worker@1.service not-found active running OTS Worker 1\n"
+            "onetime-worker@2.service loaded active running OTS Worker 2\n"
+        )
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        ids = systemd._discover_instances("worker")
+
+        assert ids == ["2"]
+        assert "1" not in ids
+
+    def test_results_are_sorted(self, mocker):
+        """Returned identifiers must be in sorted order."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = (
+            "onetime-worker@zeta.service loaded active running OTS Worker zeta\n"
+            "onetime-worker@alpha.service loaded active running OTS Worker alpha\n"
+            "onetime-worker@beta.service loaded active running OTS Worker beta\n"
+        )
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        ids = systemd._discover_instances("worker")
+
+        assert ids == sorted(ids)
+
+    def test_non_matching_units_are_ignored_by_regex(self, mocker):
+        """Units not matching the onetime-{type}@*.service pattern are skipped."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = (
+            "onetime-worker@1.service loaded active running OTS Worker 1\n"
+            "onetime-web@7043.service loaded active running OTS Web 7043\n"  # wrong type
+            "caddy.service loaded active running Caddy\n"  # unrelated
+        )
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        ids = systemd._discover_instances("worker")
+
+        assert ids == ["1"]
+        assert "7043" not in ids

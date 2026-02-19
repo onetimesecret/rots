@@ -220,6 +220,98 @@ def restore(
 
 
 @app.command
+def deployments(
+    web: Annotated[
+        int | None,
+        cyclopts.Parameter(
+            name=["--web", "-w"],
+            help="Filter by web instance port (e.g. 7043). Shows all instances if omitted.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        cyclopts.Parameter(
+            name=["--limit", "-l"],
+            help="Maximum number of records to show.",
+        ),
+    ] = 50,
+    json_output: JsonOutput = False,
+):
+    """Show deployment history from the tracking database.
+
+    Lists deployment records (image, tag, timestamp, action, status) ordered
+    most-recent first. Use --web to narrow results to a specific instance port.
+
+    Examples:
+        ots db deployments
+        ots db deployments --web 7043
+        ots db deployments --web 7043 --limit 10
+        ots db deployments --json
+    """
+    import json as json_mod
+
+    from ots_containers import db as db_module
+
+    cfg = Config()
+    db_path = cfg.db_path
+
+    if not db_path.exists():
+        msg = f"Database not found: {db_path}"
+        if json_output:
+            print(json_mod.dumps({"success": False, "error": msg}))
+        else:
+            print(f"Error: {msg}")
+            print("Run 'ots init' or deploy an instance first to create the database.")
+        raise SystemExit(1)
+
+    records = db_module.get_deployments(db_path, limit=limit, port=web)
+
+    if json_output:
+        output = [
+            {
+                "id": r.id,
+                "timestamp": r.timestamp,
+                "port": r.port,
+                "image": r.image,
+                "tag": r.tag,
+                "action": r.action,
+                "success": r.success,
+                "notes": r.notes,
+            }
+            for r in records
+        ]
+        print(json_mod.dumps(output, indent=2))
+        return
+
+    if not records:
+        if web is not None:
+            print(f"No deployment history for port {web}.")
+        else:
+            print("No deployment history found.")
+        return
+
+    col_id = f"{'ID':>5}"
+    col_ts = f"{'Timestamp':<20}"
+    col_port = f"{'Port':<6}"
+    col_image = f"{'Image':<30}"
+    col_tag = f"{'Tag':<20}"
+    col_action = f"{'Action':<12}"
+    header = f"{col_id}  {col_ts}  {col_port}  {col_image}  {col_tag}  {col_action}  OK"
+    print(header)
+    print("-" * len(header))
+    for r in records:
+        port_str = str(r.port) if r.port is not None else "-"
+        ok_str = "yes" if r.success else "NO"
+        # Truncate image if too long
+        image_display = r.image if len(r.image) <= 30 else r.image[-29:]
+        row = (
+            f"{r.id:>5}  {r.timestamp:<20}  {port_str:<6}  "
+            f"{image_display:<30}  {r.tag:<20}  {r.action:<12}  {ok_str}"
+        )
+        print(row)
+
+
+@app.command
 def info(
     json_output: JsonOutput = False,
 ):

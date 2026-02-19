@@ -153,6 +153,14 @@ class TestPackageRegistry:
         assert "unknown" in str(exc_info.value)
         assert "Available" in str(exc_info.value)
 
+    def test_get_package_unknown_lists_available_packages(self):
+        """SystemExit message for unknown package lists all available package names."""
+        with pytest.raises(SystemExit) as exc_info:
+            get_package("bogus")
+        msg = str(exc_info.value)
+        assert "valkey" in msg
+        assert "redis" in msg
+
     def test_list_packages(self):
         """Test list_packages returns sorted list."""
         packages = list_packages()

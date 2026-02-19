@@ -409,6 +409,26 @@ class TestConfigPrivateImage:
         cfg = Config()
         assert cfg.private_image_with_tag == "registry.example.com/myorg/onetimesecret:@current"
 
+    def test_private_image_custom_image_derives_basename(self, monkeypatch):
+        """IMAGE env var with multi-segment path uses only the last segment as basename."""
+        monkeypatch.setenv("IMAGE", "docker.io/myorg/customapp")
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+        from ots_containers.config import Config
+
+        cfg = Config()
+        # basename of "docker.io/myorg/customapp" is "customapp"
+        assert cfg.private_image == "registry.example.com/customapp"
+
+    def test_private_image_deep_registry_path_basename(self, monkeypatch):
+        """IMAGE with three path components strips all but the last as basename."""
+        monkeypatch.setenv("IMAGE", "registry.corp.com/team/webapp")
+        monkeypatch.setenv("OTS_REGISTRY", "myreg.example.com")
+        from ots_containers.config import Config
+
+        cfg = Config()
+        # basename of "registry.corp.com/team/webapp" is "webapp"
+        assert cfg.private_image == "myreg.example.com/webapp"
+
 
 class TestConfigResolveImageTag:
     """Test Config.resolve_image_tag() with a real SQLite database."""
@@ -482,3 +502,121 @@ class TestConfigResolveImageTag:
         image, tag = cfg.resolve_image_tag()
         assert image == "myregistry/myimage"
         assert tag == "v3.0.0"
+
+
+class TestConfigValkeyService:
+    """Test Config.valkey_service field from OTS_VALKEY_SERVICE env var."""
+
+    def test_valkey_service_from_env(self, monkeypatch):
+        """Should read OTS_VALKEY_SERVICE env var and store it in valkey_service."""
+        monkeypatch.setenv("OTS_VALKEY_SERVICE", "valkey-server@6379.service")
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.valkey_service == "valkey-server@6379.service"
+
+    def test_valkey_service_defaults_to_none(self, monkeypatch):
+        """Should default to None when OTS_VALKEY_SERVICE is not set."""
+        monkeypatch.delenv("OTS_VALKEY_SERVICE", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.valkey_service is None
+
+    def test_valkey_service_explicit_override(self, monkeypatch):
+        """Constructor override takes precedence over env var."""
+        monkeypatch.setenv("OTS_VALKEY_SERVICE", "valkey-server@6380.service")
+        from ots_containers.config import Config
+
+        cfg = Config(valkey_service="redis@6379.service")
+        assert cfg.valkey_service == "redis@6379.service"
+
+    def test_valkey_service_in_quadlet_adds_after_and_wants(self, mocker, tmp_path, monkeypatch):
+        """When valkey_service is set the written quadlet should include After= and Wants= lines."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        monkeypatch.delenv("OTS_VALKEY_SERVICE", raising=False)
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            web_template_path=tmp_path / "onetime-web@.container",
+            var_dir=tmp_path / "var",
+            valkey_service="valkey-server@6379.service",
+        )
+
+        quadlet.write_web_template(cfg, force=True)
+
+        content = cfg.web_template_path.read_text()
+        assert "valkey-server@6379.service" in content
+        assert "After=" in content
+        assert "Wants=" in content
+
+    def test_no_valkey_service_quadlet_omits_valkey_lines(self, mocker, tmp_path, monkeypatch):
+        """When valkey_service is None the quadlet should not reference valkey unit."""
+        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        monkeypatch.delenv("OTS_VALKEY_SERVICE", raising=False)
+        from ots_containers import quadlet
+        from ots_containers.config import Config
+
+        cfg = Config(
+            web_template_path=tmp_path / "onetime-web@.container",
+            var_dir=tmp_path / "var",
+            valkey_service=None,
+        )
+
+        quadlet.write_web_template(cfg, force=True)
+
+        content = cfg.web_template_path.read_text()
+        assert "valkey-server" not in content
+
+
+class TestConfigResourceLimits:
+    """Test Config.memory_max and cpu_quota fields from env vars."""
+
+    def test_memory_max_from_env(self, monkeypatch):
+        """Should read MEMORY_MAX env var."""
+        monkeypatch.setenv("MEMORY_MAX", "1G")
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.memory_max == "1G"
+
+    def test_memory_max_defaults_to_none(self, monkeypatch):
+        """Should default to None when MEMORY_MAX is not set."""
+        monkeypatch.delenv("MEMORY_MAX", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.memory_max is None
+
+    def test_cpu_quota_from_env(self, monkeypatch):
+        """Should read CPU_QUOTA env var."""
+        monkeypatch.setenv("CPU_QUOTA", "80%")
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.cpu_quota == "80%"
+
+    def test_cpu_quota_defaults_to_none(self, monkeypatch):
+        """Should default to None when CPU_QUOTA is not set."""
+        monkeypatch.delenv("CPU_QUOTA", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.cpu_quota is None
+
+    def test_memory_max_explicit_override(self, monkeypatch):
+        """Constructor value overrides env var."""
+        monkeypatch.setenv("MEMORY_MAX", "512M")
+        from ots_containers.config import Config
+
+        cfg = Config(memory_max="2G")
+        assert cfg.memory_max == "2G"
+
+    def test_cpu_quota_explicit_override(self, monkeypatch):
+        """Constructor value overrides env var."""
+        monkeypatch.setenv("CPU_QUOTA", "50%")
+        from ots_containers.config import Config
+
+        cfg = Config(cpu_quota="90%")
+        assert cfg.cpu_quota == "90%"

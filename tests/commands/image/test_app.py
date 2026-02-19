@@ -1099,3 +1099,362 @@ class TestRegistryEnvVarResolution:
         mock_record.assert_called_once()
         assert mock_record.call_args.kwargs["image"] == "registry.example.com/onetimesecret"
         assert mock_record.call_args.kwargs["tag"] == "v1.0.0"
+
+
+class TestPushEnvVarResolution:
+    """Test that push resolves TAG and IMAGE from env vars.
+
+    push() reads TAG via cfg.tag and IMAGE via cfg.image when no CLI flags are
+    given.  Only external side effects (podman subprocess, db) are mocked.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        """Remove relevant env vars so tests start clean."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+    def _mock_externals(self, mocker, tmp_path):
+        """Mock podman subprocess and db calls, return the subprocess mock."""
+        mock_run = mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout="", returncode=0),
+        )
+        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        return mock_run
+
+    def test_push_uses_tag_env_var_when_no_cli_flag(self, mocker, monkeypatch, tmp_path):
+        """Scenario: TAG env var (no --tag flag) should be used as the image tag."""
+        from ots_containers.commands.image.app import push
+
+        monkeypatch.setenv("TAG", "v1.2.3")
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        push()
+
+        # podman.tag and podman.push are both called
+        assert mock_run.call_count == 2
+        tag_cmd = " ".join(mock_run.call_args_list[0][0][0])
+        # Source should include the env-var tag
+        assert "v1.2.3" in tag_cmd
+        push_cmd = " ".join(mock_run.call_args_list[1][0][0])
+        assert "v1.2.3" in push_cmd
+
+    def test_push_derives_src_basename_from_image_env_var(self, mocker, monkeypatch, tmp_path):
+        """Scenario: IMAGE env var constructs source_full and target_full correctly."""
+        from ots_containers.commands.image.app import push
+
+        monkeypatch.setenv("IMAGE", "ghcr.io/myorg/myapp")
+        monkeypatch.setenv("TAG", "v2.0.0")
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        push()
+
+        assert mock_run.call_count == 2
+        tag_cmd = " ".join(mock_run.call_args_list[0][0][0])
+        # source_full = IMAGE:TAG
+        assert "ghcr.io/myorg/myapp:v2.0.0" in tag_cmd
+        # target_full = REGISTRY/basename:TAG  (basename of "ghcr.io/myorg/myapp" is "myapp")
+        assert "registry.example.com/myapp:v2.0.0" in tag_cmd
+
+    def test_push_strips_registry_prefix_from_image_env_var(self, mocker, monkeypatch, tmp_path):
+        """Scenario: custom IMAGE env var with registry host produces correct target basename."""
+        from ots_containers.commands.image.app import push
+
+        monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
+        monkeypatch.setenv("TAG", "v3.0.0")
+        monkeypatch.setenv("OTS_REGISTRY", "myreg.example.com")
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        push()
+
+        assert mock_run.call_count == 2
+        tag_cmd = " ".join(mock_run.call_args_list[0][0][0])
+        # basename of "docker.io/myorg/myapp" is "myapp"
+        assert "myreg.example.com/myapp:v3.0.0" in tag_cmd
+        # source should use the full IMAGE reference
+        assert "docker.io/myorg/myapp:v3.0.0" in tag_cmd
+
+    def test_push_missing_tag_exits_with_error(self, mocker, monkeypatch, tmp_path, capsys):
+        """Scenario: push with no --tag and TAG env var set to empty exits with code 1."""
+        from ots_containers.commands.image.app import push
+
+        # Setting TAG to empty string causes cfg.tag to return "" (falsy)
+        monkeypatch.setenv("TAG", "")
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            push()
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "Tag required" in captured.out
+
+
+class TestListRemoteImageResolution:
+    """Tests for list_remote IMAGE env var and --image CLI flag resolution.
+
+    list_remote defaults --image to None and resolves the image name from
+    cfg.image.split("/")[-1] (the basename). Tests verify this behavior
+    for custom IMAGE env vars, --image flag override, and the default case.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        """Remove IMAGE/OTS_REGISTRY env vars so tests start from a clean state."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+    def _mock_skopeo_call(self, mocker, tmp_path, tags=None):
+        """Mock shutil.which (skopeo present) and subprocess.run (skopeo result)."""
+        mocker.patch("shutil.which", return_value=str(tmp_path / "skopeo"))
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mock_run = mocker.patch(
+            "subprocess.run",
+            return_value=mocker.MagicMock(
+                stdout=f'{{"Tags": {tags or ["v1.0.0", "v2.0.0"]}}}',
+                returncode=0,
+            ),
+        )
+        return mock_run
+
+    def test_list_remote_image_env_var_basename_passed_to_skopeo(
+        self, mocker, monkeypatch, tmp_path
+    ):
+        """IMAGE=docker.io/myorg/myapp should pass 'myapp' as image basename to skopeo."""
+
+        from ots_containers.commands.image.app import list_remote
+
+        monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        mocker.patch("shutil.which", return_value=str(tmp_path / "skopeo"))
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mock_subrun = mocker.patch(
+            "subprocess.run",
+            return_value=mocker.MagicMock(
+                stdout='{"Tags": ["v1.0.0"]}',
+                returncode=0,
+            ),
+        )
+
+        list_remote(quiet=True)
+
+        # Verify skopeo was called with "myapp" as the image basename
+        mock_subrun.assert_called_once()
+        cmd = mock_subrun.call_args[0][0]
+        full_cmd = " ".join(cmd)
+        assert "docker://registry.example.com/myapp" in full_cmd
+        # Should NOT use "docker.io/myorg/myapp" directly
+        assert "docker.io/myorg/myapp" not in full_cmd
+
+    def test_list_remote_cli_image_flag_overrides_env_var(self, mocker, monkeypatch, tmp_path):
+        """--image CLI flag should override IMAGE env var basename resolution."""
+        from ots_containers.commands.image.app import list_remote
+
+        monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        mocker.patch("shutil.which", return_value=str(tmp_path / "skopeo"))
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mock_subrun = mocker.patch(
+            "subprocess.run",
+            return_value=mocker.MagicMock(
+                stdout='{"Tags": ["v1.0.0"]}',
+                returncode=0,
+            ),
+        )
+
+        # --image overrides env var
+        list_remote(image="custom-image", quiet=True)
+
+        mock_subrun.assert_called_once()
+        cmd = mock_subrun.call_args[0][0]
+        full_cmd = " ".join(cmd)
+        assert "docker://registry.example.com/custom-image" in full_cmd
+        # Should NOT use "myapp" from IMAGE env var
+        assert "myapp" not in full_cmd
+
+    def test_list_remote_default_image_uses_onetimesecret_basename(
+        self, mocker, monkeypatch, tmp_path, capsys
+    ):
+        """With no IMAGE env var, list_remote uses 'onetimesecret' as basename."""
+        from ots_containers.commands.image.app import list_remote
+
+        # No IMAGE env var set (cleared by autouse fixture)
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        mocker.patch("shutil.which", return_value=str(tmp_path / "skopeo"))
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mock_subrun = mocker.patch(
+            "subprocess.run",
+            return_value=mocker.MagicMock(
+                stdout='{"Tags": ["v0.23.0"]}',
+                returncode=0,
+            ),
+        )
+
+        list_remote(quiet=True)
+
+        mock_subrun.assert_called_once()
+        cmd = mock_subrun.call_args[0][0]
+        full_cmd = " ".join(cmd)
+        # Default IMAGE env var produces 'onetimesecret' as basename
+        assert "docker://registry.example.com/onetimesecret" in full_cmd
+
+
+class TestRmImageBasenameDerivation:
+    """Tests for rm command IMAGE env var basename derivation.
+
+    rm() uses cfg.image.split("/")[-1] as image_basename for the first and
+    third patterns in images_to_try (e.g. basename:tag, localhost/basename:tag).
+    The second pattern uses the full cfg.image value.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        """Remove IMAGE/OTS_REGISTRY env vars before each test."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+    def test_rm_custom_image_env_var_tries_basename_patterns(
+        self, mocker, monkeypatch, tmp_path, capsys
+    ):
+        """IMAGE=docker.io/myorg/myapp tries 'myapp:<tag>', full image, 'localhost/myapp:<tag>'."""
+        from ots_containers.commands.image.app import rm
+
+        monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        attempted_images = []
+
+        def mock_rmi(*args, **kwargs):
+            attempted_images.extend(args)
+            raise Exception("not found")
+
+        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+
+        rm(tags=("v1.0.0",), yes=True)
+
+        # Verify the three standard patterns were tried
+        assert "myapp:v1.0.0" in attempted_images
+        assert "docker.io/myorg/myapp:v1.0.0" in attempted_images
+        assert "localhost/myapp:v1.0.0" in attempted_images
+
+    def test_rm_default_image_tries_onetimesecret_patterns(
+        self, mocker, monkeypatch, tmp_path, capsys
+    ):
+        """Default IMAGE (no env var) tries 'onetimesecret:<tag>' as basename."""
+        from ots_containers.commands.image.app import rm
+
+        # No IMAGE env var - default is 'ghcr.io/onetimesecret/onetimesecret'
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        attempted_images = []
+
+        def mock_rmi(*args, **kwargs):
+            attempted_images.extend(args)
+            raise Exception("not found")
+
+        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+
+        rm(tags=("v0.23.0",), yes=True)
+
+        # Default IMAGE basename is 'onetimesecret'
+        assert "onetimesecret:v0.23.0" in attempted_images
+        assert "localhost/onetimesecret:v0.23.0" in attempted_images
+
+    def test_rm_with_private_image_adds_fourth_pattern(self, mocker, monkeypatch, tmp_path, capsys):
+        """rm with OTS_REGISTRY set includes private registry as fourth pattern."""
+        from ots_containers.commands.image.app import rm
+
+        monkeypatch.setenv("IMAGE", "ghcr.io/onetimesecret/onetimesecret")
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        attempted_images = []
+
+        def mock_rmi(*args, **kwargs):
+            attempted_images.extend(args)
+            raise Exception("not found")
+
+        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+
+        rm(tags=("v0.23.0",), yes=True)
+
+        # Should have 4 patterns: basename, full, localhost/basename, private
+        assert len(attempted_images) == 4
+        # Fourth pattern is the private registry image
+        assert any("registry.example.com" in img for img in attempted_images)
+
+    def test_rm_succeeds_on_first_matching_pattern(self, mocker, monkeypatch, tmp_path, capsys):
+        """rm should stop trying patterns once one succeeds."""
+        from ots_containers.commands.image.app import rm
+
+        monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
+        attempted_images = []
+
+        def mock_rmi(*args, **kwargs):
+            # First call (myapp:v1.0.0) succeeds
+            attempted_images.extend(args)
+
+        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+
+        rm(tags=("v1.0.0",), yes=True)
+
+        # Should stop after the first successful removal
+        assert len(attempted_images) == 1
+        assert attempted_images[0] == "myapp:v1.0.0"
+
+        captured = capsys.readouterr()
+        assert "Removed myapp:v1.0.0" in captured.out

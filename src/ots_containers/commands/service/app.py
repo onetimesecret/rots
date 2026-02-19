@@ -155,16 +155,16 @@ def init(
         bool,
         cyclopts.Parameter(
             name=["--start", "-s"],
-            help="Start service after init",
+            help="Start service after init (default: off — configure first, then start explicitly)",
         ),
-    ] = True,
+    ] = False,
     enable: Annotated[
         bool,
         cyclopts.Parameter(
             name=["--enable", "-e"],
-            help="Enable service at boot",
+            help="Enable service at boot (default: off — use 'ots service enable' after verifying)",
         ),
-    ] = True,
+    ] = False,
     force: Annotated[
         bool,
         cyclopts.Parameter(
@@ -183,10 +183,11 @@ def init(
     skips all modifications. Use --force to overwrite the existing config.
 
     Examples:
-        ots service init valkey 6379
+        ots service init valkey 6379                          # Configure only
+        ots service init valkey 6379 --start --enable         # Configure, start, and enable
         ots service init redis 6380 --port 6380 --bind 0.0.0.0
         ots service init valkey 6379 --dry-run
-        ots service init valkey 6379 --force   # Overwrite existing config
+        ots service init valkey 6379 --force                  # Overwrite existing config
     """
     pkg = get_package(package)
     if port is not None:

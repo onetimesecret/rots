@@ -184,6 +184,7 @@ class TestInitCommand:
         from ots_containers.commands.init import init
 
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
 
         # Create a mock config pointing to tmp_path subdirs
         mock_config = mocker.MagicMock()
@@ -196,6 +197,7 @@ class TestInitCommand:
         mock_config.db_path = mock_config.var_dir / "deployments.db"
 
         mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
 
@@ -256,6 +258,7 @@ class TestInitCommand:
         from ots_containers.commands.init import init
 
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
 
         mock_config = mocker.MagicMock()
         mock_config.config_dir = tmp_path / "etc" / "onetimesecret"
@@ -267,6 +270,7 @@ class TestInitCommand:
         mock_config.db_path = mock_config.var_dir / "deployments.db"
 
         mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
 
         # Make mkdir always fail with PermissionError
         mocker.patch.object(Path, "mkdir", side_effect=PermissionError("denied"))
@@ -414,11 +418,14 @@ class TestInitCommand:
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
 
         # Pre-create directories so we get past dir creation
         config_dir.mkdir(parents=True)
         var_dir.mkdir(parents=True)
         quadlet_dir.mkdir(parents=True)
+        env_file.parent.mkdir(parents=True)
+        env_file.touch()
 
         mock_config = mocker.MagicMock()
         mock_config.config_dir = config_dir
@@ -431,11 +438,201 @@ class TestInitCommand:
         # db_path doesn't exist, so init_db will be called
 
         mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
         mocker.patch(
             "ots_containers.commands.init.db.init_db",
             side_effect=PermissionError("cannot create db"),
         )
+
+        result = init(quiet=False)
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "[denied]" in captured.out
+        assert "Initialization incomplete" in captured.out
+
+
+class TestInitEnvFileScaffold:
+    """Test step 4: Infrastructure Configuration (env file scaffold)."""
+
+    def test_check_reports_missing_env_file(self, tmp_path, mocker, capsys):
+        """init(check=True) reports [missing] for DEFAULT_ENV_FILE when it does not exist."""
+        from ots_containers.commands.init import init
+
+        quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
+        # env_file intentionally NOT created
+
+        # Create directories and quadlet files so only env_file is missing
+        config_dir = tmp_path / "etc" / "onetimesecret"
+        var_dir = tmp_path / "var" / "lib" / "onetimesecret"
+        config_dir.mkdir(parents=True)
+        var_dir.mkdir(parents=True)
+        quadlet_dir.mkdir(parents=True)
+        (quadlet_dir / "onetime-web@.container").touch()
+        (quadlet_dir / "onetime-worker@.container").touch()
+        (quadlet_dir / "onetime-scheduler@.container").touch()
+        (var_dir / "deployments.db").touch()
+
+        mock_config = mocker.MagicMock()
+        mock_config.config_dir = config_dir
+        mock_config.var_dir = var_dir
+        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
+        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
+        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
+        mock_config.config_yaml = config_dir / "config.yaml"
+        mock_config.db_path = var_dir / "deployments.db"
+
+        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+
+        result = init(check=True)
+
+        assert result == 1  # Missing env file makes all_ok = False
+        captured = capsys.readouterr()
+        assert "[missing]" in captured.out
+        assert str(env_file) in captured.out
+
+    def test_check_reports_ok_for_existing_env_file(self, tmp_path, mocker, capsys):
+        """init(check=True) reports [ok] for DEFAULT_ENV_FILE when it exists."""
+        from ots_containers.commands.init import init
+
+        quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
+        config_dir = tmp_path / "etc" / "onetimesecret"
+        var_dir = tmp_path / "var" / "lib" / "onetimesecret"
+
+        config_dir.mkdir(parents=True)
+        var_dir.mkdir(parents=True)
+        quadlet_dir.mkdir(parents=True)
+        (quadlet_dir / "users").mkdir()
+        env_file.parent.mkdir(parents=True)
+        env_file.touch()
+        (quadlet_dir / "onetime-web@.container").touch()
+        (quadlet_dir / "onetime-worker@.container").touch()
+        (quadlet_dir / "onetime-scheduler@.container").touch()
+        (var_dir / "deployments.db").touch()
+
+        mock_config = mocker.MagicMock()
+        mock_config.config_dir = config_dir
+        mock_config.var_dir = var_dir
+        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
+        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
+        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
+        mock_config.config_yaml = config_dir / "config.yaml"
+        mock_config.db_path = var_dir / "deployments.db"
+
+        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+
+        result = init(check=True)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "[ok]" in captured.out
+        assert str(env_file) in captured.out
+
+    def test_creates_env_file_with_template_content(self, tmp_path, mocker, capsys):
+        """init() creates DEFAULT_ENV_FILE with ENV_FILE_TEMPLATE content when it does not exist."""
+        from ots_containers.commands.init import init
+        from ots_containers.environment_file import ENV_FILE_TEMPLATE
+
+        config_dir = tmp_path / "etc" / "onetimesecret"
+        var_dir = tmp_path / "var" / "lib" / "onetimesecret"
+        quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
+        # env_file intentionally NOT created
+
+        mock_config = mocker.MagicMock()
+        mock_config.config_dir = config_dir
+        mock_config.var_dir = var_dir
+        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
+        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
+        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
+        mock_config.config_yaml = config_dir / "config.yaml"
+        mock_config.db_path = var_dir / "deployments.db"
+
+        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("os.chown")
+        mocker.patch("ots_containers.commands.init.db.init_db")
+
+        result = init(quiet=False)
+
+        assert result == 0
+        assert env_file.exists()
+        assert env_file.read_text() == ENV_FILE_TEMPLATE
+        captured = capsys.readouterr()
+        assert "[created]" in captured.out
+        assert str(env_file) in captured.out
+
+    def test_skips_env_file_creation_when_already_exists(self, tmp_path, mocker, capsys):
+        """init() reports [ok] and skips creation when DEFAULT_ENV_FILE already exists."""
+        from ots_containers.commands.init import init
+
+        config_dir = tmp_path / "etc" / "onetimesecret"
+        var_dir = tmp_path / "var" / "lib" / "onetimesecret"
+        quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
+        env_file.parent.mkdir(parents=True)
+        env_file.write_text("EXISTING_CONTENT=unchanged\n")
+
+        mock_config = mocker.MagicMock()
+        mock_config.config_dir = config_dir
+        mock_config.var_dir = var_dir
+        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
+        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
+        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
+        mock_config.config_yaml = config_dir / "config.yaml"
+        mock_config.db_path = var_dir / "deployments.db"
+
+        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("os.chown")
+        mocker.patch("ots_containers.commands.init.db.init_db")
+
+        init(quiet=False)
+
+        # Content must not be overwritten
+        assert env_file.read_text() == "EXISTING_CONTENT=unchanged\n"
+        captured = capsys.readouterr()
+        assert "[ok]" in captured.out
+        assert str(env_file) in captured.out
+
+    def test_env_file_permission_error_sets_failure(self, tmp_path, mocker, capsys):
+        """init() reports [denied] and sets all_ok=False on PermissionError for DEFAULT_ENV_FILE."""
+        from ots_containers.commands.init import init
+
+        config_dir = tmp_path / "etc" / "onetimesecret"
+        var_dir = tmp_path / "var" / "lib" / "onetimesecret"
+        quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
+        # env_file NOT created - so write will be attempted
+
+        mock_config = mocker.MagicMock()
+        mock_config.config_dir = config_dir
+        mock_config.var_dir = var_dir
+        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
+        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
+        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
+        mock_config.config_yaml = config_dir / "config.yaml"
+        mock_config.db_path = var_dir / "deployments.db"
+
+        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("os.chown")
+        mocker.patch("ots_containers.commands.init.db.init_db")
+
+        # Make mkdir for parent of env_file raise PermissionError
+        original_mkdir = Path.mkdir
+
+        def selective_mkdir(self, *args, **kwargs):
+            if self == env_file.parent:
+                raise PermissionError("denied")
+            return original_mkdir(self, *args, **kwargs)
+
+        mocker.patch.object(Path, "mkdir", selective_mkdir)
 
         result = init(quiet=False)
 

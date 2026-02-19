@@ -34,7 +34,7 @@ classifiers = [
 dependencies = ["cyclopts>=3.9", "podman>=5.0", "pyyaml>=6.0"]
 
 [project.optional-dependencies]
-dev = ["pre-commit>=3.0", "pyright>=1.1.390"]
+dev = ["pre-commit>=3.0", "pyright>=1.1.390", "ruff>=0.9"]
 test = ["pytest>=8.0", "pytest-mock>=3.14", "pytest-cov>=6.0", "coverage>=7.10"]
 
 [project.scripts]
@@ -56,6 +56,18 @@ packages = ["src/ots_containers"]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
 include = ["src"]
+
+[tool.coverage.run]
+source = ["ots_containers"]
+
+[tool.coverage.report]
+# Global minimum enforced by --cov-fail-under=70 in pytest invocation.
+# Per-file baselines are enforced in CI via separate `coverage report --include` steps.
+# Targets (raise these as test coverage improves):
+#   cli.py              baseline 26%  target 80%
+#   commands/db.py      baseline 29%  target 70%
+show_missing = true
+skip_empty = true
 
 [tool.ruff]
 target-version = "py311"

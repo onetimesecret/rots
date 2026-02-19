@@ -117,7 +117,7 @@ def version():
         if result.returncode == 0:
             commit = result.stdout.strip()
             print(f"git commit: {commit}")
-    except Exception:
+    except (FileNotFoundError, subprocess.SubprocessError):
         pass
 
 
@@ -220,8 +220,10 @@ def doctor():
             web_running = "onetime-web@" in result.stdout
             if not web_running:
                 web_running_detail = "no onetime-web@* units found"
-        except Exception:
-            web_running_detail = "systemctl query failed"
+        except (subprocess.SubprocessError, OSError, TimeoutError):
+            web_running_detail = (
+                "systemctl query failed; run: systemctl status onetime-web@*.service"
+            )
     _check("web instance(s) running", web_running, web_running_detail)
 
     # 9. Caddy (proxy) running (best-effort)
@@ -236,8 +238,8 @@ def doctor():
                 timeout=10,
             )
             caddy_ok = result.stdout.strip() == "active"
-        except Exception:
-            caddy_detail = "systemctl query failed"
+        except (subprocess.SubprocessError, OSError, TimeoutError):
+            caddy_detail = "systemctl query failed; run: systemctl status caddy"
     _check("caddy running", caddy_ok, caddy_detail)
 
     # --- Report ---

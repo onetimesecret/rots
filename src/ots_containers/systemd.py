@@ -108,19 +108,27 @@ def unit_name(instance_type: str, identifier: str) -> str:
     return f"onetime-{instance_type}@{identifier}"
 
 
-def discover_web_instances(running_only: bool = False) -> list[int]:
-    """Find onetime-web@* units and return their ports.
+def _discover_instances(unit_type: str, running_only: bool = False) -> list[str]:
+    """Find onetime-{unit_type}@* units and return their instance identifiers.
+
+    This is the shared implementation for all discover_*_instances functions.
+    Callers are responsible for converting identifiers to the appropriate type
+    (e.g., int for web ports).
 
     Args:
+        unit_type: The unit type segment, e.g. "web", "worker", "scheduler".
         running_only: If True, only return units that are active and running.
                       If False (default), return all loaded units regardless of state.
+
+    Returns:
+        Sorted list of instance identifier strings.
     """
     require_systemctl()
     result = subprocess.run(
         [
             "systemctl",
             "list-units",
-            "onetime-web@*",
+            f"onetime-{unit_type}@*",
             "--plain",
             "--no-legend",
             "--all",
@@ -129,9 +137,10 @@ def discover_web_instances(running_only: bool = False) -> list[int]:
         text=True,
         timeout=10,
     )
-    ports = []
+    instances = []
+    pattern = re.compile(rf"onetime-{re.escape(unit_type)}@([^.]+)\.service")
     for line in result.stdout.strip().splitlines():
-        # Format: onetime-web@7043.service loaded active running Description...
+        # Format: onetime-{type}@<id>.service loaded active running Description...
         # Columns: UNIT LOAD ACTIVE SUB DESCRIPTION
         parts = line.split()
         if len(parts) < 4:
@@ -143,9 +152,22 @@ def discover_web_instances(running_only: bool = False) -> list[int]:
         # If running_only, filter to active+running
         if running_only and (active != "active" or sub != "running"):
             continue
-        match = re.match(r"onetime-web@(\d+)\.service", unit)
+        match = pattern.match(unit)
         if match:
-            ports.append(int(match.group(1)))
+            instances.append(match.group(1))
+    return sorted(instances)
+
+
+def discover_web_instances(running_only: bool = False) -> list[int]:
+    """Find onetime-web@* units and return their ports.
+
+    Args:
+        running_only: If True, only return units that are active and running.
+                      If False (default), return all loaded units regardless of state.
+    """
+    ids = _discover_instances("web", running_only=running_only)
+    # Web instances use numeric port identifiers; non-numeric entries are silently skipped.
+    ports = [int(i) for i in ids if i.isdigit()]
     return sorted(ports)
 
 
@@ -158,39 +180,7 @@ def discover_worker_instances(running_only: bool = False) -> list[str]:
         running_only: If True, only return units that are active and running.
                       If False (default), return all loaded units regardless of state.
     """
-    require_systemctl()
-    result = subprocess.run(
-        [
-            "systemctl",
-            "list-units",
-            "onetime-worker@*",
-            "--plain",
-            "--no-legend",
-            "--all",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    instances = []
-    for line in result.stdout.strip().splitlines():
-        # Format: onetime-worker@1.service loaded active running Description...
-        # Columns: UNIT LOAD ACTIVE SUB DESCRIPTION
-        parts = line.split()
-        if len(parts) < 4:
-            continue
-        unit, load, active, sub = parts[:4]
-        # Skip units that aren't loaded
-        if load != "loaded":
-            continue
-        # If running_only, filter to active+running
-        if running_only and (active != "active" or sub != "running"):
-            continue
-        # Match both numeric and named instances
-        match = re.match(r"onetime-worker@([^.]+)\.service", unit)
-        if match:
-            instances.append(match.group(1))
-    return sorted(instances)
+    return _discover_instances("worker", running_only=running_only)
 
 
 def discover_scheduler_instances(running_only: bool = False) -> list[str]:
@@ -202,39 +192,7 @@ def discover_scheduler_instances(running_only: bool = False) -> list[str]:
         running_only: If True, only return units that are active and running.
                       If False (default), return all loaded units regardless of state.
     """
-    require_systemctl()
-    result = subprocess.run(
-        [
-            "systemctl",
-            "list-units",
-            "onetime-scheduler@*",
-            "--plain",
-            "--no-legend",
-            "--all",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    instances = []
-    for line in result.stdout.strip().splitlines():
-        # Format: onetime-scheduler@main.service loaded active running Description...
-        # Columns: UNIT LOAD ACTIVE SUB DESCRIPTION
-        parts = line.split()
-        if len(parts) < 4:
-            continue
-        unit, load, active, sub = parts[:4]
-        # Skip units that aren't loaded
-        if load != "loaded":
-            continue
-        # If running_only, filter to active+running
-        if running_only and (active != "active" or sub != "running"):
-            continue
-        # Match both numeric and named instances
-        match = re.match(r"onetime-scheduler@([^.]+)\.service", unit)
-        if match:
-            instances.append(match.group(1))
-    return sorted(instances)
+    return _discover_instances("scheduler", running_only=running_only)
 
 
 def daemon_reload() -> None:
@@ -433,3 +391,60 @@ def wait_for_healthy(
         time.sleep(poll_interval)
 
     raise HealthCheckTimeoutError(unit, timeout, last_state)
+
+
+class HttpHealthCheckTimeoutError(Exception):
+    """Raised when HTTP health endpoint does not return 200 within the timeout."""
+
+    def __init__(self, port: int, timeout: int, last_error: str) -> None:
+        self.port = port
+        self.timeout = timeout
+        self.last_error = last_error
+        super().__init__(
+            f"http://localhost:{port}/health did not return 200 within {timeout}s "
+            f"(last error: {last_error})"
+        )
+
+
+def wait_for_http_healthy(
+    port: int,
+    timeout: int = 60,
+    poll_interval: float = 2.0,
+) -> None:
+    """Poll the HTTP health endpoint until it returns 200 or timeout is reached.
+
+    Useful for web instances where systemd may report active before the
+    application is ready to serve requests.
+
+    Args:
+        port: The port to check (e.g., 7043 for onetime-web@7043).
+        timeout: Maximum seconds to wait (default: 60).
+        poll_interval: Seconds between checks (default: 2.0).
+
+    Raises:
+        HttpHealthCheckTimeoutError: If the health endpoint does not return 200
+            within ``timeout`` seconds.
+    """
+    import time
+    import urllib.error
+    import urllib.request
+
+    url = f"http://localhost:{port}/health"
+    deadline = time.monotonic() + timeout
+    last_error = "not started"
+
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310
+                if response.status == 200:
+                    logger.debug("HTTP health check passed: %s", url)
+                    return
+                last_error = f"HTTP {response.status}"
+        except urllib.error.HTTPError as e:
+            last_error = f"HTTP {e.code}"
+        except (urllib.error.URLError, OSError) as e:
+            last_error = str(e)
+        logger.debug("HTTP health check pending (%s): %s", last_error, url)
+        time.sleep(poll_interval)
+
+    raise HttpHealthCheckTimeoutError(port, timeout, last_error)
