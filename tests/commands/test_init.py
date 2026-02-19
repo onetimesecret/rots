@@ -217,11 +217,14 @@ class TestInitCommand:
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
         users_dir = quadlet_dir / "users"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
 
         config_dir.mkdir(parents=True)
         var_dir.mkdir(parents=True)
         quadlet_dir.mkdir(parents=True)
         users_dir.mkdir(parents=True)
+        env_file.parent.mkdir(parents=True)
+        env_file.touch()
 
         (config_dir / "config.yaml").touch()
         (var_dir / "deployments.db").touch()
@@ -239,6 +242,7 @@ class TestInitCommand:
         mock_config.db_path = var_dir / "deployments.db"
 
         mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
 
@@ -282,6 +286,9 @@ class TestInitCommand:
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
+        env_file.parent.mkdir(parents=True)
+        env_file.touch()
 
         mock_config = mocker.MagicMock()
         mock_config.config_dir = config_dir
@@ -293,6 +300,7 @@ class TestInitCommand:
         mock_config.db_path = var_dir / "deployments.db"
 
         mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")  # Avoid chown permission issues
         mocker.patch("ots_containers.commands.init.db.init_db")
 
@@ -320,6 +328,9 @@ class TestInitCommand:
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
+        env_file.parent.mkdir(parents=True)
+        env_file.touch()
 
         mock_config = mocker.MagicMock()
         mock_config.config_dir = config_dir
@@ -331,6 +342,7 @@ class TestInitCommand:
         mock_config.db_path = var_dir / "deployments.db"
 
         mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
         mocker.patch("ots_containers.commands.init.db.init_db")
 
@@ -356,11 +368,14 @@ class TestInitCommand:
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
         users_dir = quadlet_dir / "users"
+        env_file = tmp_path / "etc" / "default" / "onetimesecret"
 
         config_dir.mkdir(parents=True)
         var_dir.mkdir(parents=True)
         quadlet_dir.mkdir(parents=True)
         users_dir.mkdir(parents=True)
+        env_file.parent.mkdir(parents=True)
+        env_file.touch()
 
         # Create quadlet templates and db so those pass
         (quadlet_dir / "onetime-web@.container").touch()
@@ -378,6 +393,7 @@ class TestInitCommand:
         mock_config.db_path = var_dir / "deployments.db"
 
         mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
 
