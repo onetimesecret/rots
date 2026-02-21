@@ -25,4 +25,6 @@ ENV/
 .DS_Store
 Thumbs.db
 
+.claude
+.serena
 .coverage
