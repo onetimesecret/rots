@@ -2,6 +2,8 @@
 
 """Internal helper functions for instance commands."""
 
+from __future__ import annotations
+
 import contextlib
 import fcntl
 import shlex
@@ -10,12 +12,16 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ots_containers import systemd
 from ots_containers.environment_file import get_secrets_from_env_file
 from ots_containers.systemd import SystemctlError
 
 from .annotations import InstanceType
+
+if TYPE_CHECKING:
+    from ots_shared.ssh.executor import Executor
 
 #: Default lock file path for serialising concurrent deploy/redeploy operations.
 DEPLOY_LOCK_PATH = Path("/var/lib/onetimesecret/deploy.lock")
@@ -156,6 +162,8 @@ def resolve_identifiers(
     identifiers: tuple[str, ...],
     instance_type: InstanceType | None,
     running_only: bool = False,
+    *,
+    executor: Executor | None = None,
 ) -> dict[InstanceType, list[str]]:
     """Resolve instance identifiers from explicit args or auto-discovery.
 
@@ -195,29 +203,33 @@ def resolve_identifiers(
     # If type specified, only discover that type
     if instance_type is not None:
         if instance_type == InstanceType.WEB:
-            ports = systemd.discover_web_instances(running_only=running_only)
+            ports = systemd.discover_web_instances(running_only=running_only, executor=executor)
             if ports:
                 result[InstanceType.WEB] = [str(p) for p in ports]
         elif instance_type == InstanceType.WORKER:
-            workers = systemd.discover_worker_instances(running_only=running_only)
+            workers = systemd.discover_worker_instances(
+                running_only=running_only, executor=executor
+            )
             if workers:
                 result[InstanceType.WORKER] = workers
         elif instance_type == InstanceType.SCHEDULER:
-            schedulers = systemd.discover_scheduler_instances(running_only=running_only)
+            schedulers = systemd.discover_scheduler_instances(
+                running_only=running_only, executor=executor
+            )
             if schedulers:
                 result[InstanceType.SCHEDULER] = schedulers
         return result
 
     # No type: discover ALL types
-    ports = systemd.discover_web_instances(running_only=running_only)
+    ports = systemd.discover_web_instances(running_only=running_only, executor=executor)
     if ports:
         result[InstanceType.WEB] = [str(p) for p in ports]
 
-    workers = systemd.discover_worker_instances(running_only=running_only)
+    workers = systemd.discover_worker_instances(running_only=running_only, executor=executor)
     if workers:
         result[InstanceType.WORKER] = workers
 
-    schedulers = systemd.discover_scheduler_instances(running_only=running_only)
+    schedulers = systemd.discover_scheduler_instances(running_only=running_only, executor=executor)
     if schedulers:
         result[InstanceType.SCHEDULER] = schedulers
 

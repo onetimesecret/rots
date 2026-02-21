@@ -330,9 +330,9 @@ class TestResolveIdentifiers:
             return_value=[],
         )
         resolve_identifiers((), instance_type=None, running_only=True)
-        mock_web.assert_called_once_with(running_only=True)
-        mock_worker.assert_called_once_with(running_only=True)
-        mock_scheduler.assert_called_once_with(running_only=True)
+        mock_web.assert_called_once_with(running_only=True, executor=None)
+        mock_worker.assert_called_once_with(running_only=True, executor=None)
+        mock_scheduler.assert_called_once_with(running_only=True, executor=None)
 
 
 class TestForEachInstance:
