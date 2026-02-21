@@ -26,4 +26,5 @@ def sync(
     on initial setup.
     """
     cfg = Config()
-    assets_module.update(cfg, create_volume=create_volume)
+    ex = cfg.get_executor()
+    assets_module.update(cfg, create_volume=create_volume, executor=ex)

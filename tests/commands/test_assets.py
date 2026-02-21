@@ -34,7 +34,9 @@ class TestAssetsSyncCommand:
 
         assets.sync()
 
-        mock_update.assert_called_once_with(mock_config, create_volume=False)
+        from unittest.mock import ANY
+
+        mock_update.assert_called_once_with(mock_config, create_volume=False, executor=ANY)
 
     def test_sync_calls_assets_update(self, mocker):
         """sync should call assets_module.update."""
@@ -46,7 +48,9 @@ class TestAssetsSyncCommand:
 
         assets.sync()
 
-        mock_update.assert_called_once_with(mock_config, create_volume=False)
+        from unittest.mock import ANY
+
+        mock_update.assert_called_once_with(mock_config, create_volume=False, executor=ANY)
 
     def test_sync_with_create_volume(self, mocker):
         """sync --create-volume should pass flag to update."""
@@ -58,7 +62,9 @@ class TestAssetsSyncCommand:
 
         assets.sync(create_volume=True)
 
-        mock_update.assert_called_once_with(mock_config, create_volume=True)
+        from unittest.mock import ANY
+
+        mock_update.assert_called_once_with(mock_config, create_volume=True, executor=ANY)
 
 
 class TestAssetsSyncHelp:

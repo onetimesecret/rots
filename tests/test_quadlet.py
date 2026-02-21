@@ -1,6 +1,8 @@
 # tests/test_quadlet.py
 """Tests for quadlet module - Podman quadlet file generation."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 
@@ -969,7 +971,7 @@ class TestGetSecretsSection:
         # Mock secret_exists to simulate: ots_api_key exists, ots_db_password does not
         mock_secret_exists = mocker.patch(
             "ots_containers.quadlet.secret_exists",
-            side_effect=lambda name: name == "ots_api_key",
+            side_effect=lambda name, **kw: name == "ots_api_key",
         )
 
         from ots_containers.quadlet import get_secrets_section
@@ -1297,3 +1299,135 @@ class TestGetResourceLimitsSection:
         content = cfg.web_template_path.read_text()
         assert "MemoryMax" not in content
         assert "CPUQuota" not in content
+
+
+# =============================================================================
+# Remote executor tests
+# =============================================================================
+
+
+def _make_ssh_executor(mocker):
+    """Create a mock SSHExecutor that _is_remote() recognises as remote."""
+    mock_ex = mocker.MagicMock()
+    mocker.patch(
+        "ots_containers.quadlet._is_remote",
+        side_effect=lambda ex: ex is mock_ex,
+    )
+    return mock_ex
+
+
+def _make_remote_result(stdout="", returncode=0):
+    result = MagicMock()
+    result.ok = returncode == 0
+    result.stdout = stdout
+    result.stderr = ""
+    result.returncode = returncode
+    return result
+
+
+class TestWriteTemplateRemote:
+    """Test _write_template() with remote executor."""
+
+    def test_writes_via_executor_mkdir_tee_and_daemon_reload(self, mocker, tmp_path):
+        from ots_containers import quadlet
+
+        mock_ex = _make_ssh_executor(mocker)
+        mock_ex.run.return_value = _make_remote_result()
+
+        # Mock get_secrets_section and get_config_volumes_section to
+        # avoid their own remote calls (tested separately)
+        mocker.patch(
+            "ots_containers.quadlet.get_secrets_section",
+            return_value="# no secrets",
+        )
+        mocker.patch(
+            "ots_containers.quadlet.get_config_volumes_section",
+            return_value="# no config",
+        )
+        mock_reload = mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+
+        cfg = MagicMock()
+        cfg.resolved_image_with_tag = "ghcr.io/ots:latest"
+        cfg.config_dir = "/etc/onetimesecret"
+        cfg.memory_max = None
+        cfg.cpu_quota = None
+        cfg.web_template_path = tmp_path / "onetime-web@.container"
+
+        path = tmp_path / "onetime-web@.container"
+        quadlet._write_template("Image={image}\n", path, cfg, None, force=True, executor=mock_ex)
+
+        # Should call mkdir -p and tee
+        calls = [c[0][0] for c in mock_ex.run.call_args_list]
+        assert ["mkdir", "-p", str(tmp_path)] in calls
+        tee_call = [c for c in mock_ex.run.call_args_list if c[0][0][0] == "tee"]
+        assert len(tee_call) == 1
+        assert tee_call[0][0][0] == ["tee", str(path)]
+        assert "ghcr.io/ots:latest" in tee_call[0][1]["input"]
+
+        # Should NOT write to local filesystem
+        assert not path.exists()
+
+        # Should call daemon_reload with executor
+        mock_reload.assert_called_once_with(executor=mock_ex)
+
+
+class TestGetSecretsSectionRemote:
+    """Test get_secrets_section() with remote executor."""
+
+    def test_checks_env_file_existence_remotely(self, mocker):
+        from ots_containers.quadlet import get_secrets_section
+
+        mock_ex = _make_ssh_executor(mocker)
+        # test -f returns false (env file not found)
+        mock_ex.run.return_value = _make_remote_result(returncode=1)
+
+        with pytest.raises(SystemExit):
+            get_secrets_section(executor=mock_ex)
+
+        mock_ex.run.assert_called_once_with(["test", "-f", "/etc/default/onetimesecret"])
+
+    def test_passes_executor_to_get_secrets_from_env_file(self, mocker):
+        from ots_containers.quadlet import get_secrets_section
+
+        mock_ex = _make_ssh_executor(mocker)
+        # env file exists
+        mock_ex.run.return_value = _make_remote_result(returncode=0)
+
+        mock_get_secrets = mocker.patch(
+            "ots_containers.quadlet.get_secrets_from_env_file",
+            return_value=[],
+        )
+
+        # Will raise SystemExit due to no secrets + no force
+        with pytest.raises(SystemExit):
+            get_secrets_section(executor=mock_ex)
+
+        mock_get_secrets.assert_called_once()
+        assert mock_get_secrets.call_args[1]["executor"] is mock_ex
+
+
+class TestGetConfigVolumesSectionRemote:
+    """Test get_config_volumes_section() with remote executor."""
+
+    def test_checks_config_files_via_executor(self, mocker):
+        from pathlib import Path
+
+        from ots_containers.quadlet import get_config_volumes_section
+
+        mock_ex = _make_ssh_executor(mocker)
+        # config.yaml exists, auth.yaml does not, others don't
+        mock_ex.run.side_effect = [
+            _make_remote_result(returncode=0),  # config.yaml
+            _make_remote_result(returncode=1),  # auth.yaml
+            _make_remote_result(returncode=1),  # logging.yaml
+            _make_remote_result(returncode=1),  # billing.yaml
+        ]
+
+        cfg = MagicMock()
+        cfg.config_dir = Path("/etc/onetimesecret")
+
+        result = get_config_volumes_section(cfg, executor=mock_ex)
+
+        assert "Volume=/etc/onetimesecret/config.yaml:/app/etc/config.yaml:ro" in result
+        assert "auth.yaml" not in result
+        assert mock_ex.run.call_count == 4

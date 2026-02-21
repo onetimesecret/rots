@@ -119,7 +119,9 @@ class TestAssetsSync:
             app(["assets", "sync"])
 
         assert exc_info.value.code == 0
-        mock_update.assert_called_once_with(mock_config, create_volume=False)
+        from unittest.mock import ANY
+
+        mock_update.assert_called_once_with(mock_config, create_volume=False, executor=ANY)
 
 
 class TestDefaultCommand:

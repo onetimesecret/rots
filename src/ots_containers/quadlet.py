@@ -7,21 +7,37 @@ the container. Secret= lines are generated dynamically based on the
 SECRET_VARIABLE_NAMES defined in the environment file.
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import systemd
-from .config import Config
+from .config import CONFIG_FILES, Config
 from .environment_file import (
     generate_quadlet_secret_lines,
     get_secrets_from_env_file,
     secret_exists,
 )
 
+if TYPE_CHECKING:
+    from ots_shared.ssh import Executor
+
 # EXIT_PRECOND (3) is intentionally not imported from commands.common to avoid
 # a circular import: quadlet -> commands -> env -> quadlet.
 # The value matches commands.common.EXIT_PRECOND.
 _EXIT_PRECOND = 3
+
+
+def _is_remote(executor: Executor | None) -> bool:
+    """Return True if executor targets a remote host."""
+    if executor is None:
+        return False
+    from ots_shared.ssh import LocalExecutor
+
+    return not isinstance(executor, LocalExecutor)
+
 
 # Default environment file path
 DEFAULT_ENV_FILE = Path("/etc/default/onetimesecret")
@@ -110,7 +126,12 @@ WantedBy=multi-user.target
 """
 
 
-def get_secrets_section(env_file_path: Path | None = None, *, force: bool = False) -> str:
+def get_secrets_section(
+    env_file_path: Path | None = None,
+    *,
+    force: bool = False,
+    executor: Executor | None = None,
+) -> str:
     """Generate the secrets section for the quadlet template.
 
     Reads SECRET_VARIABLE_NAMES from the environment file and generates
@@ -133,7 +154,13 @@ def get_secrets_section(env_file_path: Path | None = None, *, force: bool = Fals
     """
     env_path = env_file_path or DEFAULT_ENV_FILE
 
-    if not env_path.exists():
+    if _is_remote(executor):
+        result = executor.run(["test", "-f", str(env_path)])  # type: ignore[union-attr]
+        env_exists = result.ok
+    else:
+        env_exists = env_path.exists()
+
+    if not env_exists:
         msg = (
             f"ERROR: Environment file not found: {env_path}\n"
             "\n"
@@ -157,7 +184,7 @@ def get_secrets_section(env_file_path: Path | None = None, *, force: bool = Fals
         print(msg, file=sys.stderr)
         raise SystemExit(_EXIT_PRECOND)
 
-    secrets = get_secrets_from_env_file(env_path)
+    secrets = get_secrets_from_env_file(env_path, executor=executor)
     if not secrets:
         msg = (
             f"ERROR: No secrets configured in {env_path}\n"
@@ -184,7 +211,7 @@ def get_secrets_section(env_file_path: Path | None = None, *, force: bool = Fals
     verified = []
     missing = []
     for spec in secrets:
-        if secret_exists(spec.secret_name):
+        if secret_exists(spec.secret_name, executor=executor):
             verified.append(spec)
         else:
             missing.append(spec)
@@ -222,12 +249,21 @@ def get_secrets_section(env_file_path: Path | None = None, *, force: bool = Fals
     return generate_quadlet_secret_lines(verified)
 
 
-def get_config_volumes_section(cfg: Config) -> str:
+def get_config_volumes_section(cfg: Config, *, executor: Executor | None = None) -> str:
     """Generate per-file Volume directives for host config overrides.
 
     Only mounts files that exist on the host. Missing files use container defaults.
     """
-    files = cfg.existing_config_files
+    if _is_remote(executor):
+        files = []
+        for fname in CONFIG_FILES:
+            fpath = cfg.config_dir / fname
+            result = executor.run(["test", "-f", str(fpath)])  # type: ignore[union-attr]
+            if result.ok:
+                files.append(fpath)
+    else:
+        files = cfg.existing_config_files
+
     if not files:
         return "# No host config overrides (using container built-in defaults)"
     lines = []
@@ -288,14 +324,15 @@ def _build_fmt_vars(
     *,
     force: bool,
     extra_vars: dict | None = None,
+    executor: Executor | None = None,
 ) -> dict:
     """Build the format variables dict for a quadlet template.
 
     Shared by both ``_write_template`` (which writes to disk) and
     ``render_template`` (dry-run, no disk I/O).
     """
-    secrets_section = get_secrets_section(env_file_path, force=force)
-    config_volumes_section = get_config_volumes_section(cfg)
+    secrets_section = get_secrets_section(env_file_path, force=force, executor=executor)
+    config_volumes_section = get_config_volumes_section(cfg, executor=executor)
 
     fmt_vars: dict = {
         "image": cfg.resolved_image_with_tag,
@@ -310,7 +347,11 @@ def _build_fmt_vars(
 
 
 def render_web_template(
-    cfg: Config, env_file_path: Path | None = None, *, force: bool = False
+    cfg: Config,
+    env_file_path: Path | None = None,
+    *,
+    force: bool = False,
+    executor: Executor | None = None,
 ) -> str:
     """Render the web quadlet template content without writing to disk.
 
@@ -323,23 +364,34 @@ def render_web_template(
         env_file_path,
         force=force,
         extra_vars={"valkey_after": valkey_after, "valkey_wants": valkey_wants},
+        executor=executor,
     )
     return WEB_TEMPLATE.format(**fmt_vars)
 
 
 def render_worker_template(
-    cfg: Config, env_file_path: Path | None = None, *, force: bool = False
+    cfg: Config,
+    env_file_path: Path | None = None,
+    *,
+    force: bool = False,
+    executor: Executor | None = None,
 ) -> str:
     """Render the worker quadlet template content without writing to disk."""
-    fmt_vars = _build_fmt_vars(WORKER_TEMPLATE, cfg, env_file_path, force=force)
+    fmt_vars = _build_fmt_vars(WORKER_TEMPLATE, cfg, env_file_path, force=force, executor=executor)
     return WORKER_TEMPLATE.format(**fmt_vars)
 
 
 def render_scheduler_template(
-    cfg: Config, env_file_path: Path | None = None, *, force: bool = False
+    cfg: Config,
+    env_file_path: Path | None = None,
+    *,
+    force: bool = False,
+    executor: Executor | None = None,
 ) -> str:
     """Render the scheduler quadlet template content without writing to disk."""
-    fmt_vars = _build_fmt_vars(SCHEDULER_TEMPLATE, cfg, env_file_path, force=force)
+    fmt_vars = _build_fmt_vars(
+        SCHEDULER_TEMPLATE, cfg, env_file_path, force=force, executor=executor
+    )
     return SCHEDULER_TEMPLATE.format(**fmt_vars)
 
 
@@ -351,6 +403,7 @@ def _write_template(
     *,
     force: bool,
     extra_vars: dict | None = None,
+    executor: Executor | None = None,
 ) -> None:
     """Shared implementation for writing a quadlet template to disk.
 
@@ -368,16 +421,27 @@ def _write_template(
                without secrets.
         extra_vars: Additional ``str.format`` keyword arguments (e.g.
                     ``valkey_after``, ``valkey_wants`` for the web template).
+        executor: Optional executor for remote file writes.
     """
-    fmt_vars = _build_fmt_vars(template, cfg, env_file_path, force=force, extra_vars=extra_vars)
+    fmt_vars = _build_fmt_vars(
+        template, cfg, env_file_path, force=force, extra_vars=extra_vars, executor=executor
+    )
     content = template.format(**fmt_vars)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-    systemd.daemon_reload()
+    if _is_remote(executor):
+        executor.run(["mkdir", "-p", str(path.parent)])  # type: ignore[union-attr]
+        executor.run(["tee", str(path)], input=content)  # type: ignore[union-attr]
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    systemd.daemon_reload(executor=executor)
 
 
 def write_web_template(
-    cfg: Config, env_file_path: Path | None = None, *, force: bool = False
+    cfg: Config,
+    env_file_path: Path | None = None,
+    *,
+    force: bool = False,
+    executor: Executor | None = None,
 ) -> None:
     """Write the web container quadlet template.
 
@@ -385,6 +449,7 @@ def write_web_template(
         cfg: Configuration object with image and paths
         env_file_path: Optional path to environment file for secret discovery
         force: If True, allow deployment even when secrets are not configured.
+        executor: Optional executor for remote writes.
     """
     valkey_after, valkey_wants = _get_valkey_unit_dependencies(cfg)
     _write_template(
@@ -394,6 +459,7 @@ def write_web_template(
         env_file_path,
         force=force,
         extra_vars={"valkey_after": valkey_after, "valkey_wants": valkey_wants},
+        executor=executor,
     )
 
 
@@ -482,7 +548,11 @@ WantedBy=multi-user.target
 
 
 def write_worker_template(
-    cfg: Config, env_file_path: Path | None = None, *, force: bool = False
+    cfg: Config,
+    env_file_path: Path | None = None,
+    *,
+    force: bool = False,
+    executor: Executor | None = None,
 ) -> None:
     """Write the worker container quadlet template.
 
@@ -490,8 +560,16 @@ def write_worker_template(
         cfg: Configuration object with image and paths
         env_file_path: Optional path to environment file for secret discovery
         force: If True, allow deployment even when secrets are not configured.
+        executor: Optional executor for remote writes.
     """
-    _write_template(WORKER_TEMPLATE, cfg.worker_template_path, cfg, env_file_path, force=force)
+    _write_template(
+        WORKER_TEMPLATE,
+        cfg.worker_template_path,
+        cfg,
+        env_file_path,
+        force=force,
+        executor=executor,
+    )
 
 
 # Scheduler quadlet template - for cron-like job scheduling
@@ -579,7 +657,11 @@ WantedBy=multi-user.target
 
 
 def write_scheduler_template(
-    cfg: Config, env_file_path: Path | None = None, *, force: bool = False
+    cfg: Config,
+    env_file_path: Path | None = None,
+    *,
+    force: bool = False,
+    executor: Executor | None = None,
 ) -> None:
     """Write the scheduler container quadlet template.
 
@@ -587,7 +669,13 @@ def write_scheduler_template(
         cfg: Configuration object with image and paths
         env_file_path: Optional path to environment file for secret discovery
         force: If True, allow deployment even when secrets are not configured.
+        executor: Optional executor for remote writes.
     """
     _write_template(
-        SCHEDULER_TEMPLATE, cfg.scheduler_template_path, cfg, env_file_path, force=force
+        SCHEDULER_TEMPLATE,
+        cfg.scheduler_template_path,
+        cfg,
+        env_file_path,
+        force=force,
+        executor=executor,
     )
