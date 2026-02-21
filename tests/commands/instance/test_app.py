@@ -126,15 +126,22 @@ class TestRunCommand:
 
     def test_run_builds_correct_command(self, mocker, tmp_path):
         """run should build correct podman command."""
-        import subprocess
+        from ots_shared.ssh.executor import Result
 
-        # Mock Config
+        # Mock Config with executor
+        mock_executor = mocker.MagicMock()
+        mock_result = Result(
+            command="podman run ...", returncode=0, stdout="abc123def456", stderr=""
+        )
+        mock_executor.run.return_value = mock_result
+
         mock_config = mocker.MagicMock()
         mock_config.tag = "v0.23.0"  # Default uses local image with cfg.tag
         mock_config.resolve_image_tag.return_value = ("onetimesecret", "v0.23.0")
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         mock_config.registry = None
+        mock_config.get_executor.return_value = mock_executor
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
@@ -143,16 +150,12 @@ class TestRunCommand:
             tmp_path / "nonexistent",
         )
 
-        # Mock subprocess.run
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="abc123")
-
         # Call run command in detached mode
         instance.run(port=7143, detach=True, quiet=True)
 
-        # Verify podman run was called
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
+        # Verify executor.run was called with the right command
+        mock_executor.run.assert_called_once()
+        cmd = mock_executor.run.call_args.args[0]
         assert cmd[0] == "podman"
         assert cmd[1] == "run"
         assert "-d" in cmd
@@ -163,15 +166,22 @@ class TestRunCommand:
 
     def test_run_includes_secrets_with_production_flag(self, mocker, tmp_path):
         """run --production should include secrets from env file."""
-        import subprocess
+        from ots_shared.ssh.executor import Result
 
-        # Mock Config
+        # Mock Config with executor
+        mock_executor = mocker.MagicMock()
+        mock_result = Result(
+            command="podman run ...", returncode=0, stdout="abc123def456", stderr=""
+        )
+        mock_executor.run.return_value = mock_result
+
         mock_config = mocker.MagicMock()
         mock_config.resolve_image_tag.return_value = ("onetimesecret", "latest")
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         mock_config.existing_config_files = []
         mock_config.registry = None
+        mock_config.get_executor.return_value = mock_executor
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
 
         # Create env file with secrets
@@ -194,37 +204,36 @@ class TestRunCommand:
             return_value=mock_secrets,
         )
 
-        # Mock subprocess.run
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="abc123")
-
         # Call run command with production flag
         instance.run(port=7143, detach=True, quiet=True, production=True)
 
         # Verify secrets were included
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_executor.run.call_args.args[0]
         cmd_str = " ".join(cmd)
         assert "--secret" in cmd_str
         assert "ots_hmac_secret" in cmd_str
 
     def test_run_minimal_without_production_flag(self, mocker, tmp_path):
         """run without --production should be minimal (no secrets/volumes)."""
-        import subprocess
+        from ots_shared.ssh.executor import Result
 
-        # Mock Config
+        # Mock Config with executor
+        mock_executor = mocker.MagicMock()
+        mock_result = Result(
+            command="podman run ...", returncode=0, stdout="abc123def456", stderr=""
+        )
+        mock_executor.run.return_value = mock_result
+
         mock_config = mocker.MagicMock()
         mock_config.resolve_image_tag.return_value = ("onetimesecret", "latest")
+        mock_config.get_executor.return_value = mock_executor
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-
-        # Mock subprocess.run
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="abc123")
 
         # Call run command without production flag
         instance.run(port=7143, detach=True, quiet=True)
 
         # Verify minimal command (no secrets, no volumes)
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_executor.run.call_args.args[0]
         cmd_str = " ".join(cmd)
         assert "--secret" not in cmd_str
         assert "-v" not in cmd_str
@@ -358,7 +367,7 @@ class TestDeployWorkerCommand:
 
         instance.deploy(identifiers=("1",), worker=True)
 
-        mock_start.assert_called_once_with("onetime-worker@1")
+        mock_start.assert_called_once_with("onetime-worker@1", executor=mock_config.get_executor())
 
 
 class TestRedeployCommand:
@@ -483,14 +492,17 @@ class TestExecCommand:
         assert "No running instances found" in captured.out
 
     def test_exec_calls_podman_exec(self, mocker, capsys):
-        """exec_shell should call podman exec with correct container name."""
-        mock_run = mocker.patch("ots_containers.commands.instance.app.subprocess.run")
+        """exec_shell should call run_interactive with correct container name."""
+        mock_config = mocker.MagicMock()
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mock_ex = mock_config.get_executor()
+        mock_ex.run_interactive.return_value = 0
         mocker.patch.dict("os.environ", {"SHELL": "/bin/bash"})
 
         instance.exec_shell(identifiers=("7043",), web=True)
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
+        mock_ex.run_interactive.assert_called_once()
+        call_args = mock_ex.run_interactive.call_args[0][0]
         assert call_args[:3] == ["podman", "exec", "-it"]
         # Container name uses -- as separator: systemd-onetime-web--7043
         assert "systemd-onetime-web--7043" in call_args
@@ -1472,7 +1484,11 @@ class TestRedeployWaitFlag:
 
         instance.redeploy(identifiers=(), web=True, wait=True)
 
-        mock_http_healthy.assert_called_once_with(7043, timeout=60)
+        mock_http_healthy.assert_called_once()
+        call_args = mock_http_healthy.call_args
+        assert call_args.args[0] == 7043
+        assert call_args.kwargs["timeout"] == 60
+        assert "executor" in call_args.kwargs
 
     def test_redeploy_without_wait_does_not_call_wait_for_http_healthy(self, mocker, tmp_path):
         """Omitting --wait on redeploy should not call wait_for_http_healthy."""
@@ -2128,25 +2144,25 @@ class TestRunCommandExists:
 
     def test_run_local_image_foreground(self, mocker, tmp_path):
         """run should use local image by default (foreground)."""
-        import subprocess
+        mock_executor = mocker.MagicMock()
+        mock_executor.run_stream.return_value = 0
 
         mock_config = mocker.Mock()
         mock_config.tag = "v0.23.0"
         mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
         mock_config.registry = None
         mock_config.existing_config_files = []
+        mock_config.get_executor.return_value = mock_executor
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
             "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value = subprocess.CompletedProcess([], 0)
 
         instance.run(port=7143, quiet=True)
 
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
+        mock_executor.run_stream.assert_called_once()
+        cmd = mock_executor.run_stream.call_args.args[0]
         assert cmd[0] == "podman"
         assert cmd[1] == "run"
         assert "--rm" in cmd
@@ -2158,77 +2174,83 @@ class TestRunCommandExists:
 
     def test_run_with_custom_name(self, mocker, tmp_path):
         """run --name should set container name."""
-        import subprocess
+        mock_executor = mocker.MagicMock()
+        mock_executor.run_stream.return_value = 0
 
         mock_config = mocker.Mock()
         mock_config.tag = "v0.23.0"
         mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
         mock_config.registry = None
         mock_config.existing_config_files = []
+        mock_config.get_executor.return_value = mock_executor
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
             "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value = subprocess.CompletedProcess([], 0)
 
         instance.run(port=7143, name="my-container", quiet=True)
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_executor.run_stream.call_args.args[0]
         assert "--name" in cmd
         name_idx = cmd.index("--name")
         assert cmd[name_idx + 1] == "my-container"
 
     def test_run_with_detach(self, mocker, tmp_path, capsys):
         """run --detach should pass -d to podman."""
-        import subprocess
+        from ots_shared.ssh.executor import Result
+
+        mock_executor = mocker.MagicMock()
+        mock_result = Result(
+            command="podman run ...", returncode=0, stdout="abc123def456\n", stderr=""
+        )
+        mock_executor.run.return_value = mock_result
 
         mock_config = mocker.Mock()
         mock_config.tag = "v0.23.0"
         mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
         mock_config.registry = None
         mock_config.existing_config_files = []
+        mock_config.get_executor.return_value = mock_executor
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
             "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="abc123def456\n")
 
         instance.run(port=7143, detach=True, quiet=True)
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_executor.run.call_args.args[0]
         assert "-d" in cmd
 
     def test_run_remote_with_tag(self, mocker, tmp_path):
         """run --remote --tag should use registry image."""
-        import subprocess
+        mock_executor = mocker.MagicMock()
+        mock_executor.run_stream.return_value = 0
 
         mock_config = mocker.Mock()
         mock_config.tag = "v0.23.0"
         mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
         mock_config.registry = None
         mock_config.existing_config_files = []
+        mock_config.get_executor.return_value = mock_executor
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
             "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value = subprocess.CompletedProcess([], 0)
 
         instance.run(port=7143, remote=True, tag="v0.19.0", quiet=True)
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_executor.run_stream.call_args.args[0]
         full_image = cmd[-1]
         assert "v0.19.0" in full_image
         assert "ghcr.io" in full_image
 
     def test_run_remote_no_tag_uses_resolve(self, mocker, tmp_path):
         """run --remote without tag should use resolve_image_tag()."""
-        import subprocess
+        mock_executor = mocker.MagicMock()
+        mock_executor.run_stream.return_value = 0
 
         mock_config = mocker.Mock()
         mock_config.tag = "current"
@@ -2239,60 +2261,58 @@ class TestRunCommandExists:
             "ghcr.io/onetimesecret/onetimesecret",
             "v0.23.0",
         )
+        mock_config.get_executor.return_value = mock_executor
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
             "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value = subprocess.CompletedProcess([], 0)
 
         instance.run(port=7143, remote=True, quiet=True)
 
         mock_config.resolve_image_tag.assert_called_once()
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_executor.run_stream.call_args.args[0]
         full_image = cmd[-1]
         assert "v0.23.0" in full_image
 
-    def test_run_called_process_error_exits(self, mocker, tmp_path, capsys):
-        """run should exit with code 1 when podman fails."""
-        import subprocess
+    def test_run_nonzero_exit_raises_systemexit(self, mocker, tmp_path):
+        """run should exit with the process exit code when podman fails."""
+        mock_executor = mocker.MagicMock()
+        mock_executor.run_stream.return_value = 1
 
         mock_config = mocker.Mock()
         mock_config.tag = "v0.23.0"
         mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
         mock_config.registry = None
         mock_config.existing_config_files = []
+        mock_config.get_executor.return_value = mock_executor
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
             "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
-        )
-        mocker.patch(
-            "subprocess.run",
-            side_effect=subprocess.CalledProcessError(1, "podman", stderr="image not found"),
         )
 
         with pytest.raises(SystemExit) as exc_info:
             instance.run(port=7143, quiet=True)
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "Failed to run container" in captured.out
 
     def test_run_keyboard_interrupt_handled(self, mocker, tmp_path, capsys):
         """run should handle KeyboardInterrupt gracefully."""
+        mock_executor = mocker.MagicMock()
+        mock_executor.run_stream.side_effect = KeyboardInterrupt
+
         mock_config = mocker.Mock()
         mock_config.tag = "v0.23.0"
         mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
         mock_config.registry = None
         mock_config.existing_config_files = []
+        mock_config.get_executor.return_value = mock_executor
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
             "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
-        mocker.patch("subprocess.run", side_effect=KeyboardInterrupt)
 
         # Should not raise
         instance.run(port=7143, quiet=True)
@@ -2302,24 +2322,24 @@ class TestRunCommandExists:
 
     def test_run_without_rm_flag(self, mocker, tmp_path):
         """run with rm=False should not add --rm to command."""
-        import subprocess
+        mock_executor = mocker.MagicMock()
+        mock_executor.run_stream.return_value = 0
 
         mock_config = mocker.Mock()
         mock_config.tag = "v0.23.0"
         mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
         mock_config.registry = None
         mock_config.existing_config_files = []
+        mock_config.get_executor.return_value = mock_executor
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
             "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value = subprocess.CompletedProcess([], 0)
 
         instance.run(port=7143, rm=False, quiet=True)
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_executor.run_stream.call_args.args[0]
         assert "--rm" not in cmd
 
 
@@ -2352,8 +2372,11 @@ class TestExecShellCommand:
         assert "No running instances found" in captured.out
 
     def test_exec_calls_podman_exec(self, mocker, capsys):
-        """exec with running instances should call podman exec -it."""
-        import subprocess
+        """exec with running instances should call run_interactive."""
+        mock_config = mocker.MagicMock()
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mock_ex = mock_config.get_executor()
+        mock_ex.run_interactive.return_value = 0
 
         mocker.patch(
             "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
@@ -2368,20 +2391,20 @@ class TestExecShellCommand:
             return_value=[],
         )
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value = subprocess.CompletedProcess([], 0)
-
         instance.exec_shell(web=True)
 
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
+        mock_ex.run_interactive.assert_called_once()
+        cmd = mock_ex.run_interactive.call_args[0][0]
         assert cmd[0] == "podman"
         assert cmd[1] == "exec"
         assert "-it" in cmd
 
     def test_exec_with_custom_command(self, mocker, capsys):
-        """exec --command should pass custom shell to podman exec."""
-        import subprocess
+        """exec --command should pass custom shell via run_interactive."""
+        mock_config = mocker.MagicMock()
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mock_ex = mock_config.get_executor()
+        mock_ex.run_interactive.return_value = 0
 
         mocker.patch(
             "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
@@ -2396,12 +2419,9 @@ class TestExecShellCommand:
             return_value=[],
         )
 
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value = subprocess.CompletedProcess([], 0)
-
         instance.exec_shell(web=True, command="/bin/sh")
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_ex.run_interactive.call_args[0][0]
         assert "/bin/sh" in cmd
 
 
@@ -2621,3 +2641,242 @@ class TestMetricsCommand:
         entry = data["instances"][0]
         assert entry["cpu_percent"] == "n/a"
         assert entry["mem_usage"] == "n/a"
+
+
+class TestRemoteExecutorPropagation:
+    """Tests verifying executor is threaded through deploy/redeploy/rollback.
+
+    These override the autouse _mock_get_executor fixture to return a mock
+    SSHExecutor and verify that systemd/db calls receive it.
+    """
+
+    def _make_mock_config(self, mocker, tmp_path):
+        """Create a mock Config that returns a mock executor."""
+        mock_executor = mocker.MagicMock()
+        mock_config = mocker.MagicMock()
+        mock_config.config_dir = tmp_path / "etc"
+        mock_config.config_dir.mkdir(exist_ok=True)
+        mock_config.config_yaml = tmp_path / "etc" / "config.yaml"
+        mock_config.var_dir = tmp_path / "var"
+        mock_config.web_template_path = tmp_path / "onetime-web@.container"
+        mock_config.worker_template_path = tmp_path / "onetime-worker@.container"
+        mock_config.scheduler_template_path = tmp_path / "onetime-scheduler@.container"
+        mock_config.db_path = tmp_path / "test.db"
+        mock_config.existing_config_files = []
+        mock_config.has_custom_config = False
+        mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
+        mock_config.get_executor.return_value = mock_executor
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        return mock_config, mock_executor
+
+    def test_deploy_passes_executor_to_systemd_and_db(self, mocker, tmp_path):
+        """deploy should pass executor to systemd.start and db.record_deployment."""
+        mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
+        mocker.patch("ots_containers.commands.instance.app.assets.update")
+        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
+        mock_start = mocker.patch("ots_containers.commands.instance.app.systemd.start")
+        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+
+        instance.deploy(identifiers=("7143",), web=True)
+
+        # Verify executor was passed through
+        mock_start.assert_called_once()
+        assert mock_start.call_args.kwargs["executor"] is mock_executor
+        mock_record.assert_called_once()
+        assert mock_record.call_args.kwargs["executor"] is mock_executor
+
+    def test_redeploy_passes_executor_to_systemd_and_db(self, mocker, tmp_path):
+        """redeploy should pass the executor to systemd.recreate and db.record_deployment."""
+        mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
+        mocker.patch(
+            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            return_value=["7043"],
+        )
+        mocker.patch(
+            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            return_value=[],
+        )
+        mocker.patch(
+            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            return_value=[],
+        )
+        mocker.patch("ots_containers.commands.instance.app.assets.update")
+        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
+        mocker.patch(
+            "ots_containers.commands.instance.app.systemd.container_exists",
+            return_value=True,
+        )
+        mock_recreate = mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
+        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+
+        instance.redeploy(identifiers=(), web=True)
+
+        mock_recreate.assert_called_once()
+        assert mock_recreate.call_args.kwargs["executor"] is mock_executor
+        mock_record.assert_called_once()
+        assert mock_record.call_args.kwargs["executor"] is mock_executor
+
+    def test_rollback_passes_executor_to_systemd_and_db(self, mocker, tmp_path):
+        """rollback should pass the executor to systemd.recreate and db.record_deployment."""
+        from ots_containers.commands.instance.annotations import InstanceType
+
+        mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
+        mocker.patch(
+            "ots_containers.commands.instance.app.db.get_previous_tags",
+            return_value=[
+                ("ghcr.io/ots/ots", "v2.0.0", "2025-02-01T00:00:00"),
+                ("ghcr.io/ots/ots", "v1.0.0", "2025-01-01T00:00:00"),
+            ],
+        )
+        mocker.patch(
+            "ots_containers.commands.instance.app.db.rollback",
+            return_value=("ghcr.io/ots/ots", "v1.0.0"),
+        )
+        mocker.patch(
+            "ots_containers.commands.instance.app.resolve_identifiers",
+            return_value={InstanceType.WEB: ["7043"]},
+        )
+        mocker.patch("ots_containers.commands.instance.app.assets.update")
+        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
+        mock_recreate = mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
+        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+
+        instance.rollback(web=True, yes=True)
+
+        mock_recreate.assert_called_once()
+        assert mock_recreate.call_args.kwargs["executor"] is mock_executor
+        # record_deployment is called once for success
+        mock_record.assert_called_once()
+        assert mock_record.call_args.kwargs["executor"] is mock_executor
+
+
+class TestStreamingCommands:
+    """Verify that commands dispatch to the correct executor method.
+
+    run_stream is for non-interactive output forwarding (no stdin).
+    run_interactive is for full PTY sessions (bidirectional stdin/stdout).
+    """
+
+    def _mock_executor(self, mocker):
+        """Create a Config mock whose get_executor() returns a mock executor."""
+        mock_config = mocker.MagicMock()
+        mock_config.tag = "v0.24.0"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.existing_config_files = []
+        mock_config.has_custom_config = False
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "v0.24.0",
+        )
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+
+        mock_ex = mocker.MagicMock()
+        mock_ex.run.return_value = mocker.MagicMock(ok=True, stdout="abc123\n", stderr="")
+        mock_ex.run_stream.return_value = 0
+        mock_ex.run_interactive.return_value = 0
+        mock_config.get_executor.return_value = mock_ex
+        return mock_config, mock_ex
+
+    def test_run_foreground_calls_run_stream(self, mocker, tmp_path):
+        """run (foreground) should use run_stream for real-time output."""
+        _mock_config, mock_ex = self._mock_executor(mocker)
+        _mock_config.config_dir = tmp_path / "etc"
+        _mock_config.config_dir.mkdir()
+        _mock_config.registry = None
+        mocker.patch(
+            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            tmp_path / "nonexistent",
+        )
+
+        instance.run(port=7143, detach=False, quiet=True)
+
+        mock_ex.run_stream.assert_called_once()
+        mock_ex.run_interactive.assert_not_called()
+        cmd = mock_ex.run_stream.call_args[0][0]
+        assert cmd[0] == "podman"
+        assert cmd[1] == "run"
+
+    def test_exec_shell_calls_run_interactive(self, mocker):
+        """exec_shell should use run_interactive for PTY."""
+        _mock_config, mock_ex = self._mock_executor(mocker)
+        mocker.patch.dict("os.environ", {"SHELL": "/bin/bash"})
+        mocker.patch(
+            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            return_value=[7043],
+        )
+        mocker.patch(
+            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            return_value=[],
+        )
+        mocker.patch(
+            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            return_value=[],
+        )
+
+        instance.exec_shell(web=True)
+
+        mock_ex.run_interactive.assert_called_once()
+        mock_ex.run_stream.assert_not_called()
+        cmd = mock_ex.run_interactive.call_args[0][0]
+        assert cmd[:3] == ["podman", "exec", "-it"]
+
+    def test_shell_interactive_calls_run_interactive(self, mocker, tmp_path):
+        """shell (no -c) should use run_interactive for PTY."""
+        _mock_config, mock_ex = self._mock_executor(mocker)
+        _mock_config.config_dir = tmp_path / "etc"
+        _mock_config.config_dir.mkdir()
+        mocker.patch(
+            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            tmp_path / "nonexistent",
+        )
+
+        instance.shell(quiet=True)
+
+        mock_ex.run_interactive.assert_called_once()
+        mock_ex.run_stream.assert_not_called()
+        cmd = mock_ex.run_interactive.call_args[0][0]
+        assert "-it" in cmd
+        assert "/bin/bash" in cmd
+
+    def test_shell_with_command_calls_run_stream(self, mocker, tmp_path):
+        """shell -c should use run_stream (non-interactive)."""
+        _mock_config, mock_ex = self._mock_executor(mocker)
+        _mock_config.config_dir = tmp_path / "etc"
+        _mock_config.config_dir.mkdir()
+        mocker.patch(
+            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            tmp_path / "nonexistent",
+        )
+
+        instance.shell(command="bin/ots migrate", quiet=True)
+
+        mock_ex.run_stream.assert_called_once()
+        mock_ex.run_interactive.assert_not_called()
+        cmd = mock_ex.run_stream.call_args[0][0]
+        assert "-c" in cmd
+        assert "bin/ots migrate" in cmd
+
+    def test_logs_follow_calls_run_stream_not_run(self, mocker):
+        """logs -f should use run_stream (not run) for real-time output."""
+        _mock_config, mock_ex = self._mock_executor(mocker)
+        mocker.patch(
+            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            return_value=[7043],
+        )
+        mocker.patch(
+            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            return_value=[],
+        )
+        mocker.patch(
+            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            return_value=[],
+        )
+
+        instance.logs(web=True, follow=True)
+
+        mock_ex.run_stream.assert_called_once()
+        # run() should NOT be called for follow mode
+        mock_ex.run.assert_not_called()
+        call_kwargs = mock_ex.run_stream.call_args
+        assert call_kwargs.kwargs.get("sudo") is True
+        assert call_kwargs.kwargs.get("timeout") == 300

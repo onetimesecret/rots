@@ -2,6 +2,9 @@
 """Tests for config module - Config dataclass."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
 
 
 class TestConfigDefaults:
@@ -620,3 +623,250 @@ class TestConfigResourceLimits:
 
         cfg = Config(cpu_quota="90%")
         assert cfg.cpu_quota == "90%"
+
+
+class TestGetExecutorSSHErrors:
+    """Test that SSH exceptions in get_executor produce user-friendly SystemExit messages."""
+
+    def _clear_cache(self, hostname: str):
+        """Ensure hostname is not in the SSH cache so get_executor tries to connect."""
+        from ots_containers.config import _ssh_cache
+
+        _ssh_cache.pop(hostname, None)
+
+    def test_authentication_exception_gives_friendly_message(self, mocker, monkeypatch):
+        """AuthenticationException should produce a SystemExit mentioning 'Authentication'."""
+        from paramiko.ssh_exception import AuthenticationException
+
+        from ots_containers.config import Config
+
+        hostname = "test-auth-failure.example.com"
+        self._clear_cache(hostname)
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mocker.patch(
+            "ots_shared.ssh.ssh_connect",
+            side_effect=AuthenticationException("Auth failed"),
+        )
+
+        cfg = Config()
+        with pytest.raises(SystemExit) as exc_info:
+            cfg.get_executor(host=hostname)
+
+        msg = str(exc_info.value)
+        assert "Authentication" in msg
+        assert hostname in msg
+
+    def test_no_valid_connections_gives_friendly_message(self, mocker, monkeypatch):
+        """NoValidConnectionsError should produce a SystemExit with the host name."""
+        from paramiko.ssh_exception import NoValidConnectionsError
+
+        from ots_containers.config import Config
+
+        hostname = "test-no-conn.example.com"
+        self._clear_cache(hostname)
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mocker.patch(
+            "ots_shared.ssh.ssh_connect",
+            side_effect=NoValidConnectionsError({("::1", 22): OSError("refused")}),
+        )
+
+        cfg = Config()
+        with pytest.raises(SystemExit) as exc_info:
+            cfg.get_executor(host=hostname)
+
+        msg = str(exc_info.value)
+        # NoValidConnectionsError is an OSError subclass, caught by the OSError handler
+        assert hostname in msg
+
+    def test_socket_timeout_gives_friendly_message(self, mocker, monkeypatch):
+        """socket.timeout should produce a SystemExit mentioning 'timed out'."""
+        from ots_containers.config import Config
+
+        hostname = "test-timeout.example.com"
+        self._clear_cache(hostname)
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mocker.patch(
+            "ots_shared.ssh.ssh_connect",
+            side_effect=TimeoutError("Connection timed out"),
+        )
+
+        cfg = Config()
+        with pytest.raises(SystemExit) as exc_info:
+            cfg.get_executor(host=hostname)
+
+        msg = str(exc_info.value)
+        assert "timed out" in msg
+        assert hostname in msg
+
+    def test_import_error_gives_install_hint(self, mocker, monkeypatch):
+        """ImportError (no paramiko) should tell the user how to install it."""
+        from ots_containers.config import Config
+
+        hostname = "test-import.example.com"
+        self._clear_cache(hostname)
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mocker.patch(
+            "ots_shared.ssh.ssh_connect",
+            side_effect=ImportError("No module named 'paramiko'"),
+        )
+
+        cfg = Config()
+        with pytest.raises(SystemExit) as exc_info:
+            cfg.get_executor(host=hostname)
+
+        msg = str(exc_info.value)
+        assert "paramiko" in msg
+
+    def test_local_executor_returned_when_host_is_none(self, mocker):
+        """When resolve_host returns None, get_executor should return a LocalExecutor."""
+        from ots_shared.ssh import LocalExecutor
+
+        from ots_containers.config import Config
+
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=None)
+
+        cfg = Config()
+        ex = cfg.get_executor(host=None)
+        assert isinstance(ex, LocalExecutor)
+
+
+class TestGetExecutorResolutionChain:
+    """Test Config.get_executor() host resolution chain and executor type returned."""
+
+    def _clear_cache(self, hostname: str):
+        """Remove hostname from SSH cache so get_executor attempts a new connection."""
+        from ots_containers.config import _ssh_cache
+
+        _ssh_cache.pop(hostname, None)
+
+    def test_returns_local_executor_when_no_host(self, mocker):
+        """get_executor(host=None) with no OTS_HOST or .otsinfra.env returns LocalExecutor."""
+        from ots_shared.ssh import LocalExecutor
+
+        from ots_containers.config import Config
+
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=None)
+
+        cfg = Config()
+        ex = cfg.get_executor(host=None)
+        assert isinstance(ex, LocalExecutor)
+
+    def test_returns_ssh_executor_when_host_flag_set(self, mocker):
+        """get_executor(host='myhost') should connect via SSH and return SSHExecutor."""
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+
+        from ots_containers.config import Config
+
+        hostname = "test-host-flag.example.com"
+        self._clear_cache(hostname)
+
+        # resolve_host returns the explicit flag
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        # ssh_connect returns a mock SSHClient
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        mocker.patch("ots_shared.ssh.ssh_connect", return_value=mock_client)
+
+        cfg = Config()
+        ex = cfg.get_executor(host=hostname)
+        assert isinstance(ex, SSHExecutor)
+
+        # Clean up
+        self._clear_cache(hostname)
+
+    def test_returns_ssh_executor_when_ots_host_env_set(self, mocker, monkeypatch):
+        """get_executor(host=None) with OTS_HOST env var should return SSHExecutor."""
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+
+        from ots_containers.config import Config
+
+        hostname = "test-env-host.example.com"
+        self._clear_cache(hostname)
+
+        # resolve_host returns the env-derived host
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        mocker.patch("ots_shared.ssh.ssh_connect", return_value=mock_client)
+
+        cfg = Config()
+        ex = cfg.get_executor(host=None)
+        assert isinstance(ex, SSHExecutor)
+
+        # Clean up
+        self._clear_cache(hostname)
+
+    def test_returns_ssh_executor_when_otsinfra_env_found(self, mocker):
+        """get_executor(host=None) with .otsinfra.env providing host should return SSHExecutor."""
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+
+        from ots_containers.config import Config
+
+        hostname = "test-otsinfra.example.com"
+        self._clear_cache(hostname)
+
+        # resolve_host discovers host from .otsinfra.env
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        mocker.patch("ots_shared.ssh.ssh_connect", return_value=mock_client)
+
+        cfg = Config()
+        ex = cfg.get_executor(host=None)
+        assert isinstance(ex, SSHExecutor)
+
+        # Clean up
+        self._clear_cache(hostname)
+
+    def test_ssh_cache_reuses_connection(self, mocker):
+        """Multiple get_executor calls for the same host should reuse the SSH connection."""
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+
+        from ots_containers.config import Config
+
+        hostname = "test-cache.example.com"
+        self._clear_cache(hostname)
+
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        mock_connect = mocker.patch("ots_shared.ssh.ssh_connect", return_value=mock_client)
+
+        cfg = Config()
+        ex1 = cfg.get_executor(host=hostname)
+        ex2 = cfg.get_executor(host=hostname)
+
+        # ssh_connect should only be called once (cached)
+        mock_connect.assert_called_once()
+        assert isinstance(ex1, SSHExecutor)
+        assert isinstance(ex2, SSHExecutor)
+
+        # Clean up
+        self._clear_cache(hostname)
+
+    def test_resolve_host_receives_host_flag(self, mocker):
+        """get_executor should pass the host parameter to resolve_host."""
+        from ots_containers.config import Config
+
+        mock_resolve = mocker.patch("ots_shared.ssh.resolve_host", return_value=None)
+
+        cfg = Config()
+        cfg.get_executor(host="explicit-host.example.com")
+
+        mock_resolve.assert_called_once_with(host_flag="explicit-host.example.com")
