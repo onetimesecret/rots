@@ -134,3 +134,12 @@ SSH connection errors are caught and translated to user-friendly messages:
 ## Connection Caching
 
 SSH connections are cached per hostname for the lifetime of the process. Multiple commands within a single CLI invocation reuse the same SSH transport. Connections are closed automatically at interpreter exit via `atexit`.
+
+## Deployment Database
+
+The sqlite database on each server is the single source of truth. There is no local mirror or sync protocol.
+
+- **Local:** `db.py` uses Python's `sqlite3` module directly.
+- **Remote:** `db.py` shells out `sqlite3 -json` on the remote host via the executor. Requires sqlite3 >= 3.33 (standard on any recent Linux).
+
+Every `db.*` function (`record_deployment`, `get_deployments`, `set_alias`, etc.) accepts an optional `executor` parameter. `_is_remote(executor)` branches to the appropriate backend. Command code is unaware of the distinction.
