@@ -336,18 +336,16 @@ def run(
         print()
 
     # Run it
+    ex = cfg.get_executor(host=context.host_var.get(None))
     try:
         if detach:
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            result = ex.run(cmd, check=True)
             print(f"Container started: {result.stdout.strip()[:12]}")
         else:
-            # Foreground - let it take over the terminal
-            subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to run container: {e}")
-        if e.stderr:
-            print(e.stderr)
-        raise SystemExit(1)
+            # Foreground - stream output to terminal in real time
+            rc = ex.run_stream(cmd)
+            if rc != 0:
+                raise SystemExit(rc)
     except KeyboardInterrupt:
         print("\nStopped")
 
@@ -448,6 +446,7 @@ def deploy(
         raise SystemExit("Instance type required for deploy. Use --web, --worker, or --scheduler.")
 
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
 
     # Resolve image/tag (handles CURRENT/ROLLBACK aliases)
     image, tag = cfg.resolve_image_tag()
@@ -534,12 +533,12 @@ def deploy(
             port = int(id_) if inst_type == InstanceType.WEB else 0
             base_notes = None if inst_type == InstanceType.WEB else f"{inst_type.value}_id={id_}"
             try:
-                systemd.start(unit)
+                systemd.start(unit, executor=ex)
                 # Optionally wait for the unit to become active (systemd state)
                 if wait_timeout > 0:
                     if not quiet and not json_output:
                         print(f"  Waiting up to {wait_timeout}s for {unit} to become active...")
-                    systemd.wait_for_healthy(unit, timeout=wait_timeout)
+                    systemd.wait_for_healthy(unit, timeout=wait_timeout, executor=ex)
                 # Optionally wait for HTTP health check (web instances only)
                 if wait and inst_type == InstanceType.WEB:
                     if not quiet and not json_output:
@@ -556,6 +555,7 @@ def deploy(
                     port=port,
                     success=True,
                     notes=base_notes,
+                    executor=ex,
                 )
                 deploy_results.append(
                     {
@@ -582,6 +582,7 @@ def deploy(
                     port=port,
                     success=False,
                     notes=fail_notes,
+                    executor=ex,
                 )
                 deploy_results.append(
                     {
@@ -612,6 +613,7 @@ def deploy(
                     port=port,
                     success=False,
                     notes=fail_notes,
+                    executor=ex,
                 )
                 deploy_results.append(
                     {
@@ -739,7 +741,9 @@ def redeploy(
     import json as json_mod
 
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=True)
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
         if json_output:
@@ -749,8 +753,6 @@ def redeploy(
             print("Start existing instances with: ots instances start")
             print("Or deploy new ones with:       ots instances deploy --help")
         return
-
-    cfg = Config()
 
     # Resolve image/tag (handles CURRENT/ROLLBACK aliases)
     image, tag = cfg.resolve_image_tag()
@@ -856,30 +858,30 @@ def redeploy(
             if force:
                 if not json_output:
                     print(f"Stopping {unit}")
-                systemd.stop(unit)
+                systemd.stop(unit, executor=ex)
 
             try:
-                if force or not systemd.container_exists(unit):
+                if force or not systemd.container_exists(unit, executor=ex):
                     if not json_output:
                         print(f"Starting {unit}")
-                    systemd.start(unit)
+                    systemd.start(unit, executor=ex)
                 else:
                     if not json_output:
                         print(f"Recreating {unit}")
-                    systemd.recreate(unit)
+                    systemd.recreate(unit, executor=ex)
 
                 # Optionally wait for the unit to become active (systemd state)
                 if wait_timeout > 0:
                     if not quiet and not json_output:
                         print(f"  Waiting up to {wait_timeout}s for {unit} to become active...")
-                    systemd.wait_for_healthy(unit, timeout=wait_timeout)
+                    systemd.wait_for_healthy(unit, timeout=wait_timeout, executor=ex)
                 # Optionally wait for HTTP health check (web instances only)
                 if wait and inst_type == InstanceType.WEB:
                     if not quiet and not json_output:
                         timeout_s = wait_timeout or 60
                         url = f"http://localhost:{port}/health"
                         print(f"  Waiting up to {timeout_s}s for {url} ...")
-                    systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60)
+                    systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60, executor=ex)
 
                 db.record_deployment(
                     cfg.db_path,
@@ -889,6 +891,7 @@ def redeploy(
                     port=port,
                     success=True,
                     notes=base_notes,
+                    executor=ex,
                 )
                 redeploy_results.append(
                     {
@@ -915,6 +918,7 @@ def redeploy(
                     port=port,
                     success=False,
                     notes=fail_notes,
+                    executor=ex,
                 )
                 redeploy_results.append(
                     {
@@ -945,6 +949,7 @@ def redeploy(
                     port=port,
                     success=False,
                     notes=fail_notes,
+                    executor=ex,
                 )
                 redeploy_results.append(
                     {
@@ -1432,16 +1437,22 @@ def logs(
     for unit in units:
         cmd.extend(["-u", unit])
 
-    # Route through executor for remote support (non-follow mode).
-    # Follow mode over SSH will run until timeout or connection drop.
+    # Route through executor for remote support.
+    # Follow mode uses run_stream() for real-time output;
+    # non-follow uses run() since output is bounded.
     from ots_containers.systemd import _get_executor
 
     resolved_ex = _get_executor(ex)
-    result = resolved_ex.run(cmd, sudo=True, timeout=30 if not follow else 300)
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
+    if follow:
+        rc = resolved_ex.run_stream(cmd, sudo=True, timeout=300)
+        if rc != 0:
+            print(f"journalctl exited with code {rc}", file=sys.stderr)
+    else:
+        result = resolved_ex.run(cmd, sudo=True, timeout=30)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
 
 
 @app.command(name="show-env")
@@ -1451,34 +1462,57 @@ def show_env():
     Displays the contents of /etc/default/onetimesecret (shared by all instances).
     Only shows valid KEY=VALUE pairs, sorted alphabetically.
 
+    When ``--host`` is set, reads the file from the remote host via the executor.
+
     Examples:
         ots instances show-env
     """
-    from pathlib import Path
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
 
-    env_file = Path("/etc/default/onetimesecret")
-    print(f"=== {env_file} ===")
-    if env_file.exists():
-        lines = env_file.read_text().splitlines()
-        # Parse only valid KEY=VALUE lines (key must be valid shell identifier)
-        env_vars = {}
-        for line in lines:
-            line = line.strip()
-            # Skip empty lines, comments, and shell commands
-            if not line or line.startswith("#"):
-                continue
-            # Must contain = and start with a valid identifier char
-            if "=" in line:
-                key, _, value = line.partition("=")
-                key = key.strip()
-                # Valid env var: letter/underscore start, alnum/underscore chars
-                if key and (key[0].isalpha() or key.startswith("_")):
-                    if all(c.isalnum() or c == "_" for c in key):
-                        env_vars[key] = value
-        for key in sorted(env_vars.keys()):
-            print(f"{key}={env_vars[key]}")
+    env_path = "/etc/default/onetimesecret"
+    print(f"=== {env_path} ===")
+
+    from ots_containers.systemd import _get_executor, _is_local
+
+    resolved_ex = _get_executor(ex)
+
+    if _is_local(resolved_ex):
+        # Local: read file directly for efficiency
+        from pathlib import Path
+
+        env_file = Path(env_path)
+        if not env_file.exists():
+            print("  (file not found)")
+            print()
+            return
+        content = env_file.read_text()
     else:
-        print("  (file not found)")
+        # Remote: read via executor
+        result = resolved_ex.run(["cat", env_path], timeout=10)
+        if not result.ok:
+            print("  (file not found)")
+            print()
+            return
+        content = result.stdout
+
+    # Parse only valid KEY=VALUE lines (key must be valid shell identifier)
+    env_vars = {}
+    for line in content.splitlines():
+        line = line.strip()
+        # Skip empty lines, comments, and shell commands
+        if not line or line.startswith("#"):
+            continue
+        # Must contain = and start with a valid identifier char
+        if "=" in line:
+            key, _, value = line.partition("=")
+            key = key.strip()
+            # Valid env var: letter/underscore start, alnum/underscore chars
+            if key and (key[0].isalpha() or key.startswith("_")):
+                if all(c.isalnum() or c == "_" for c in key):
+                    env_vars[key] = value
+    for key in sorted(env_vars.keys()):
+        print(f"{key}={env_vars[key]}")
     print()
 
 
@@ -1506,8 +1540,10 @@ def exec_shell(
     """
     import os
 
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=True)
+    instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
         print("No running instances found")
@@ -1522,8 +1558,7 @@ def exec_shell(
             unit = systemd.unit_name(inst_type.value, id_)
             container = systemd.unit_to_container_name(unit)
             print(f"=== Entering {unit} ===")
-            # Interactive exec requires subprocess.run with no capture
-            subprocess.run(["podman", "exec", "-it", container, shell])
+            ex.run_interactive(["podman", "exec", "-it", container, shell])
             print()
 
 
@@ -1658,12 +1693,20 @@ def shell(
         print(format_command(cmd))
         print()
 
-    # Run it
+    # Run through executor for local/remote support
+    from ots_containers.systemd import _get_executor
+
+    ex = _get_executor(cfg.get_executor(host=context.host_var.get(None)))
     try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Shell exited with code {e.returncode}")
-        raise SystemExit(e.returncode)
+        if command is None:
+            # Interactive shell — full PTY
+            rc = ex.run_interactive(cmd)
+        else:
+            # Non-interactive command — stream output
+            rc = ex.run_stream(cmd)
+        if rc != 0:
+            print(f"Shell exited with code {rc}")
+            raise SystemExit(rc)
     except KeyboardInterrupt:
         print("\nInterrupted")
 
@@ -2125,6 +2168,7 @@ def rollback(
 
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
 
     # Determine rollback target from the deployment timeline
     previous = db.get_previous_tags(cfg.db_path, limit=5)
@@ -2140,7 +2184,7 @@ def rollback(
     rollback_image, rollback_tag, rollback_ts = previous[1]
 
     if dry_run:
-        instances = resolve_identifiers(identifiers, itype, running_only=True)
+        instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
         dry_items = [{"instance_type": t.value, "identifiers": ids} for t, ids in instances.items()]
         result = {
             "action": "rollback",
@@ -2189,7 +2233,7 @@ def rollback(
         )
 
     # Redeploy running instances with the rolled-back image/tag
-    instances = resolve_identifiers(identifiers, itype, running_only=True)
+    instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
         msg_extra = "No running instances to redeploy"
@@ -2232,7 +2276,7 @@ def rollback(
                 else f"{inst_type.value}_id={id_}; rollback from {current_tag}"
             )
             try:
-                systemd.recreate(unit)
+                systemd.recreate(unit, executor=ex)
                 db.record_deployment(
                     cfg.db_path,
                     image=new_image,
@@ -2241,6 +2285,7 @@ def rollback(
                     port=port,
                     success=True,
                     notes=base_notes,
+                    executor=ex,
                 )
                 redeploy_results.append(
                     {
@@ -2267,6 +2312,7 @@ def rollback(
                     port=port,
                     success=False,
                     notes=fail_notes,
+                    executor=ex,
                 )
                 redeploy_results.append(
                     {

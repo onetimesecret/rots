@@ -140,33 +140,68 @@ def doctor():
     and required directories.  Prints a pass/fail line for each check so
     operators can quickly identify what needs to be fixed.
 
+    When ``--host`` is set, runs checks on the remote host via the executor.
+
     Returns exit code 0 when all checks pass, 1 when any fail.
 
     Examples:
         ots doctor
+        ots --host eu1.example.com doctor
     """
-    import os
     import shutil
-    import subprocess
 
+    from . import context
     from .config import Config
     from .environment_file import EnvFile, secret_exists
     from .quadlet import DEFAULT_ENV_FILE
 
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+
+    from ots_shared.ssh import LocalExecutor
+
+    is_local = isinstance(ex, LocalExecutor)
+
     checks: list[tuple[str, bool, str]] = []  # (label, ok, detail)
 
     def _check(label: str, ok: bool, detail: str = "") -> None:
         checks.append((label, ok, detail))
 
+    def _has_command(name: str) -> bool:
+        """Check whether *name* is on PATH (local or remote)."""
+        if is_local:
+            return bool(shutil.which(name))
+        result = ex.run(["which", name], timeout=10)
+        return result.ok
+
+    def _path_exists(path: str) -> bool:
+        """Check whether *path* exists (local or remote)."""
+        if is_local:
+            from pathlib import Path
+
+            return Path(path).exists()
+        result = ex.run(["test", "-e", path], timeout=10)
+        return result.ok
+
+    def _path_writable(path: str) -> bool:
+        """Check whether *path* is a writable directory (local or remote)."""
+        if is_local:
+            import os
+            from pathlib import Path
+
+            p = Path(path)
+            return p.exists() and os.access(p, os.W_OK)
+        result = ex.run(["test", "-w", path], timeout=10)
+        return result.ok
+
     # 1. systemctl available
-    _check("systemctl available", bool(shutil.which("systemctl")), "install systemd")
+    _check("systemctl available", _has_command("systemctl"), "install systemd")
 
     # 2. podman available
-    _check("podman available", bool(shutil.which("podman")), "install podman")
+    _check("podman available", _has_command("podman"), "install podman")
 
     # 3. /etc/onetimesecret/ directory exists
-    config_dir_ok = cfg.config_dir.exists()
+    config_dir_ok = _path_exists(str(cfg.config_dir))
     _check(
         "/etc/onetimesecret/ exists",
         config_dir_ok,
@@ -174,7 +209,7 @@ def doctor():
     )
 
     # 4. /var/lib/onetimesecret/ directory exists and is writable
-    var_dir_ok = cfg.var_dir.exists() and os.access(cfg.var_dir, os.W_OK)
+    var_dir_ok = _path_writable(str(cfg.var_dir))
     _check(
         "/var/lib/onetimesecret/ writable",
         var_dir_ok,
@@ -182,7 +217,7 @@ def doctor():
     )
 
     # 5. Env file exists
-    env_file_ok = DEFAULT_ENV_FILE.exists()
+    env_file_ok = _path_exists(str(DEFAULT_ENV_FILE))
     _check(
         f"{DEFAULT_ENV_FILE} exists",
         env_file_ok,
@@ -190,9 +225,10 @@ def doctor():
     )
 
     # 6. Env file has SECRET_VARIABLE_NAMES and they are processed
+    #    (secrets check is local-only — podman secret store is not queryable remotely)
     secrets_ok = False
     secrets_detail = "run: sudo ots env process"
-    if env_file_ok:
+    if env_file_ok and is_local:
         try:
             parsed = EnvFile.parse(DEFAULT_ENV_FILE)
             if parsed.secret_variable_names:
@@ -207,10 +243,16 @@ def doctor():
                 secrets_detail = "set SECRET_VARIABLE_NAMES in env file"
         except Exception as exc:
             secrets_detail = f"parse error: {exc}"
+    elif env_file_ok and not is_local:
+        # Remote: check via podman secret ls
+        result = ex.run(["podman", "secret", "ls", "--format", "{{.Name}}"], timeout=10)
+        if result.ok and result.stdout.strip():
+            secrets_ok = any(line.startswith("ots_") for line in result.stdout.splitlines())
+        secrets_detail = "run: sudo ots env process (on remote host)" if not secrets_ok else ""
     _check("podman secrets configured", secrets_ok, secrets_detail)
 
     # 7. Web quadlet template exists
-    web_quadlet_ok = cfg.web_template_path.exists()
+    web_quadlet_ok = _path_exists(str(cfg.web_template_path))
     _check(
         f"{cfg.web_template_path} exists",
         web_quadlet_ok,
@@ -220,18 +262,16 @@ def doctor():
     # 8. At least one web instance running (best-effort)
     web_running = False
     web_running_detail = "run: sudo ots instances start --web"
-    if shutil.which("systemctl"):
-        try:
-            result = subprocess.run(
-                ["systemctl", "list-units", "onetime-web@*", "--plain", "--no-legend", "--all"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
+    if _has_command("systemctl"):
+        result = ex.run(
+            ["systemctl", "list-units", "onetime-web@*", "--plain", "--no-legend", "--all"],
+            timeout=10,
+        )
+        if result.ok:
             web_running = "onetime-web@" in result.stdout
             if not web_running:
                 web_running_detail = "no onetime-web@* units found"
-        except (subprocess.SubprocessError, OSError, TimeoutError):
+        else:
             web_running_detail = (
                 "systemctl query failed; run: systemctl status onetime-web@*.service"
             )
@@ -240,16 +280,11 @@ def doctor():
     # 9. Caddy (proxy) running (best-effort)
     caddy_ok = False
     caddy_detail = "run: sudo systemctl start caddy"
-    if shutil.which("systemctl"):
-        try:
-            result = subprocess.run(
-                ["systemctl", "is-active", "caddy"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
+    if _has_command("systemctl"):
+        result = ex.run(["systemctl", "is-active", "caddy"], timeout=10)
+        if result.ok:
             caddy_ok = result.stdout.strip() == "active"
-        except (subprocess.SubprocessError, OSError, TimeoutError):
+        else:
             caddy_detail = "systemctl query failed; run: systemctl status caddy"
     _check("caddy running", caddy_ok, caddy_detail)
 
