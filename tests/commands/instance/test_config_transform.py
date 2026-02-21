@@ -8,6 +8,7 @@ transformation with proper backup and apply workflow.
 import subprocess
 
 import pytest
+from ots_shared.ssh import LocalExecutor
 
 from ots_containers.commands import instance
 
@@ -24,8 +25,10 @@ class TestConfigTransformCommand:
         """config_transform should reject path traversal attempts."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
+        mock_config.get_executor.return_value = LocalExecutor()
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
 
         with pytest.raises(SystemExit) as exc_info:
@@ -36,6 +39,7 @@ class TestConfigTransformCommand:
         """config_transform should reject absolute file paths."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
@@ -48,6 +52,7 @@ class TestConfigTransformCommand:
         """config_transform should verify config file exists."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
@@ -60,6 +65,7 @@ class TestConfigTransformCommand:
         """config_transform should create temporary volume."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
@@ -94,6 +100,7 @@ class TestConfigTransformCommand:
         """config_transform should cleanup volume after success."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
@@ -132,6 +139,7 @@ class TestConfigTransformCommand:
         """config_transform should cleanup volume even on error."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
@@ -175,6 +183,7 @@ class TestConfigTransformCommand:
         """config_transform dry-run should show diff without changes."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
@@ -216,6 +225,7 @@ class TestConfigTransformCommand:
         """config_transform --apply should create backup file."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
@@ -253,6 +263,7 @@ class TestConfigTransformCommand:
         """config_transform --apply should update the config file."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
@@ -288,6 +299,7 @@ class TestConfigTransformCommand:
         """config_transform should report when no changes detected."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
@@ -325,6 +337,7 @@ class TestConfigTransformCommand:
         """config_transform should fail when migration command fails."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
@@ -361,6 +374,7 @@ class TestConfigTransformCommand:
         """config_transform should fail when no .new file is produced."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
@@ -399,6 +413,7 @@ class TestConfigTransformCommand:
         """config_transform -f should use specified file."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
@@ -438,6 +453,7 @@ class TestConfigTransformCommand:
 
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
@@ -489,6 +505,7 @@ class TestConfigTransformCommand:
         """config_transform should create numbered backups if needed."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()

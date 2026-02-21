@@ -4,7 +4,6 @@
 
 import difflib
 import logging
-import subprocess
 import sys
 from typing import Annotated
 
@@ -261,6 +260,7 @@ def run(
         ots instance run -p 7143 --production   # full production config
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
 
     # Resolve image/tag
     # Default: local images (from 'ots image build')
@@ -301,16 +301,22 @@ def run(
 
     # Production mode: add env file, secrets, and volumes
     if production:
+        from ots_shared.ssh import LocalExecutor
+
         from ots_containers.environment_file import get_secrets_from_env_file
 
         env_file = quadlet.DEFAULT_ENV_FILE
 
         # Environment file
-        if env_file.exists():
+        if not isinstance(ex, LocalExecutor):
+            env_exists = ex.run(["test", "-f", str(env_file)]).ok
+        else:
+            env_exists = env_file.exists()
+        if env_exists:
             cmd.extend(["--env-file", str(env_file)])
 
             # Secrets
-            secret_specs = get_secrets_from_env_file(env_file)
+            secret_specs = get_secrets_from_env_file(env_file, executor=ex)
             for spec in secret_specs:
                 cmd.extend(
                     [
@@ -320,7 +326,17 @@ def run(
                 )
 
         # Config overrides (per-file)
-        for f in cfg.existing_config_files:
+        from ots_containers.config import CONFIG_FILES
+
+        if not isinstance(ex, LocalExecutor):
+            config_files = []
+            for fname in CONFIG_FILES:
+                fpath = cfg.config_dir / fname
+                if ex.run(["test", "-f", str(fpath)]).ok:
+                    config_files.append(fpath)
+        else:
+            config_files = cfg.existing_config_files
+        for f in config_files:
             cmd.extend(["-v", f"{f}:/app/etc/{f.name}:ro"])
         cmd.extend(["-v", "static_assets:/app/public:ro"])
 
@@ -336,7 +352,6 @@ def run(
         print()
 
     # Run it
-    ex = cfg.get_executor(host=context.host_var.get(None))
     try:
         if detach:
             result = ex.run(cmd, check=True)
@@ -464,15 +479,21 @@ def deploy(
         # configured yet and we don't want that to block the diff output.
         if itype == InstanceType.WEB:
             template_path = cfg.web_template_path
-            new_content = quadlet.render_web_template(cfg, force=True)
+            new_content = quadlet.render_web_template(cfg, force=True, executor=ex)
         elif itype == InstanceType.WORKER:
             template_path = cfg.worker_template_path
-            new_content = quadlet.render_worker_template(cfg, force=True)
+            new_content = quadlet.render_worker_template(cfg, force=True, executor=ex)
         else:
             template_path = cfg.scheduler_template_path
-            new_content = quadlet.render_scheduler_template(cfg, force=True)
+            new_content = quadlet.render_scheduler_template(cfg, force=True, executor=ex)
 
-        old_content = template_path.read_text() if template_path.exists() else ""
+        from ots_shared.ssh import LocalExecutor as _LE
+
+        if ex is not None and not isinstance(ex, _LE):
+            _r = ex.run(["cat", str(template_path)])
+            old_content = _r.stdout if _r.ok else ""
+        else:
+            old_content = template_path.read_text() if template_path.exists() else ""
         diff_lines = list(
             difflib.unified_diff(
                 old_content.splitlines(keepends=True),
@@ -514,19 +535,19 @@ def deploy(
 
     deploy_results: list[dict] = []
 
-    with deploy_lock():
+    with deploy_lock(executor=ex):
         # Write appropriate quadlet template.
         # Raises SystemExit(1) if env file or secrets are missing (unless force=True).
         if itype == InstanceType.WEB:
-            assets.update(cfg, create_volume=True)
+            assets.update(cfg, create_volume=True, executor=ex)
             logger.info("Writing quadlet files to %s", cfg.web_template_path.parent)
-            quadlet.write_web_template(cfg, force=force)
+            quadlet.write_web_template(cfg, force=force, executor=ex)
         elif itype == InstanceType.WORKER:
             logger.info("Writing quadlet files to %s", cfg.worker_template_path.parent)
-            quadlet.write_worker_template(cfg, force=force)
+            quadlet.write_worker_template(cfg, force=force, executor=ex)
         elif itype == InstanceType.SCHEDULER:
             logger.info("Writing quadlet files to %s", cfg.scheduler_template_path.parent)
-            quadlet.write_scheduler_template(cfg, force=force)
+            quadlet.write_scheduler_template(cfg, force=force, executor=ex)
 
         def do_deploy(inst_type: InstanceType, id_: str) -> None:
             unit = systemd.unit_name(inst_type.value, id_)
@@ -774,15 +795,21 @@ def redeploy(
         for inst_type in instances:
             if inst_type == InstanceType.WEB:
                 template_path = cfg.web_template_path
-                new_content = quadlet.render_web_template(cfg, force=True)
+                new_content = quadlet.render_web_template(cfg, force=True, executor=ex)
             elif inst_type == InstanceType.WORKER:
                 template_path = cfg.worker_template_path
-                new_content = quadlet.render_worker_template(cfg, force=True)
+                new_content = quadlet.render_worker_template(cfg, force=True, executor=ex)
             else:
                 template_path = cfg.scheduler_template_path
-                new_content = quadlet.render_scheduler_template(cfg, force=True)
+                new_content = quadlet.render_scheduler_template(cfg, force=True, executor=ex)
 
-            old_content = template_path.read_text() if template_path.exists() else ""
+            from ots_shared.ssh import LocalExecutor as _LE
+
+            if ex is not None and not isinstance(ex, _LE):
+                _r = ex.run(["cat", str(template_path)])
+                old_content = _r.stdout if _r.ok else ""
+            else:
+                old_content = template_path.read_text() if template_path.exists() else ""
             diff_lines = list(
                 difflib.unified_diff(
                     old_content.splitlines(keepends=True),
@@ -831,20 +858,20 @@ def redeploy(
 
     redeploy_results: list[dict] = []
 
-    with deploy_lock():
+    with deploy_lock(executor=ex):
         # Write quadlet templates for each type being redeployed.
         # Raises SystemExit(1) if env file or secrets are missing.
         # Redeploy always enforces secrets check (no --force override for secrets here).
         if InstanceType.WEB in instances:
-            assets.update(cfg, create_volume=force)
+            assets.update(cfg, create_volume=force, executor=ex)
             logger.info("Writing quadlet files to %s", cfg.web_template_path.parent)
-            quadlet.write_web_template(cfg)
+            quadlet.write_web_template(cfg, executor=ex)
         if InstanceType.WORKER in instances:
             logger.info("Writing quadlet files to %s", cfg.worker_template_path.parent)
-            quadlet.write_worker_template(cfg)
+            quadlet.write_worker_template(cfg, executor=ex)
         if InstanceType.SCHEDULER in instances:
             logger.info("Writing quadlet files to %s", cfg.scheduler_template_path.parent)
-            quadlet.write_scheduler_template(cfg)
+            quadlet.write_scheduler_template(cfg, executor=ex)
 
         def do_redeploy(inst_type: InstanceType, id_: str) -> None:
             unit = systemd.unit_name(inst_type.value, id_)
@@ -1632,6 +1659,11 @@ def shell(
 
     cfg = Config()
 
+    # Obtain executor early for remote env file checks
+    from ots_containers.systemd import _get_executor
+
+    ex = _get_executor(cfg.get_executor(host=context.host_var.get(None)))
+
     # Resolve image/tag (same pattern as run command)
     if remote:
         if tag:
@@ -1656,9 +1688,15 @@ def shell(
 
     # Environment file and secrets
     env_file = quadlet.DEFAULT_ENV_FILE
-    if env_file.exists():
+    from ots_shared.ssh import LocalExecutor
+
+    if not isinstance(ex, LocalExecutor):
+        env_exists = ex.run(["test", "-f", str(env_file)]).ok
+    else:
+        env_exists = env_file.exists()
+    if env_exists:
         cmd.extend(["--env-file", str(env_file)])
-        cmd.extend(build_secret_args(env_file))
+        cmd.extend(build_secret_args(env_file, executor=ex))
 
     # Data volume: bind-mount, persistent named volume, or tmpfs (default)
     if volume:
@@ -1693,10 +1731,6 @@ def shell(
         print(format_command(cmd))
         print()
 
-    # Run through executor for local/remote support
-    from ots_containers.systemd import _get_executor
-
-    ex = _get_executor(cfg.get_executor(host=context.host_var.get(None)))
     try:
         if command is None:
             # Interactive shell — full PTY
@@ -1781,6 +1815,12 @@ def config_transform(
     from pathlib import Path
 
     cfg = Config()
+    ex = cfg.get_executor()
+    p = Podman(executor=ex)
+
+    from ots_shared.ssh import LocalExecutor
+
+    is_remote = not isinstance(ex, LocalExecutor)
 
     # Validate: prevent path traversal
     if ".." in file or file.startswith("/"):
@@ -1788,7 +1828,10 @@ def config_transform(
 
     # Check config file exists
     config_path = cfg.config_dir / file
-    if not config_path.exists():
+    if is_remote:
+        if not ex.run(["test", "-f", str(config_path)]).ok:
+            raise SystemExit(f"Config file not found: {config_path}")
+    elif not config_path.exists():
         raise SystemExit(f"Config file not found: {config_path}")
 
     # Resolve image/tag (same pattern as shell command)
@@ -1809,30 +1852,21 @@ def config_transform(
 
     try:
         # Create the volume
-        subprocess.run(
-            ["podman", "volume", "create", volume_name],
-            check=True,
-            capture_output=True,
-        )
+        p.volume.create(volume_name, check=True, capture_output=True)
 
         # Copy config file to volume using a helper container
-        # We use a busybox-style approach: mount both and copy
-        # Resolve symlinks for podman VM compatibility (macOS)
-        config_path_resolved = config_path.resolve()
-        subprocess.run(
-            [
-                "podman",
-                "run",
-                "--rm",
-                "-v",
-                f"{config_path_resolved}:/src/{file}:ro",
-                "-v",
-                f"{volume_name}:/dest",
-                full_image,
-                "/bin/cp",
-                f"/src/{file}",
-                f"/dest/{file}",
-            ],
+        # Resolve symlinks for podman VM compatibility (macOS, local only)
+        config_path_str = str(config_path.resolve()) if not is_remote else str(config_path)
+        p.run(
+            "--rm",
+            "-v",
+            f"{config_path_str}:/src/{file}:ro",
+            "-v",
+            f"{volume_name}:/dest",
+            full_image,
+            "/bin/cp",
+            f"/src/{file}",
+            f"/dest/{file}",
             check=True,
             capture_output=True,
         )
@@ -1841,14 +1875,18 @@ def config_transform(
         env_file = quadlet.DEFAULT_ENV_FILE
         cmd = ["podman", "run", "--rm", "--network=host"]
 
-        if env_file.exists():
+        if is_remote:
+            env_exists = ex.run(["test", "-f", str(env_file)]).ok
+        else:
+            env_exists = env_file.exists()
+        if env_exists:
             cmd.extend(["--env-file", str(env_file)])
-            cmd.extend(build_secret_args(env_file))
+            cmd.extend(build_secret_args(env_file, executor=ex))
 
         cmd.extend(["-v", f"{volume_name}:/app/data"])
-        # Resolve symlinks for podman VM compatibility (macOS)
-        config_dir_resolved = cfg.config_dir.resolve()
-        cmd.extend(["-v", f"{config_dir_resolved}:/app/etc:ro"])
+        # Resolve symlinks for podman VM compatibility (macOS, local only)
+        config_dir_str = str(cfg.config_dir.resolve()) if not is_remote else str(cfg.config_dir)
+        cmd.extend(["-v", f"{config_dir_str}:/app/etc:ro"])
         cmd.append(full_image)
         cmd.extend(["/bin/bash", "-c", command])
 
@@ -1856,9 +1894,9 @@ def config_transform(
             print(f"Running: {format_command(cmd)}")
             print()
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = ex.run(cmd)
 
-        if result.returncode != 0:
+        if not result.ok:
             # Show migration command output for operator debugging.
             # No secrets here: env vars are passed via podman secrets,
             # not visible in command stdout/stderr.
@@ -1870,7 +1908,7 @@ def config_transform(
             raise SystemExit(result.returncode)
 
         # Read the transformed file from volume
-        read_result = subprocess.run(
+        read_result = ex.run(
             [
                 "podman",
                 "run",
@@ -1880,18 +1918,22 @@ def config_transform(
                 full_image,
                 "/bin/cat",
                 f"/data/{file}.new",
-            ],
-            capture_output=True,
-            text=True,
+            ]
         )
 
-        if read_result.returncode != 0:
+        if not read_result.ok:
             print(f"No transformed file produced: /app/data/{file}.new")
             print("Migration command should write transformed config to {file}.new")
             raise SystemExit(1)
 
         new_content = read_result.stdout
-        original_content = config_path.read_text()
+
+        # Read original config content
+        if is_remote:
+            orig_result = ex.run(["cat", str(config_path)])
+            original_content = orig_result.stdout
+        else:
+            original_content = config_path.read_text()
 
         # Show unified diff of proposed config changes. This is the primary
         # output of dry-run mode — config files contain app settings, not secrets.
@@ -1919,31 +1961,35 @@ def config_transform(
         backup_time = time.strftime("%Y%m%d-%H%M%S")
         backup_path = Path(f"{config_path}.bak.{backup_time}")
 
-        # Handle numbered backups if timestamp backup exists
-        if backup_path.exists():
-            counter = 1
-            while True:
-                numbered_backup = Path(f"{config_path}.bak.{backup_time}.{counter}")
-                if not numbered_backup.exists():
-                    backup_path = numbered_backup
-                    break
-                counter += 1
+        if is_remote:
+            # Remote: use cp for backup, tee for write
+            ex.run(["cp", "-p", str(config_path), str(backup_path)], check=True)
+            print(f"Backup created: {backup_path}")
+            ex.run(["tee", str(config_path)], input=new_content)
+            print(f"Config updated: {config_path}")
+        else:
+            # Handle numbered backups if timestamp backup exists
+            if backup_path.exists():
+                counter = 1
+                while True:
+                    numbered_backup = Path(f"{config_path}.bak.{backup_time}.{counter}")
+                    if not numbered_backup.exists():
+                        backup_path = numbered_backup
+                        break
+                    counter += 1
 
-        # Create backup and apply
-        import shutil
+            # Create backup and apply
+            import shutil
 
-        shutil.copy2(config_path, backup_path)
-        print(f"Backup created: {backup_path}")
+            shutil.copy2(config_path, backup_path)
+            print(f"Backup created: {backup_path}")
 
-        config_path.write_text(new_content)
-        print(f"Config updated: {config_path}")
+            config_path.write_text(new_content)
+            print(f"Config updated: {config_path}")
 
     finally:
         # Cleanup: remove temporary volume
-        subprocess.run(
-            ["podman", "volume", "rm", "-f", volume_name],
-            capture_output=True,
-        )
+        p.volume.rm("-f", volume_name, capture_output=True)
 
 
 @app.command
@@ -2043,7 +2089,11 @@ def metrics(
     import json as json_mod
 
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=False)
+
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+
+    instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
         if json_output:
@@ -2053,8 +2103,6 @@ def metrics(
             print("Deploy one first: ots instances deploy --help")
         return
 
-    cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
     p = Podman(executor=ex)
 
     results = []
@@ -2257,15 +2305,15 @@ def rollback(
 
     redeploy_results: list[dict] = []
 
-    with deploy_lock():
+    with deploy_lock(executor=ex):
         # Write quadlet templates for each instance type being redeployed
         if InstanceType.WEB in instances:
-            assets.update(cfg, create_volume=False)
-            quadlet.write_web_template(cfg)
+            assets.update(cfg, create_volume=False, executor=ex)
+            quadlet.write_web_template(cfg, executor=ex)
         if InstanceType.WORKER in instances:
-            quadlet.write_worker_template(cfg)
+            quadlet.write_worker_template(cfg, executor=ex)
         if InstanceType.SCHEDULER in instances:
-            quadlet.write_scheduler_template(cfg)
+            quadlet.write_scheduler_template(cfg, executor=ex)
 
         def do_rollback_redeploy(inst_type: InstanceType, id_: str) -> None:
             unit = systemd.unit_name(inst_type.value, id_)

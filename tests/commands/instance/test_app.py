@@ -296,8 +296,10 @@ class TestDeployCommand:
 
         instance.deploy(identifiers=("7143",), web=True)
 
-        mock_assets.assert_called_once_with(mock_config, create_volume=True)
-        mock_quadlet.assert_called_once_with(mock_config, force=False)
+        from unittest.mock import ANY
+
+        mock_assets.assert_called_once_with(mock_config, create_volume=True, executor=ANY)
+        mock_quadlet.assert_called_once_with(mock_config, force=False, executor=ANY)
 
 
 class TestDeployWorkerCommand:
@@ -324,7 +326,9 @@ class TestDeployWorkerCommand:
 
         instance.deploy(identifiers=("1",), worker=True)
 
-        mock_quadlet.assert_called_once_with(mock_config, force=False)
+        from unittest.mock import ANY
+
+        mock_quadlet.assert_called_once_with(mock_config, force=False, executor=ANY)
 
     def test_deploy_worker_does_not_update_assets(self, mocker, tmp_path):
         """deploy --worker should NOT update static assets."""
@@ -1275,7 +1279,9 @@ class TestDeployPartialFailure:
             instance.deploy(identifiers=("7143",), web=True)
 
         # Assets ran to completion
-        mock_assets.assert_called_once_with(mock_config, create_volume=True)
+        from unittest.mock import ANY
+
+        mock_assets.assert_called_once_with(mock_config, create_volume=True, executor=ANY)
         # systemd was never reached
         mock_start.assert_not_called()
 

@@ -30,6 +30,15 @@ logger = logging.getLogger(__name__)
 DEPLOY_LOCK_PATH = Path("/var/lib/onetimesecret/deploy.lock")
 
 
+def _is_remote(executor: Executor | None) -> bool:
+    """Return True if executor targets a remote host."""
+    if executor is None:
+        return False
+    from ots_shared.ssh import LocalExecutor
+
+    return not isinstance(executor, LocalExecutor)
+
+
 @contextlib.contextmanager
 def deploy_lock(
     lock_path: Path = DEPLOY_LOCK_PATH,
@@ -156,7 +165,7 @@ def format_journalctl_hint(instances: dict[InstanceType, list[str]]) -> str:
     return f"journalctl {tag_args} -f"
 
 
-def build_secret_args(env_file: Path) -> list[str]:
+def build_secret_args(env_file: Path, *, executor: Executor | None = None) -> list[str]:
     """Build podman --secret arguments from environment file.
 
     Reads SECRET_VARIABLE_NAMES from the env file and generates
@@ -164,14 +173,19 @@ def build_secret_args(env_file: Path) -> list[str]:
 
     Args:
         env_file: Path to environment file (e.g., /etc/default/onetimesecret)
+        executor: Optional executor for remote file access
 
     Returns:
         List of command arguments: ["--secret", "name,type=env,target=VAR", ...]
     """
-    if not env_file.exists():
+    if _is_remote(executor):
+        result = executor.run(["test", "-f", str(env_file)])  # type: ignore[union-attr]
+        if not result.ok:
+            return []
+    elif not env_file.exists():
         return []
 
-    secret_specs = get_secrets_from_env_file(env_file)
+    secret_specs = get_secrets_from_env_file(env_file, executor=executor)
     args: list[str] = []
     for spec in secret_specs:
         args.extend(
