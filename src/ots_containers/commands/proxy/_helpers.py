@@ -88,16 +88,27 @@ def validate_caddy_config(content: str) -> None:
         Path(temp_path).unlink(missing_ok=True)
 
 
-def reload_caddy() -> None:
+def reload_caddy(*, executor=None) -> None:
     """Reload Caddy service via systemctl.
+
+    Args:
+        executor: Executor for command dispatch. None uses subprocess directly.
 
     Raises:
         ProxyError: If reload fails.
     """
-    try:
-        subprocess.run(
-            ["sudo", "systemctl", "reload", "caddy"],
-            check=True,
-        )
-    except subprocess.CalledProcessError as e:
-        raise ProxyError(f"Failed to reload caddy: {e}") from e
+    if executor is not None:
+        from ots_shared.ssh.executor import CommandError
+
+        try:
+            executor.run(["systemctl", "reload", "caddy"], sudo=True, timeout=30, check=True)
+        except CommandError as e:
+            raise ProxyError(f"Failed to reload caddy: {e}") from e
+    else:
+        try:
+            subprocess.run(
+                ["sudo", "systemctl", "reload", "caddy"],
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise ProxyError(f"Failed to reload caddy: {e}") from e

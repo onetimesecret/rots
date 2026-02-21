@@ -2,11 +2,26 @@
 
 """Helper functions for service command operations."""
 
+from __future__ import annotations
+
 import shutil
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .packages import ServicePackage
+
+if TYPE_CHECKING:
+    from ots_shared.ssh.executor import Executor, Result
+
+
+def _get_executor(executor: Executor | None = None) -> Executor:
+    """Return the given executor or a default LocalExecutor."""
+    if executor is not None:
+        return executor
+    from ots_shared.ssh.executor import LocalExecutor
+
+    return LocalExecutor()
 
 
 def ensure_instances_dir(pkg: ServicePackage) -> Path:
@@ -213,42 +228,59 @@ def ensure_data_dir(pkg: ServicePackage, instance: str) -> Path:
     return data_path
 
 
-def systemctl_json(*args: str) -> dict | list | None:
+def systemctl_json(
+    *args: str,
+    executor: Executor | None = None,
+) -> dict | list | None:
     """Run systemctl with JSON output (systemd 255+ on Debian 13).
 
     Args:
         *args: Arguments to pass to systemctl
+        executor: Executor for command dispatch. None uses LocalExecutor.
 
     Returns:
         Parsed JSON output, or None if command failed
     """
     import json
 
+    from ots_shared.ssh.executor import CommandError
+
+    ex = _get_executor(executor)
     try:
-        result = subprocess.run(
+        result = ex.run(
             ["systemctl", "--output=json", *args],
-            capture_output=True,
-            text=True,
-            check=True,
             timeout=10,
+            check=True,
         )
         if result.stdout.strip():
             return json.loads(result.stdout)
         return None
-    except (subprocess.CalledProcessError, json.JSONDecodeError):
+    except (CommandError, json.JSONDecodeError):
         return None
 
 
-def systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+def systemctl(
+    *args: str,
+    check: bool = True,
+    executor: Executor | None = None,
+) -> Result | subprocess.CompletedProcess:
     """Run a systemctl command.
 
     Args:
         *args: Arguments to pass to systemctl
         check: Whether to raise on non-zero exit
+        executor: Executor for command dispatch. None uses subprocess directly
+            for backward compatibility.
 
     Returns:
-        CompletedProcess result
+        Result (with executor) or CompletedProcess (without)
     """
+    if executor is not None:
+        return executor.run(
+            ["systemctl", *args],
+            timeout=30,
+            check=check,
+        )
     return subprocess.run(
         ["systemctl", *args],
         capture_output=True,
@@ -258,19 +290,23 @@ def systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     )
 
 
-def is_service_active(unit: str) -> bool:
+def is_service_active(unit: str, *, executor: Executor | None = None) -> bool:
     """Check if a systemd unit is active."""
-    result = systemctl("is-active", unit, check=False)
+    result = systemctl("is-active", unit, check=False, executor=executor)
     return result.returncode == 0
 
 
-def is_service_enabled(unit: str) -> bool:
+def is_service_enabled(unit: str, *, executor: Executor | None = None) -> bool:
     """Check if a systemd unit is enabled."""
-    result = systemctl("is-enabled", unit, check=False)
+    result = systemctl("is-enabled", unit, check=False, executor=executor)
     return result.returncode == 0
 
 
-def check_default_service_conflict(pkg: ServicePackage) -> bool:
+def check_default_service_conflict(
+    pkg: ServicePackage,
+    *,
+    executor: Executor | None = None,
+) -> bool:
     """Check if the default (non-template) service is running.
 
     When using template instances, the default service should be stopped and disabled
@@ -278,6 +314,7 @@ def check_default_service_conflict(pkg: ServicePackage) -> bool:
 
     Args:
         pkg: Service package definition
+        executor: Executor for command dispatch. None uses LocalExecutor.
 
     Returns:
         True if there's a conflict (default service is active), False otherwise
@@ -285,7 +322,7 @@ def check_default_service_conflict(pkg: ServicePackage) -> bool:
     if not pkg.default_service:
         return False
 
-    if is_service_active(pkg.default_service):
+    if is_service_active(pkg.default_service, executor=executor):
         print(f"WARNING: Default service {pkg.default_service} is running!")
         print(f"  This may conflict with template instances ({pkg.template_unit})")
         print("  To use multiple instances, stop and disable the default service:")

@@ -12,6 +12,7 @@ import subprocess
 from typing import Annotated
 
 import cyclopts
+from ots_shared.ssh.executor import CommandError
 
 from ..common import DryRun, Follow, JsonOutput, Lines, Yes
 from ._helpers import (
@@ -40,6 +41,21 @@ Instance = Annotated[str, cyclopts.Parameter(help="Instance identifier (usually 
 OptInstance = Annotated[str | None, cyclopts.Parameter(help="Instance identifier (optional)")]
 
 
+def _list_units_for_template(template: str) -> str:
+    """Run systemctl list-units for a template pattern and return stdout."""
+    pattern = f"{template}*"
+    result = systemctl(
+        "list-units",
+        "--type=service",
+        "--all",
+        pattern,
+        "--no-pager",
+        "--plain",
+        check=False,
+    )
+    return result.stdout
+
+
 @app.default
 def list_all(json_output: JsonOutput = False):
     """List all service instances across all packages.
@@ -54,26 +70,10 @@ def list_all(json_output: JsonOutput = False):
 
     for pkg_name in list_packages():
         pkg = get_package(pkg_name)
+        output = _list_units_for_template(pkg.template)
 
-        # Find running/enabled units matching the template
-        pattern = f"{pkg.template}*"
-        result = subprocess.run(
-            [
-                "systemctl",
-                "list-units",
-                "--type=service",
-                "--all",
-                pattern,
-                "--no-pager",
-                "--plain",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        if result.stdout.strip():
-            for line in result.stdout.splitlines():
+        if output.strip():
+            for line in output.splitlines():
                 if pkg.template in line:
                     parts = line.split()
                     if parts:
@@ -281,8 +281,9 @@ def init(
         try:
             systemctl("enable", unit)
             print("  Enabled")
-        except subprocess.CalledProcessError as e:
-            print(f"  WARNING: Could not enable: {e.stderr}")
+        except (subprocess.CalledProcessError, CommandError) as e:
+            stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
+            print(f"  WARNING: Could not enable: {stderr}")
 
     # Step 6: Start service
     if start:
@@ -290,8 +291,9 @@ def init(
         try:
             systemctl("start", unit)
             print("  Started")
-        except subprocess.CalledProcessError as e:
-            print(f"  ERROR: Could not start: {e.stderr}")
+        except (subprocess.CalledProcessError, CommandError) as e:
+            stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
+            print(f"  ERROR: Could not start: {stderr}")
             raise SystemExit(1)
 
     print()
@@ -315,8 +317,9 @@ def enable(package: Package, instance: Instance):
     try:
         systemctl("enable", unit)
         print("Enabled")
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: {e.stderr}")
+    except (subprocess.CalledProcessError, CommandError) as e:
+        stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
+        print(f"ERROR: {stderr}")
         raise SystemExit(1)
 
 
@@ -343,17 +346,15 @@ def disable(
             return
 
     print(f"Stopping {unit}...")
-    try:
-        systemctl("stop", unit, check=False)
-    except subprocess.CalledProcessError:
-        pass
+    systemctl("stop", unit, check=False)
 
     print(f"Disabling {unit}...")
     try:
         systemctl("disable", unit)
         print("Disabled")
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: {e.stderr}")
+    except (subprocess.CalledProcessError, CommandError) as e:
+        stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
+        print(f"ERROR: {stderr}")
         raise SystemExit(1)
 
 
@@ -375,18 +376,12 @@ def status(package: Package, instance: OptInstance = None):
             print(result.stderr)
     else:
         # Show all instances of this template
-        pattern = f"{pkg.template}*"
-        result = subprocess.run(
-            [
-                "systemctl",
-                "list-units",
-                "--type=service",
-                pattern,
-                "--no-pager",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
+        result = systemctl(
+            "list-units",
+            "--type=service",
+            f"{pkg.template}*",
+            "--no-pager",
+            check=False,
         )
         print(result.stdout)
 
@@ -405,8 +400,9 @@ def start(package: Package, instance: Instance):
     try:
         systemctl("start", unit)
         print("Started")
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: {e.stderr}")
+    except (subprocess.CalledProcessError, CommandError) as e:
+        stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
+        print(f"ERROR: {stderr}")
         raise SystemExit(1)
 
 
@@ -424,8 +420,9 @@ def stop(package: Package, instance: Instance):
     try:
         systemctl("stop", unit)
         print("Stopped")
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: {e.stderr}")
+    except (subprocess.CalledProcessError, CommandError) as e:
+        stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
+        print(f"ERROR: {stderr}")
         raise SystemExit(1)
 
 
@@ -443,8 +440,9 @@ def restart(package: Package, instance: Instance):
     try:
         systemctl("restart", unit)
         print("Restarted")
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: {e.stderr}")
+    except (subprocess.CalledProcessError, CommandError) as e:
+        stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
+        print(f"ERROR: {stderr}")
         raise SystemExit(1)
 
 
@@ -489,26 +487,11 @@ def list_instances(
     pkg = get_package(package)
     instances = []
 
-    # Find running/enabled units matching the template
-    pattern = f"{pkg.template}*"
-    result = subprocess.run(
-        [
-            "systemctl",
-            "list-units",
-            "--type=service",
-            "--all",
-            pattern,
-            "--no-pager",
-            "--plain",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    output = _list_units_for_template(pkg.template)
 
-    if result.stdout.strip():
+    if output.strip():
         # Parse output to extract instance names
-        for line in result.stdout.splitlines():
+        for line in output.splitlines():
             if pkg.template in line:
                 parts = line.split()
                 if parts:

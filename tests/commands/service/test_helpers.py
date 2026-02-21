@@ -325,7 +325,7 @@ class TestSystemctlJson:
     @patch("subprocess.run")
     def test_returns_none_on_failure(self, mock_run):
         """Test returns None on command failure."""
-        mock_run.side_effect = subprocess.CalledProcessError(1, "systemctl")
+        mock_run.return_value = MagicMock(stdout="", stderr="error", returncode=1)
 
         result = systemctl_json("show", "test.service")
 

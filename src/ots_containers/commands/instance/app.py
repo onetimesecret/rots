@@ -75,13 +75,7 @@ def _list_instances_impl(
             for id_ in ids:
                 unit = systemd.unit_name(inst_type.value, id_)
                 service = f"{unit}.service"
-                result = subprocess.run(
-                    ["systemctl", "is-active", service],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                status = result.stdout.strip()
+                status = systemd.is_active(service)
 
                 # Get deployment info
                 if inst_type == InstanceType.WEB:
@@ -139,13 +133,7 @@ def _list_instances_impl(
             service = f"{unit}.service"
 
             # Get systemd status
-            result = subprocess.run(
-                ["systemctl", "is-active", service],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            status = result.stdout.strip()
+            status = systemd.is_active(service)
 
             # Get last deployment from database
             if inst_type == InstanceType.WEB:
@@ -1278,15 +1266,10 @@ def enable(
         for id_ in ids:
             unit = systemd.unit_name(inst_type.value, id_)
             try:
-                subprocess.run(
-                    ["sudo", "systemctl", "enable", unit],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
+                systemd.enable(unit)
                 print(f"Enabled {unit}")
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to enable {unit}: {e.stderr}")
+            except systemd.SystemctlError as e:
+                print(f"Failed to enable {unit}: {e.journal}")
 
 
 @app.command
@@ -1331,15 +1314,10 @@ def disable(
         for id_ in ids:
             unit = systemd.unit_name(inst_type.value, id_)
             try:
-                subprocess.run(
-                    ["sudo", "systemctl", "disable", unit],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
+                systemd.disable(unit)
                 print(f"Disabled {unit}")
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to disable {unit}: {e.stderr}")
+            except systemd.SystemctlError as e:
+                print(f"Failed to disable {unit}: {e.journal}")
 
 
 @app.command
@@ -1378,13 +1356,7 @@ def status(
         for inst_type, ids in instances.items():
             for id_ in ids:
                 unit = systemd.unit_name(inst_type.value, id_)
-                result = subprocess.run(
-                    ["systemctl", "is-active", unit],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                active_state = result.stdout.strip()
+                active_state = systemd.is_active(unit)
                 results.append(
                     {
                         "unit": unit,
@@ -2018,14 +1990,8 @@ def metrics(
 
             # Get systemd active state
             try:
-                state_result = subprocess.run(
-                    ["systemctl", "is-active", f"{unit}.service"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                active_state = state_result.stdout.strip()
-            except (subprocess.SubprocessError, OSError):
+                active_state = systemd.is_active(f"{unit}.service")
+            except Exception:
                 active_state = "unknown"
 
             # Get podman stats (non-streaming, single snapshot)

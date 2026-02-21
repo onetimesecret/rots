@@ -562,7 +562,7 @@ class TestEnableCommand:
         assert callable(instance.enable)
 
     def test_enable_calls_systemctl(self, mocker, capsys):
-        """enable should call systemctl enable."""
+        """enable should call systemd.enable()."""
         mocker.patch(
             "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
@@ -575,15 +575,11 @@ class TestEnableCommand:
             "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
-        mock_run = mocker.patch("ots_containers.commands.instance.app.subprocess.run")
+        mock_enable = mocker.patch("ots_containers.commands.instance.app.systemd.enable")
 
         instance.enable(identifiers=("7043",), web=True)
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert "systemctl" in call_args
-        assert "enable" in call_args
-        assert "onetime-web@7043" in call_args
+        mock_enable.assert_called_once_with("onetime-web@7043")
 
         captured = capsys.readouterr()
         assert "Enabled" in captured.out
@@ -876,28 +872,20 @@ class TestSchedulerCommands:
         assert "onetime-scheduler@main" in cmd or "-u" in cmd
 
     def test_enable_scheduler_with_flag(self, mocker, capsys):
-        """enable --scheduler should call systemctl enable for scheduler instances."""
-        mock_run = mocker.patch("ots_containers.commands.instance.app.subprocess.run")
+        """enable --scheduler should call systemd.enable for scheduler instances."""
+        mock_enable = mocker.patch("ots_containers.commands.instance.app.systemd.enable")
 
         instance.enable(identifiers=("main",), scheduler=True)
 
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert "systemctl" in cmd
-        assert "enable" in cmd
-        assert "onetime-scheduler@main" in cmd
+        mock_enable.assert_called_once_with("onetime-scheduler@main")
 
     def test_disable_scheduler_with_flag(self, mocker, capsys):
-        """disable --scheduler should call systemctl disable for scheduler instances."""
-        mock_run = mocker.patch("ots_containers.commands.instance.app.subprocess.run")
+        """disable --scheduler should call systemd.disable for scheduler instances."""
+        mock_disable = mocker.patch("ots_containers.commands.instance.app.systemd.disable")
 
         instance.disable(identifiers=("main",), scheduler=True, yes=True)
 
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert "systemctl" in cmd
-        assert "disable" in cmd
-        assert "onetime-scheduler@main" in cmd
+        mock_disable.assert_called_once_with("onetime-scheduler@main")
 
     def test_stop_discovers_scheduler_instances(self, mocker):
         """stop --scheduler with no identifiers should discover scheduler instances."""
@@ -1973,8 +1961,8 @@ class TestEnableDisableRequireSystemctl:
 
         assert exc_info.value.code == 1
 
-    def test_enable_uses_sudo_systemctl(self, mocker, capsys):
-        """enable() should call subprocess.run with ['sudo', 'systemctl', 'enable', unit]."""
+    def test_enable_uses_systemd_module(self, mocker, capsys):
+        """enable() should delegate to systemd.enable()."""
         mocker.patch(
             "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
@@ -1987,19 +1975,14 @@ class TestEnableDisableRequireSystemctl:
             "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
-        mock_run = mocker.patch("ots_containers.commands.instance.app.subprocess.run")
+        mock_enable = mocker.patch("ots_containers.commands.instance.app.systemd.enable")
 
         instance.enable(identifiers=("7043",), web=True)
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert call_args[0] == "sudo"
-        assert call_args[1] == "systemctl"
-        assert call_args[2] == "enable"
-        assert "onetime-web@7043" in call_args
+        mock_enable.assert_called_once_with("onetime-web@7043")
 
-    def test_disable_uses_sudo_systemctl(self, mocker, capsys):
-        """disable() should call subprocess.run with ['sudo', 'systemctl', 'disable', unit]."""
+    def test_disable_uses_systemd_module(self, mocker, capsys):
+        """disable() should delegate to systemd.disable()."""
         mocker.patch(
             "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
@@ -2012,16 +1995,11 @@ class TestEnableDisableRequireSystemctl:
             "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
-        mock_run = mocker.patch("ots_containers.commands.instance.app.subprocess.run")
+        mock_disable = mocker.patch("ots_containers.commands.instance.app.systemd.disable")
 
         instance.disable(identifiers=("7043",), web=True, yes=True)
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert call_args[0] == "sudo"
-        assert call_args[1] == "systemctl"
-        assert call_args[2] == "disable"
-        assert "onetime-web@7043" in call_args
+        mock_disable.assert_called_once_with("onetime-web@7043")
 
 
 class TestListInstancesJsonOutput:
