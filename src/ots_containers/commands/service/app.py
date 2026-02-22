@@ -7,15 +7,19 @@ on Debian 13 systems. Uses package-provided templates rather than custom
 unit files.
 """
 
+from __future__ import annotations
+
 import logging
 import subprocess
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import cyclopts
 from ots_shared.ssh.executor import CommandError
 
 from ..common import DryRun, Follow, JsonOutput, Lines, Yes
 from ._helpers import (
+    _file_exists,
+    _unlink,
     add_secrets_include,
     check_default_service_conflict,
     copy_default_config,
@@ -27,6 +31,13 @@ from ._helpers import (
     update_config_value,
 )
 from .packages import get_package, list_packages
+
+# When executor is None, systemctl() uses subprocess.run(check=True) which
+# raises CalledProcessError.  When executor is set, it raises CommandError.
+_SystemctlError = (subprocess.CalledProcessError, CommandError)
+
+if TYPE_CHECKING:
+    from ots_shared.ssh.executor import Executor
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +52,23 @@ Instance = Annotated[str, cyclopts.Parameter(help="Instance identifier (usually 
 OptInstance = Annotated[str | None, cyclopts.Parameter(help="Instance identifier (optional)")]
 
 
-def _list_units_for_template(template: str) -> str:
+def _get_executor() -> Executor | None:
+    """Resolve executor from context. Returns None for local."""
+    from ots_containers import context
+    from ots_containers.config import Config
+
+    cfg = Config()
+    host = context.host_var.get(None)
+    if host is None:
+        return None
+    return cfg.get_executor(host=host)
+
+
+def _list_units_for_template(
+    template: str,
+    *,
+    executor: Executor | None = None,
+) -> str:
     """Run systemctl list-units for a template pattern and return stdout."""
     pattern = f"{template}*"
     result = systemctl(
@@ -52,6 +79,7 @@ def _list_units_for_template(template: str) -> str:
         "--no-pager",
         "--plain",
         check=False,
+        executor=executor,
     )
     return result.stdout
 
@@ -66,11 +94,12 @@ def list_all(json_output: JsonOutput = False):
         ots service list
         ots service list --json
     """
+    ex = _get_executor()
     all_instances = []
 
     for pkg_name in list_packages():
         pkg = get_package(pkg_name)
-        output = _list_units_for_template(pkg.template)
+        output = _list_units_for_template(pkg.template, executor=ex)
 
         if output.strip():
             for line in output.splitlines():
@@ -80,9 +109,9 @@ def list_all(json_output: JsonOutput = False):
                         unit_name = parts[0]
                         if "@" in unit_name and ".service" in unit_name:
                             instance = unit_name.split("@")[1].replace(".service", "")
-                            active = is_service_active(unit_name)
-                            enabled = is_service_enabled(unit_name)
-                            config_exists = pkg.config_file(instance).exists()
+                            active = is_service_active(unit_name, executor=ex)
+                            enabled = is_service_enabled(unit_name, executor=ex)
+                            config_exists = _file_exists(pkg.config_file(instance), ex)
                             all_instances.append(
                                 {
                                     "package": pkg_name,
@@ -189,6 +218,7 @@ def init(
         ots service init valkey 6379 --dry-run
         ots service init valkey 6379 --force                  # Overwrite existing config
     """
+    ex = _get_executor()
     pkg = get_package(package)
     if port is not None:
         port_num = port
@@ -207,7 +237,7 @@ def init(
     print()
 
     if dry_run:
-        config_exists = pkg.config_file(instance).exists()
+        config_exists = _file_exists(pkg.config_file(instance), ex)
         if config_exists and not force:
             print(f"[dry-run] Config already exists: {pkg.config_file(instance)}")
             print("[dry-run] Would skip (use --force to overwrite)")
@@ -221,12 +251,12 @@ def init(
         return
 
     # Check for default service conflict
-    check_default_service_conflict(pkg)
+    check_default_service_conflict(pkg, executor=ex)
 
     # Step 1: Copy default config
     print(f"Creating config from {pkg.default_config}...")
     try:
-        config_path = copy_default_config(pkg, instance)
+        config_path = copy_default_config(pkg, instance, executor=ex)
         print(f"  Created: {config_path}")
     except FileExistsError:
         if not force:
@@ -238,12 +268,10 @@ def init(
             print(f"  Status: ots service status {package} {instance}")
             return
         # --force: delete and recreate from package default
-        import os
-
-        os.unlink(pkg.config_file(instance))
+        _unlink(pkg.config_file(instance), ex)
         print("  Removed existing config (--force)")
         try:
-            config_path = copy_default_config(pkg, instance)
+            config_path = copy_default_config(pkg, instance, executor=ex)
             print(f"  Recreated: {config_path}")
         except FileNotFoundError as e:
             print(f"  ERROR: {e}")
@@ -254,22 +282,22 @@ def init(
 
     # Step 2: Update port and bind in config
     print("Updating config values...")
-    update_config_value(config_path, pkg.port_config_key, str(port_num), pkg)
-    update_config_value(config_path, pkg.bind_config_key, bind, pkg)
+    update_config_value(config_path, pkg.port_config_key, str(port_num), pkg, executor=ex)
+    update_config_value(config_path, pkg.bind_config_key, bind, pkg, executor=ex)
 
     # Step 3: Set data directory
-    data_dir = ensure_data_dir(pkg, instance)
+    data_dir = ensure_data_dir(pkg, instance, executor=ex)
     print(f"  Data dir: {data_dir}")
     # Update config to point to instance-specific data dir
-    update_config_value(config_path, "dir", str(data_dir), pkg)
+    update_config_value(config_path, "dir", str(data_dir), pkg, executor=ex)
 
     # Step 4: Create secrets file (if applicable)
     if not no_secrets and pkg.secrets:
         print("Creating secrets file...")
-        secrets_path = create_secrets_file(pkg, instance)
+        secrets_path = create_secrets_file(pkg, instance, executor=ex)
         if secrets_path:
             print(f"  Created: {secrets_path}")
-            add_secrets_include(config_path, secrets_path, pkg)
+            add_secrets_include(config_path, secrets_path, pkg, executor=ex)
             print("  Added include directive to config")
     else:
         print("Skipping secrets file (--no-secrets or package has no secrets config)")
@@ -279,21 +307,19 @@ def init(
     if enable:
         print(f"Enabling {unit}...")
         try:
-            systemctl("enable", unit)
+            systemctl("enable", unit, executor=ex)
             print("  Enabled")
-        except (subprocess.CalledProcessError, CommandError) as e:
-            stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
-            print(f"  WARNING: Could not enable: {stderr}")
+        except CommandError as e:
+            print(f"  WARNING: Could not enable: {e.result.stderr}")
 
     # Step 6: Start service
     if start:
         print(f"Starting {unit}...")
         try:
-            systemctl("start", unit)
+            systemctl("start", unit, executor=ex)
             print("  Started")
-        except (subprocess.CalledProcessError, CommandError) as e:
-            stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
-            print(f"  ERROR: Could not start: {stderr}")
+        except CommandError as e:
+            print(f"  ERROR: Could not start: {e.result.stderr}")
             raise SystemExit(1)
 
     print()
@@ -310,16 +336,16 @@ def enable(package: Package, instance: Instance):
     Examples:
         ots service enable valkey 6379
     """
+    ex = _get_executor()
     pkg = get_package(package)
     unit = pkg.instance_unit(instance)
 
     print(f"Enabling {unit}...")
     try:
-        systemctl("enable", unit)
+        systemctl("enable", unit, executor=ex)
         print("Enabled")
-    except (subprocess.CalledProcessError, CommandError) as e:
-        stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
-        print(f"ERROR: {stderr}")
+    except CommandError as e:
+        print(f"ERROR: {e.result.stderr}")
         raise SystemExit(1)
 
 
@@ -335,6 +361,7 @@ def disable(
         ots service disable valkey 6379
         ots service disable valkey 6379 -y
     """
+    ex = _get_executor()
     pkg = get_package(package)
     unit = pkg.instance_unit(instance)
 
@@ -346,15 +373,14 @@ def disable(
             return
 
     print(f"Stopping {unit}...")
-    systemctl("stop", unit, check=False)
+    systemctl("stop", unit, check=False, executor=ex)
 
     print(f"Disabling {unit}...")
     try:
-        systemctl("disable", unit)
+        systemctl("disable", unit, executor=ex)
         print("Disabled")
-    except (subprocess.CalledProcessError, CommandError) as e:
-        stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
-        print(f"ERROR: {stderr}")
+    except CommandError as e:
+        print(f"ERROR: {e.result.stderr}")
         raise SystemExit(1)
 
 
@@ -366,11 +392,12 @@ def status(package: Package, instance: OptInstance = None):
         ots service status valkey 6379
         ots service status valkey  # Shows all valkey instances
     """
+    ex = _get_executor()
     pkg = get_package(package)
 
     if instance:
         unit = pkg.instance_unit(instance)
-        result = systemctl("status", unit, check=False)
+        result = systemctl("status", unit, check=False, executor=ex)
         print(result.stdout)
         if result.stderr:
             print(result.stderr)
@@ -382,6 +409,7 @@ def status(package: Package, instance: OptInstance = None):
             f"{pkg.template}*",
             "--no-pager",
             check=False,
+            executor=ex,
         )
         print(result.stdout)
 
@@ -393,16 +421,16 @@ def start(package: Package, instance: Instance):
     Examples:
         ots service start valkey 6379
     """
+    ex = _get_executor()
     pkg = get_package(package)
     unit = pkg.instance_unit(instance)
 
     print(f"Starting {unit}...")
     try:
-        systemctl("start", unit)
+        systemctl("start", unit, executor=ex)
         print("Started")
-    except (subprocess.CalledProcessError, CommandError) as e:
-        stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
-        print(f"ERROR: {stderr}")
+    except CommandError as e:
+        print(f"ERROR: {e.result.stderr}")
         raise SystemExit(1)
 
 
@@ -413,16 +441,16 @@ def stop(package: Package, instance: Instance):
     Examples:
         ots service stop valkey 6379
     """
+    ex = _get_executor()
     pkg = get_package(package)
     unit = pkg.instance_unit(instance)
 
     print(f"Stopping {unit}...")
     try:
-        systemctl("stop", unit)
+        systemctl("stop", unit, executor=ex)
         print("Stopped")
-    except (subprocess.CalledProcessError, CommandError) as e:
-        stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
-        print(f"ERROR: {stderr}")
+    except CommandError as e:
+        print(f"ERROR: {e.result.stderr}")
         raise SystemExit(1)
 
 
@@ -433,16 +461,16 @@ def restart(package: Package, instance: Instance):
     Examples:
         ots service restart valkey 6379
     """
+    ex = _get_executor()
     pkg = get_package(package)
     unit = pkg.instance_unit(instance)
 
     print(f"Restarting {unit}...")
     try:
-        systemctl("restart", unit)
+        systemctl("restart", unit, executor=ex)
         print("Restarted")
-    except (subprocess.CalledProcessError, CommandError) as e:
-        stderr = e.stderr if isinstance(e, subprocess.CalledProcessError) else e.result.stderr
-        print(f"ERROR: {stderr}")
+    except CommandError as e:
+        print(f"ERROR: {e.result.stderr}")
         raise SystemExit(1)
 
 
@@ -461,6 +489,9 @@ def logs(
         ots service logs valkey 6379 -f
         ots service logs valkey 6379 -n 100
     """
+    from ots_shared.ssh import is_remote
+
+    ex = _get_executor()
     pkg = get_package(package)
     unit = pkg.instance_unit(instance)
 
@@ -468,7 +499,13 @@ def logs(
     if follow:
         cmd.append("-f")
 
-    subprocess.run(cmd)
+    if is_remote(ex):
+        # Stream logs from remote host
+        ex.run_stream(cmd)  # type: ignore[union-attr]
+    else:
+        import subprocess
+
+        subprocess.run(cmd)
 
 
 @app.command(name="list")
@@ -484,10 +521,11 @@ def list_instances(
         ots service list valkey
         ots service list valkey --json
     """
+    ex = _get_executor()
     pkg = get_package(package)
     instances = []
 
-    output = _list_units_for_template(pkg.template)
+    output = _list_units_for_template(pkg.template, executor=ex)
 
     if output.strip():
         # Parse output to extract instance names
@@ -500,9 +538,9 @@ def list_instances(
                     # e.g., valkey-server@6379.service -> 6379
                     if "@" in unit_name and ".service" in unit_name:
                         instance = unit_name.split("@")[1].replace(".service", "")
-                        active = is_service_active(unit_name)
-                        enabled = is_service_enabled(unit_name)
-                        config_exists = pkg.config_file(instance).exists()
+                        active = is_service_active(unit_name, executor=ex)
+                        enabled = is_service_enabled(unit_name, executor=ex)
+                        config_exists = _file_exists(pkg.config_file(instance), ex)
                         instances.append(
                             {
                                 "instance": instance,
@@ -529,22 +567,37 @@ def list_instances(
             config_status = "config ok" if inst["config_exists"] else "no config"
             print(f"  {inst['instance']:10} {active:10} {enabled:10} {config_status}")
 
-    # Also check for config files that might not have running services
-    config_dir = pkg.instances_dir if pkg.use_instances_subdir else pkg.config_dir
-    if config_dir.exists():
-        print()
-        print("Config files in config directory:")
-        for conf in config_dir.glob("*.conf"):
-            # Extract instance from filename based on pattern
-            # For instances subdir: "6380.conf" -> "6380"
-            # For direct configs: "valkey-6380.conf" -> "6380"
-            if pkg.use_instances_subdir:
-                instance = conf.stem
-            else:
-                # Remove package-specific prefix to get instance
-                # e.g., "valkey-6380.conf" -> "6380"
-                instance = conf.stem.replace(f"{pkg.name}-", "")
+    # Also check for config files (local only — remote would need ls)
+    from ots_shared.ssh import is_remote
 
-            unit = pkg.instance_unit(instance)
-            active = "active" if is_service_active(unit) else "inactive"
-            print(f"  {conf.name:30} -> {active}")
+    if not is_remote(ex):
+        config_dir = pkg.instances_dir if pkg.use_instances_subdir else pkg.config_dir
+        if config_dir.exists():
+            print()
+            print("Config files in config directory:")
+            for conf in config_dir.glob("*.conf"):
+                if pkg.use_instances_subdir:
+                    instance = conf.stem
+                else:
+                    instance = conf.stem.replace(f"{pkg.name}-", "")
+
+                unit = pkg.instance_unit(instance)
+                active = "active" if is_service_active(unit, executor=ex) else "inactive"
+                print(f"  {conf.name:30} -> {active}")
+    else:
+        # Remote: list config files via executor
+        config_dir = pkg.instances_dir if pkg.use_instances_subdir else pkg.config_dir
+        result = ex.run(["ls", str(config_dir)], timeout=10)  # type: ignore[union-attr]
+        if result.ok and result.stdout.strip():
+            print()
+            print("Config files in config directory:")
+            for filename in result.stdout.strip().splitlines():
+                if filename.endswith(".conf"):
+                    if pkg.use_instances_subdir:
+                        instance = filename.replace(".conf", "")
+                    else:
+                        instance = filename.replace(".conf", "").replace(f"{pkg.name}-", "")
+
+                    unit = pkg.instance_unit(instance)
+                    active = "active" if is_service_active(unit, executor=ex) else "inactive"
+                    print(f"  {filename:30} -> {active}")

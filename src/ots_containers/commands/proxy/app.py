@@ -5,14 +5,16 @@
 These commands manage the reverse proxy (Caddy) configuration using HOST
 environment variables via envsubst. This is intentionally separate from
 container .env files to avoid mixing host and container configurations.
+
+All commands support remote execution via the global ``--host`` flag.
 """
 
-import subprocess
 from pathlib import Path
 from typing import Annotated
 
 import cyclopts
 
+from ots_containers import context
 from ots_containers.config import Config
 
 from ..common import DryRun
@@ -57,29 +59,40 @@ def render(
     Validates the result with 'caddy validate' before writing.
 
     Note: Uses HOST environment variables, not container .env files.
+    On remote hosts, envsubst uses the remote host's environment.
 
     Examples:
         ots proxy render
         ots proxy render --dry-run
-        ots proxy render -t /path/to/template.Caddyfile -o /etc/caddy/Caddyfile
+        ots --host eu-web-01 proxy render
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     tpl = template or cfg.proxy_template
     out = output or cfg.proxy_config
 
     try:
-        rendered = render_template(tpl)
+        rendered = render_template(tpl, executor=ex)
 
         if dry_run:
             print(rendered)
             return
 
         # Validate before writing
-        validate_caddy_config(rendered)
+        validate_caddy_config(rendered, executor=ex)
 
-        # Write to output path (may need sudo)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(rendered)
+        # Write to output path
+        from ots_shared.ssh import is_remote
+
+        if is_remote(ex):
+            ex.run(["mkdir", "-p", str(out.parent)])
+            result = ex.run(["tee", str(out)], input=rendered)
+            if not result.ok:
+                raise ProxyError(f"Failed to write {out}: {result.stderr}")
+        else:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(rendered)
+
         print(f"[ok] Rendered {tpl} -> {out}")
 
     except ProxyError as e:
@@ -94,9 +107,12 @@ def reload() -> None:
 
     Examples:
         ots proxy reload
+        ots --host eu-web-01 proxy reload
     """
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     try:
-        reload_caddy()
+        reload_caddy(executor=ex)
         print("[ok] Caddy reloaded")
     except ProxyError as e:
         raise SystemExit(str(e)) from e
@@ -110,12 +126,14 @@ def status() -> None:
 
     Examples:
         ots proxy status
+        ots --host eu-web-01 proxy status
     """
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     try:
-        result = subprocess.run(
+        result = ex.run(
             ["systemctl", "status", "caddy", "--no-pager"],
-            capture_output=True,
-            text=True,
+            timeout=15,
         )
         print(result.stdout)
         if result.stderr:
@@ -140,27 +158,38 @@ def validate(
 
     Examples:
         ots proxy validate
-        ots proxy validate -f /path/to/Caddyfile
+        ots --host eu-web-01 proxy validate
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     file_path = config_file or cfg.proxy_config
 
-    if not file_path.exists():
-        raise SystemExit(f"Config file not found: {file_path}")
+    from ots_shared.ssh import is_remote
+
+    # Check file existence
+    if is_remote(ex):
+        result = ex.run(["test", "-f", str(file_path)])
+        if not result.ok:
+            raise SystemExit(f"Config file not found: {file_path}")
+    else:
+        if not file_path.exists():
+            raise SystemExit(f"Config file not found: {file_path}")
 
     try:
-        result = subprocess.run(
-            ["caddy", "validate", "--config", str(file_path)],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            print(f"[ok] {file_path} is valid")
-            if result.stdout.strip():
-                print(result.stdout)
+        # Read the file content, then validate via the helper
+        if is_remote(ex):
+            result = ex.run(["cat", str(file_path)])
+            if not result.ok:
+                raise SystemExit(f"Failed to read {file_path}: {result.stderr}")
+            content = result.stdout
         else:
-            print(f"Validation failed for {file_path}")
-            print(result.stderr)
-            raise SystemExit(1)
+            content = file_path.read_text()
+
+        validate_caddy_config(content, executor=ex)
+        print(f"[ok] {file_path} is valid")
+
+    except ProxyError as e:
+        print(f"Validation failed for {file_path}")
+        raise SystemExit(str(e)) from e
     except FileNotFoundError as e:
         raise SystemExit("caddy not found in PATH") from e

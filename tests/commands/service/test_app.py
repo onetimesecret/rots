@@ -3,6 +3,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from ots_containers.commands.service.app import (
     app,
     disable,
@@ -16,6 +18,13 @@ from ots_containers.commands.service.app import (
     status,
     stop,
 )
+
+
+@pytest.fixture(autouse=True)
+def _local_executor():
+    """Ensure all service commands use local execution (no Config/SSH)."""
+    with patch("ots_containers.commands.service.app._get_executor", return_value=None):
+        yield
 
 
 class TestServiceAppExists:
@@ -315,7 +324,7 @@ class TestInitIdempotency:
 
         call_count = [0]
 
-        def copy_side_effect(pkg, instance):
+        def copy_side_effect(pkg, instance, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
                 raise FileExistsError("Config already exists")
@@ -374,7 +383,9 @@ class TestEnableCommand:
         """Test enable calls systemctl enable."""
         enable("valkey", "6379")
 
-        mock_systemctl.assert_called_once_with("enable", "valkey-server@6379.service")
+        mock_systemctl.assert_called_once_with(
+            "enable", "valkey-server@6379.service", executor=None
+        )
 
     @patch("ots_containers.commands.service.app.systemctl")
     def test_enable_prints_enabled(self, mock_systemctl, capsys):
@@ -406,7 +417,7 @@ class TestStartCommand:
         """Test start calls systemctl start."""
         start("valkey", "6379")
 
-        mock_systemctl.assert_called_once_with("start", "valkey-server@6379.service")
+        mock_systemctl.assert_called_once_with("start", "valkey-server@6379.service", executor=None)
 
 
 class TestStopCommand:
@@ -417,7 +428,7 @@ class TestStopCommand:
         """Test stop calls systemctl stop."""
         stop("valkey", "6379")
 
-        mock_systemctl.assert_called_once_with("stop", "valkey-server@6379.service")
+        mock_systemctl.assert_called_once_with("stop", "valkey-server@6379.service", executor=None)
 
 
 class TestRestartCommand:
@@ -428,7 +439,9 @@ class TestRestartCommand:
         """Test restart calls systemctl restart."""
         restart("valkey", "6379")
 
-        mock_systemctl.assert_called_once_with("restart", "valkey-server@6379.service")
+        mock_systemctl.assert_called_once_with(
+            "restart", "valkey-server@6379.service", executor=None
+        )
 
 
 class TestStatusCommand:
@@ -441,7 +454,9 @@ class TestStatusCommand:
 
         status("valkey", "6379")
 
-        mock_systemctl.assert_called_once_with("status", "valkey-server@6379.service", check=False)
+        mock_systemctl.assert_called_once_with(
+            "status", "valkey-server@6379.service", check=False, executor=None
+        )
 
     @patch("subprocess.run")
     def test_status_lists_all_without_instance(self, mock_run, capsys):
@@ -968,7 +983,7 @@ class TestInitForceFileNotFound:
 
         call_count = [0]
 
-        def copy_side_effect(pkg, instance):
+        def copy_side_effect(pkg, instance, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
                 raise FileExistsError("exists")

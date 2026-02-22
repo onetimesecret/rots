@@ -21,9 +21,9 @@ from typing import Annotated
 
 import cyclopts
 
-from ots_containers import db
+from ots_containers import context, db
 from ots_containers.config import Config
-from ots_containers.podman import podman
+from ots_containers.podman import Podman
 
 from ..common import JsonOutput, Lines, Quiet, Yes
 
@@ -85,6 +85,8 @@ def pull(
         ots image pull --tag dev --platform linux/amd64  # Pull amd64 on Apple Silicon
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     # Resolve image and tag from env vars if not provided
     resolved_image = image or cfg.image
@@ -99,7 +101,7 @@ def pull(
     # by the DB alias system.  An explicit concrete tag (e.g. 'v0.23.0') is required.
     tag_key = resolved_tag.lstrip("@")
     if tag_key.lower() in ("current", "rollback"):
-        alias = db.get_alias(cfg.db_path, tag_key)
+        alias = db.get_alias(cfg.db_path, tag_key, executor=ex)
         if alias:
             print(
                 f"Error: '{resolved_tag}' is a DB alias pointing to {alias.image}:{alias.tag}.\n"
@@ -136,7 +138,7 @@ def pull(
         if platform:
             pull_kwargs["platform"] = platform
 
-        podman.pull(full_image, **pull_kwargs)
+        p.pull(full_image, **pull_kwargs)
         if not quiet:
             print(f"Successfully pulled {full_image}")
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -148,6 +150,7 @@ def pull(
             action="pull",
             success=False,
             notes=str(e),
+            executor=ex,
         )
         raise SystemExit(1)
 
@@ -158,15 +161,16 @@ def pull(
         tag=resolved_tag,
         action="pull",
         success=True,
+        executor=ex,
     )
 
     # Set as current if requested
     if set_as_current:
         # Tag in podman before updating the database
         source_ref = f"{resolved_image}:{resolved_tag}"
-        current_alias = db.get_current_image(cfg.db_path)
+        current_alias = db.get_current_image(cfg.db_path, executor=ex)
         try:
-            podman.tag(
+            p.tag(
                 source_ref,
                 f"{resolved_image}:current",
                 check=True,
@@ -175,7 +179,7 @@ def pull(
             )
             if current_alias:
                 prev_image, prev_tag = current_alias
-                podman.tag(
+                p.tag(
                     f"{prev_image}:{prev_tag}",
                     f"{prev_image}:rollback",
                     check=True,
@@ -185,7 +189,7 @@ def pull(
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             print(f"Warning: podman tag failed ({e}), aliases updated in DB only")
 
-        previous = db.set_current(cfg.db_path, resolved_image, resolved_tag)
+        previous = db.set_current(cfg.db_path, resolved_image, resolved_tag, executor=ex)
         if not quiet:
             if previous:
                 print(f"Set CURRENT to {resolved_tag} (previous: {previous})")
@@ -215,11 +219,13 @@ def ls(
         ots image list --json
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     if json_output:
         import json as json_module
 
-        result = podman.images(
+        result = p.images(
             format="json",
             capture_output=True,
             text=True,
@@ -238,13 +244,13 @@ def ls(
         return
 
     if all_tags:
-        result = podman.images(
+        result = p.images(
             format="table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}\t{{.Created}}",
             capture_output=True,
             text=True,
         )
     else:
-        result = podman.images(
+        result = p.images(
             filter="reference=*onetimesecret*",
             format="table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}\t{{.Created}}",
             capture_output=True,
@@ -255,7 +261,7 @@ def ls(
     print(result.stdout)
 
     # Show current aliases
-    aliases = db.get_all_aliases(cfg.db_path)
+    aliases = db.get_all_aliases(cfg.db_path, executor=ex)
     if aliases:
         print("\nAliases:")
         for alias in aliases:
@@ -366,13 +372,15 @@ def set_current(
         ots image set-current latest --image docker.io/onetimesecret/onetimesecret
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     resolved_image = image or cfg.image
     source_ref = f"{resolved_image}:{tag}"
 
     # Verify the source image exists locally before proceeding
     try:
-        podman.image.inspect(source_ref, check=True, capture_output=True, text=True)
+        p.image.inspect(source_ref, check=True, capture_output=True, text=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         print(f"Image not found locally: {source_ref}")
         print(f"Pull it first: ots image pull --tag {tag}")
@@ -380,9 +388,9 @@ def set_current(
 
     # Tag in podman before updating the database. If podman tag fails,
     # the database remains unchanged.
-    current_alias = db.get_current_image(cfg.db_path)
+    current_alias = db.get_current_image(cfg.db_path, executor=ex)
     try:
-        podman.tag(
+        p.tag(
             source_ref,
             f"{resolved_image}:current",
             check=True,
@@ -391,7 +399,7 @@ def set_current(
         )
         if current_alias:
             prev_image, prev_tag = current_alias
-            podman.tag(
+            p.tag(
                 f"{prev_image}:{prev_tag}",
                 f"{prev_image}:rollback",
                 check=True,
@@ -402,7 +410,7 @@ def set_current(
         print(f"Failed to tag image in podman: {e}")
         raise SystemExit(1)
 
-    previous = db.set_current(cfg.db_path, resolved_image, tag)
+    previous = db.set_current(cfg.db_path, resolved_image, tag, executor=ex)
 
     print(f"CURRENT set to {resolved_image}:{tag}")
     if previous:
@@ -450,9 +458,11 @@ def rollback(
         ots image rollback --apply --delay 10  # Longer delay between instances
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     # Show current state
-    current = db.get_current_image(cfg.db_path)
+    current = db.get_current_image(cfg.db_path, executor=ex)
     if current:
         print(f"Current: {current[0]}:{current[1]}")
     else:
@@ -460,7 +470,7 @@ def rollback(
         raise SystemExit(1)
 
     # Get previous tags from timeline for context
-    previous = db.get_previous_tags(cfg.db_path, limit=5)
+    previous = db.get_previous_tags(cfg.db_path, limit=5, executor=ex)
     if len(previous) < 2:
         print("No previous deployment to roll back to")
         raise SystemExit(1)
@@ -468,19 +478,19 @@ def rollback(
     print(f"\nRolling back to: {previous[1][0]}:{previous[1][1]}")
     print(f"  (last deployed: {previous[1][2]})")
 
-    result = db.rollback(cfg.db_path)
+    result = db.rollback(cfg.db_path, executor=ex)
     if result:
         image, tag = result
         # Update podman tags to reflect the new alias state
         try:
-            podman.tag(
+            p.tag(
                 f"{image}:{tag}",
                 f"{image}:current",
                 check=True,
                 capture_output=True,
                 text=True,
             )
-            podman.tag(
+            p.tag(
                 f"{current[0]}:{current[1]}",
                 f"{current[0]}:rollback",
                 check=True,
@@ -528,8 +538,9 @@ def history(
         ots image history --json
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
 
-    deployments = db.get_deployments(cfg.db_path, limit=limit, port=port)
+    deployments = db.get_deployments(cfg.db_path, limit=limit, port=port, executor=ex)
 
     if not deployments:
         print("No deployments recorded yet.")
@@ -555,7 +566,7 @@ def history(
         return
 
     # Show aliases first
-    aliases = db.get_all_aliases(cfg.db_path)
+    aliases = db.get_all_aliases(cfg.db_path, executor=ex)
     if aliases:
         print("Current aliases:")
         for alias in aliases:
@@ -592,8 +603,9 @@ def aliases(json_output: JsonOutput = False):
         ots image aliases --json
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
 
-    aliases_list = db.get_all_aliases(cfg.db_path)
+    aliases_list = db.get_all_aliases(cfg.db_path, executor=ex)
 
     if json_output:
         import json
@@ -625,11 +637,11 @@ def aliases(json_output: JsonOutput = False):
 
     # Show what commands would resolve to
     print("\nResolution:")
-    current = db.get_current_image(cfg.db_path)
+    current = db.get_current_image(cfg.db_path, executor=ex)
     if current:
         print(f"  TAG=current  -> {current[0]}:{current[1]}")
 
-    rollback_img = db.get_rollback_image(cfg.db_path)
+    rollback_img = db.get_rollback_image(cfg.db_path, executor=ex)
     if rollback_img:
         print(f"  TAG=rollback -> {rollback_img[0]}:{rollback_img[1]}")
 
@@ -685,6 +697,8 @@ def login(
     import sys
 
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     # Resolve registry from arg or config
     reg = registry or cfg.registry
@@ -711,7 +725,7 @@ def login(
     print(f"Logging in to {reg}...")
 
     try:
-        podman.login(
+        p.login(
             reg,
             username=user,
             password=pw,
@@ -763,6 +777,8 @@ def push(
         OTS_REGISTRY=registry.example.com ots image push --tag v0.23.0
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     # Resolve registry from arg or config
     reg = registry or cfg.registry
@@ -786,7 +802,7 @@ def push(
 
     # Tag the image for the target registry
     try:
-        podman.tag(source_full, target_full, check=True, capture_output=True, text=True)
+        p.tag(source_full, target_full, check=True, capture_output=True, text=True)
     except Exception as e:
         print(f"Failed to tag image: {e}")
         raise SystemExit(1)
@@ -796,7 +812,7 @@ def push(
 
     # Push to registry
     try:
-        podman.push(
+        p.push(
             target_full,
             authfile=str(cfg.registry_auth_file),
             check=True,
@@ -816,6 +832,7 @@ def push(
         tag=resolved_tag,
         action="push",
         success=True,
+        executor=ex,
     )
 
 
@@ -836,6 +853,8 @@ def logout(
         OTS_REGISTRY=registry.example.com ots image logout
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     # Resolve registry from arg or config
     reg = registry or cfg.registry
@@ -846,7 +865,7 @@ def logout(
     print(f"Logging out from {reg}...")
 
     try:
-        podman.logout(
+        p.logout(
             reg,
             authfile=str(cfg.registry_auth_file),
             check=True,
@@ -892,6 +911,8 @@ def rm(
             return
 
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     for tag in tags:
         # Try common image patterns, including configured image
@@ -910,7 +931,7 @@ def rm(
                 kwargs = {"check": True, "capture_output": True, "text": True}
                 if force:
                     kwargs["force"] = True
-                podman.rmi(image, **kwargs)
+                p.rmi(image, **kwargs)
                 print(f"Removed {image}")
                 removed = True
                 break
@@ -952,11 +973,15 @@ def prune(
             print("Aborted")
             return
 
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
+
     try:
         kwargs = {"check": True, "capture_output": True, "text": True}
         if all_images:
             kwargs["all"] = True
-        result = podman.image.prune(**kwargs)
+        result = p.image.prune(**kwargs)
         print("Pruned images:")
         print(result.stdout)
     except Exception as e:
@@ -1161,6 +1186,8 @@ def build(
         ots image build -d . --push --registry registry.example.com
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     # Resolve project directory
     proj_dir = Path(project_dir) if project_dir else Path.cwd()
@@ -1224,7 +1251,7 @@ def build(
         if target:
             build_kwargs["target"] = target
 
-        podman.buildx.build(str(proj_dir), **build_kwargs)
+        p.buildx.build(str(proj_dir), **build_kwargs)
 
         if not quiet:
             print(f"Successfully built {local_image}")
@@ -1240,6 +1267,7 @@ def build(
         action="build",
         success=True,
         notes=f"target={target}" if target else None,
+        executor=ex,
     )
 
     # Push if requested
@@ -1257,7 +1285,7 @@ def build(
 
         # Tag for registry
         try:
-            podman.tag(
+            p.tag(
                 local_image,
                 target_image,
                 check=True,
@@ -1273,7 +1301,7 @@ def build(
 
         # Push to registry
         try:
-            podman.push(
+            p.push(
                 target_image,
                 authfile=str(cfg.registry_auth_file),
                 check=True,
@@ -1293,6 +1321,7 @@ def build(
             tag=build_tag,
             action="push",
             success=True,
+            executor=ex,
         )
 
     # Print summary

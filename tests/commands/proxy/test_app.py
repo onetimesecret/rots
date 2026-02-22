@@ -1,6 +1,8 @@
 # tests/commands/proxy/test_app.py
 """Tests for proxy app commands."""
 
+from unittest.mock import ANY
+
 import pytest
 
 
@@ -62,7 +64,7 @@ class TestRenderCommand:
 
         render(template=template, output=output, dry_run=False)
 
-        mock_validate.assert_called_once_with("rendered content")
+        mock_validate.assert_called_once_with("rendered content", executor=ANY)
 
     def test_render_error_exits(self, tmp_path, mocker):
         """Should exit with error message on ProxyError."""
@@ -103,21 +105,21 @@ class TestRenderCommand:
 
         render(template=None, output=None, dry_run=False)
 
-        mock_render.assert_called_once_with(cfg.proxy_template)
+        mock_render.assert_called_once_with(cfg.proxy_template, executor=ANY)
 
 
 class TestReloadCommand:
     """Test reload command."""
 
     def test_reload_calls_helper(self, mocker, capsys):
-        """Should call reload_caddy helper."""
+        """Should call reload_caddy helper with executor."""
         from ots_containers.commands.proxy.app import reload
 
         mock_reload = mocker.patch("ots_containers.commands.proxy.app.reload_caddy")
 
         reload()
 
-        mock_reload.assert_called_once()
+        mock_reload.assert_called_once_with(executor=ANY)
         captured = capsys.readouterr()
         assert "[ok]" in captured.out
 
@@ -139,24 +141,23 @@ class TestReloadCommand:
 
 
 class TestStatusCommand:
-    """Test status command."""
+    """Test status command — now uses executor.run() instead of subprocess.run()."""
 
-    def test_status_calls_systemctl(self, mocker, capsys):
-        """Should call systemctl status caddy."""
+    def test_status_prints_output(self, mocker, capsys):
+        """Should print systemctl output via executor."""
         from ots_containers.commands.proxy.app import status
 
-        mock_run = mocker.patch(
+        # Mock subprocess.run which LocalExecutor uses internally
+        mocker.patch(
             "subprocess.run",
-            return_value=mocker.MagicMock(stdout="active (running)", stderr=""),
+            return_value=mocker.MagicMock(
+                returncode=0,
+                stdout="active (running)",
+                stderr="",
+            ),
         )
 
         status()
-
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert "systemctl" in call_args
-        assert "status" in call_args
-        assert "caddy" in call_args
 
         captured = capsys.readouterr()
         assert "active (running)" in captured.out
@@ -167,7 +168,11 @@ class TestStatusCommand:
 
         mocker.patch(
             "subprocess.run",
-            return_value=mocker.MagicMock(stdout="output", stderr="warning message"),
+            return_value=mocker.MagicMock(
+                returncode=0,
+                stdout="output",
+                stderr="warning message",
+            ),
         )
 
         status()
@@ -189,29 +194,20 @@ class TestStatusCommand:
 
 
 class TestValidateCommand:
-    """Test validate command."""
+    """Test validate command — now reads file then calls validate_caddy_config helper."""
 
-    def test_validate_calls_caddy(self, tmp_path, mocker, capsys):
-        """Should call caddy validate with config file."""
+    def test_validate_existing_file(self, tmp_path, mocker, capsys):
+        """Should validate an existing config file."""
         from ots_containers.commands.proxy.app import validate
 
         config = tmp_path / "Caddyfile"
         config.write_text("localhost { }")
 
-        mock_run = mocker.patch(
-            "subprocess.run",
-            return_value=mocker.MagicMock(returncode=0, stdout="", stderr=""),
-        )
+        mock_validate = mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
 
         validate(config_file=config)
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert "caddy" in call_args
-        assert "validate" in call_args
-        assert "--config" in call_args
-        assert str(config) in call_args
-
+        mock_validate.assert_called_once_with("localhost { }", executor=ANY)
         captured = capsys.readouterr()
         assert "[ok]" in captured.out
 
@@ -225,39 +221,34 @@ class TestValidateCommand:
 
         mock_cfg = mocker.MagicMock()
         mock_cfg.proxy_config = default_config
+        # get_executor returns a LocalExecutor
+        from ots_shared.ssh import LocalExecutor
+
+        mock_cfg.get_executor.return_value = LocalExecutor()
         mocker.patch(
             "ots_containers.commands.proxy.app.Config",
             return_value=mock_cfg,
         )
 
-        mock_run = mocker.patch(
-            "subprocess.run",
-            return_value=mocker.MagicMock(returncode=0, stdout="", stderr=""),
-        )
+        mock_validate = mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
 
         validate(config_file=None)
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert str(default_config) in call_args
+        mock_validate.assert_called_once_with("localhost { }", executor=ANY)
 
-    def test_validate_success_with_stdout(self, tmp_path, mocker, capsys):
-        """Should print stdout when validation succeeds with output."""
+    def test_validate_success_with_output(self, tmp_path, mocker, capsys):
+        """Should print [ok] when validation succeeds."""
         from ots_containers.commands.proxy.app import validate
 
         config = tmp_path / "Caddyfile"
         config.write_text("localhost { }")
 
-        mocker.patch(
-            "subprocess.run",
-            return_value=mocker.MagicMock(returncode=0, stdout="Valid config", stderr=""),
-        )
+        mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
 
         validate(config_file=config)
 
         captured = capsys.readouterr()
         assert "[ok]" in captured.out
-        assert "Valid config" in captured.out
 
     def test_validate_missing_file_exits(self, tmp_path):
         """Should exit if config file doesn't exist."""
@@ -273,20 +264,21 @@ class TestValidateCommand:
 
     def test_validate_failure_exits(self, tmp_path, mocker):
         """Should exit on validation failure."""
+        from ots_containers.commands.proxy._helpers import ProxyError
         from ots_containers.commands.proxy.app import validate
 
         config = tmp_path / "Caddyfile"
         config.write_text("invalid config")
 
         mocker.patch(
-            "subprocess.run",
-            return_value=mocker.MagicMock(returncode=1, stdout="", stderr="syntax error"),
+            "ots_containers.commands.proxy.app.validate_caddy_config",
+            side_effect=ProxyError("Caddy validation failed:\nsyntax error"),
         )
 
         with pytest.raises(SystemExit) as exc_info:
             validate(config_file=config)
 
-        assert exc_info.value.code == 1
+        assert "Caddy validation failed" in str(exc_info.value)
 
     def test_validate_caddy_not_found_exits(self, tmp_path, mocker):
         """Should exit if caddy not in PATH."""
@@ -295,7 +287,10 @@ class TestValidateCommand:
         config = tmp_path / "Caddyfile"
         config.write_text("localhost { }")
 
-        mocker.patch("subprocess.run", side_effect=FileNotFoundError())
+        mocker.patch(
+            "ots_containers.commands.proxy.app.validate_caddy_config",
+            side_effect=FileNotFoundError(),
+        )
 
         with pytest.raises(SystemExit) as exc_info:
             validate(config_file=config)

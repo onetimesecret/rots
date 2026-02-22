@@ -5,6 +5,8 @@ import json
 import sqlite3
 from unittest.mock import MagicMock
 
+import pytest
+
 from ots_containers import db
 
 
@@ -1656,3 +1658,287 @@ class TestInitDbRemote:
         assert "sqlite3" in call_args
         # Should contain the schema SQL
         assert "CREATE TABLE" in call_args[-1]
+
+
+class TestGetConnectionGuard:
+    """Test that get_connection raises on remote executor."""
+
+    def test_get_connection_raises_on_remote_executor(self, mocker, tmp_path):
+        """get_connection() should raise ValueError with a remote executor."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        with pytest.raises(ValueError, match="cannot be used with a remote executor"):
+            with db.get_connection(db_path, executor=mock_ex):
+                pass
+
+    def test_get_connection_works_with_none_executor(self, tmp_path):
+        """get_connection() should work normally with executor=None."""
+        db_path = tmp_path / "test.db"
+
+        with db.get_connection(db_path, executor=None) as conn:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+
+        assert "deployments" in tables
+
+
+class TestRecordServiceInstanceRemote:
+    """Test record_service_instance() with a remote executor."""
+
+    def test_record_service_instance_remote(self, mocker, tmp_path):
+        """record_service_instance() with remote executor should use _remote_execute."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result()
+
+        result = db.record_service_instance(
+            db_path,
+            "valkey",
+            "6379",
+            "/etc/valkey/6379.conf",
+            "/var/lib/valkey/6379",
+            port=6379,
+            executor=mock_ex,
+        )
+
+        assert result == 0
+        mock_ex.run.assert_called_once()
+        call_args = mock_ex.run.call_args[0][0]
+        assert "sqlite3" in call_args
+        assert "INSERT" in call_args[-1]
+
+    def test_record_service_instance_local_still_works(self, tmp_path):
+        """record_service_instance() without executor should still work locally."""
+        db_path = tmp_path / "test.db"
+
+        instance_id = db.record_service_instance(
+            db_path,
+            "valkey",
+            "6379",
+            "/c",
+            "/d",
+            port=6379,
+        )
+
+        assert instance_id >= 1
+
+
+class TestGetServiceInstanceRemote:
+    """Test get_service_instance() with a remote executor."""
+
+    def test_get_service_instance_remote_found(self, mocker, tmp_path):
+        """get_service_instance() with remote executor should return ServiceInstance."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": 1,
+                        "package": "valkey",
+                        "instance": "6379",
+                        "config_file": "/etc/valkey/6379.conf",
+                        "data_dir": "/var/lib/valkey/6379",
+                        "port": 6379,
+                        "created_at": "2026-01-01",
+                        "updated_at": "2026-01-01",
+                        "notes": None,
+                    }
+                ]
+            )
+        )
+
+        svc = db.get_service_instance(db_path, "valkey", "6379", executor=mock_ex)
+
+        assert svc is not None
+        assert isinstance(svc, db.ServiceInstance)
+        assert svc.package == "valkey"
+        assert svc.port == 6379
+
+    def test_get_service_instance_remote_not_found(self, mocker, tmp_path):
+        """get_service_instance() with remote executor returns None when not found."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        svc = db.get_service_instance(db_path, "valkey", "9999", executor=mock_ex)
+
+        assert svc is None
+
+
+class TestGetServiceInstancesRemote:
+    """Test get_service_instances() with a remote executor."""
+
+    def test_get_service_instances_remote(self, mocker, tmp_path):
+        """get_service_instances() with remote executor returns list."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": 1,
+                        "package": "valkey",
+                        "instance": "6379",
+                        "config_file": "/c1",
+                        "data_dir": "/d1",
+                        "port": 6379,
+                        "created_at": "2026-01-01",
+                        "updated_at": "2026-01-01",
+                        "notes": None,
+                    },
+                    {
+                        "id": 2,
+                        "package": "valkey",
+                        "instance": "6380",
+                        "config_file": "/c2",
+                        "data_dir": "/d2",
+                        "port": 6380,
+                        "created_at": "2026-01-01",
+                        "updated_at": "2026-01-01",
+                        "notes": None,
+                    },
+                ]
+            )
+        )
+
+        instances = db.get_service_instances(db_path, executor=mock_ex)
+
+        assert len(instances) == 2
+        assert all(isinstance(i, db.ServiceInstance) for i in instances)
+
+    def test_get_service_instances_remote_empty(self, mocker, tmp_path):
+        """get_service_instances() with remote executor returns empty list."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        instances = db.get_service_instances(db_path, executor=mock_ex)
+
+        assert instances == []
+
+
+class TestDeleteServiceInstanceRemote:
+    """Test delete_service_instance() with a remote executor."""
+
+    def test_delete_service_instance_remote_found(self, mocker, tmp_path):
+        """delete_service_instance() with remote executor returns True when exists."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        # First call: COUNT query returns 1; second: DELETE
+        call_count = {"n": 0}
+
+        def mock_run(cmd, **kwargs):
+            call_count["n"] += 1
+            if "-json" in cmd:
+                return _make_remote_result(stdout=json.dumps([{"cnt": 1}]))
+            return _make_remote_result()
+
+        mock_ex.run.side_effect = mock_run
+
+        deleted = db.delete_service_instance(db_path, "valkey", "6379", executor=mock_ex)
+
+        assert deleted is True
+
+    def test_delete_service_instance_remote_not_found(self, mocker, tmp_path):
+        """delete_service_instance() with remote executor returns False when not exists."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(stdout=json.dumps([{"cnt": 0}]))
+
+        deleted = db.delete_service_instance(db_path, "valkey", "9999", executor=mock_ex)
+
+        assert deleted is False
+
+
+class TestRecordServiceActionRemote:
+    """Test record_service_action() with a remote executor."""
+
+    def test_record_service_action_remote(self, mocker, tmp_path):
+        """record_service_action() with remote executor should use _remote_execute."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result()
+
+        result = db.record_service_action(
+            db_path,
+            "valkey",
+            "6379",
+            "init",
+            executor=mock_ex,
+        )
+
+        assert result == 0
+        mock_ex.run.assert_called_once()
+        sql = mock_ex.run.call_args[0][0][-1]
+        assert "INSERT" in sql
+
+    def test_record_service_action_local_still_works(self, tmp_path):
+        """record_service_action() without executor should still work locally."""
+        db_path = tmp_path / "test.db"
+
+        action_id = db.record_service_action(db_path, "valkey", "6379", "start")
+
+        assert action_id >= 1
+
+
+class TestGetServiceActionsRemote:
+    """Test get_service_actions() with a remote executor."""
+
+    def test_get_service_actions_remote(self, mocker, tmp_path):
+        """get_service_actions() with remote executor returns list."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": 1,
+                        "timestamp": "2026-01-01 12:00:00",
+                        "package": "valkey",
+                        "instance": "6379",
+                        "action": "start",
+                        "success": 1,
+                        "notes": None,
+                    },
+                ]
+            )
+        )
+
+        actions = db.get_service_actions(db_path, executor=mock_ex)
+
+        assert len(actions) == 1
+        assert isinstance(actions[0], db.ServiceAction)
+        assert actions[0].package == "valkey"
+        assert actions[0].action == "start"
+
+    def test_get_service_actions_remote_filtered(self, mocker, tmp_path):
+        """get_service_actions() with remote executor should filter by package."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result(stdout="[]")
+
+        db.get_service_actions(db_path, package="valkey", executor=mock_ex)
+
+        sql = mock_ex.run.call_args[0][0][-1]
+        assert "package = 'valkey'" in sql
+
+    def test_get_service_actions_remote_empty(self, mocker, tmp_path):
+        """get_service_actions() with remote executor returns empty list."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        actions = db.get_service_actions(db_path, executor=mock_ex)
+
+        assert actions == []

@@ -220,7 +220,16 @@ def get_connection(
 
     For remote execution paths, callers should use ``_remote_query`` /
     ``_remote_execute`` directly instead of opening a connection.
+
+    Raises:
+        ValueError: If called with a remote executor (the Python sqlite3
+            module cannot open a database on a remote host).
     """
+    if _is_remote(executor):
+        raise ValueError(
+            "get_connection() cannot be used with a remote executor. "
+            "Use _remote_query() / _remote_execute() directly."
+        )
     if not db_path.exists():
         init_db(db_path)
     conn = sqlite3.connect(db_path)
@@ -614,22 +623,26 @@ def record_service_instance(
     data_dir: str,
     port: int | None = None,
     notes: str | None = None,
+    *,
+    executor: Executor | None = None,
 ) -> int:
     """Record a new service instance. Returns the instance ID."""
+    sql = """
+        INSERT INTO service_instances (package, instance, config_file, data_dir, port, notes)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(package, instance) DO UPDATE SET
+            config_file = excluded.config_file,
+            data_dir = excluded.data_dir,
+            port = excluded.port,
+            notes = excluded.notes,
+            updated_at = datetime('now')
+    """
+    params = (package, instance, config_file, data_dir, port, notes)
+    if _is_remote(executor):
+        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        return 0  # Remote doesn't return lastrowid
     with get_connection(db_path) as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO service_instances (package, instance, config_file, data_dir, port, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(package, instance) DO UPDATE SET
-                config_file = excluded.config_file,
-                data_dir = excluded.data_dir,
-                port = excluded.port,
-                notes = excluded.notes,
-                updated_at = datetime('now')
-            """,
-            (package, instance, config_file, data_dir, port, notes),
-        )
+        cursor = conn.execute(sql, params)
         conn.commit()
         return cursor.lastrowid or 0
 
@@ -638,17 +651,34 @@ def get_service_instance(
     db_path: Path,
     package: str,
     instance: str,
+    *,
+    executor: Executor | None = None,
 ) -> ServiceInstance | None:
     """Get a service instance by package and instance name."""
+    sql = """
+        SELECT id, package, instance, config_file, data_dir, port, created_at, updated_at, notes
+        FROM service_instances
+        WHERE package = ? AND instance = ?
+    """
+    params = (package, instance)
+    if _is_remote(executor):
+        rows = _remote_query(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        if rows:
+            row = rows[0]
+            return ServiceInstance(
+                id=row["id"],
+                package=row["package"],
+                instance=row["instance"],
+                config_file=row["config_file"],
+                data_dir=row["data_dir"],
+                port=row.get("port"),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                notes=row.get("notes"),
+            )
+        return None
     with get_connection(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT id, package, instance, config_file, data_dir, port, created_at, updated_at, notes
-            FROM service_instances
-            WHERE package = ? AND instance = ?
-            """,
-            (package, instance),
-        ).fetchone()
+        row = conn.execute(sql, params).fetchone()
         if row:
             return ServiceInstance(
                 id=row["id"],
@@ -667,30 +697,47 @@ def get_service_instance(
 def get_service_instances(
     db_path: Path,
     package: str | None = None,
+    *,
+    executor: Executor | None = None,
 ) -> list[ServiceInstance]:
     """Get all service instances, optionally filtered by package."""
-    with get_connection(db_path) as conn:
-        if package:
-            rows = conn.execute(
-                """
-                SELECT id, package, instance, config_file, data_dir, port,
-                       created_at, updated_at, notes
-                FROM service_instances
-                WHERE package = ?
-                ORDER BY package, instance
-                """,
-                (package,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT id, package, instance, config_file, data_dir, port,
-                       created_at, updated_at, notes
-                FROM service_instances
-                ORDER BY package, instance
-                """,
-            ).fetchall()
+    if package:
+        sql = """
+            SELECT id, package, instance, config_file, data_dir, port,
+                   created_at, updated_at, notes
+            FROM service_instances
+            WHERE package = ?
+            ORDER BY package, instance
+        """
+        params: tuple = (package,)
+    else:
+        sql = """
+            SELECT id, package, instance, config_file, data_dir, port,
+                   created_at, updated_at, notes
+            FROM service_instances
+            ORDER BY package, instance
+        """
+        params = ()
 
+    if _is_remote(executor):
+        rows = _remote_query(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        return [
+            ServiceInstance(
+                id=row["id"],
+                package=row["package"],
+                instance=row["instance"],
+                config_file=row["config_file"],
+                data_dir=row["data_dir"],
+                port=row.get("port"),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                notes=row.get("notes"),
+            )
+            for row in rows
+        ]
+
+    with get_connection(db_path) as conn:
+        rows = conn.execute(sql, params).fetchall()
         return [
             ServiceInstance(
                 id=row["id"],
@@ -711,13 +758,24 @@ def delete_service_instance(
     db_path: Path,
     package: str,
     instance: str,
+    *,
+    executor: Executor | None = None,
 ) -> bool:
     """Delete a service instance record. Returns True if deleted."""
-    with get_connection(db_path) as conn:
-        cursor = conn.execute(
-            "DELETE FROM service_instances WHERE package = ? AND instance = ?",
-            (package, instance),
+    sql = "DELETE FROM service_instances WHERE package = ? AND instance = ?"
+    params = (package, instance)
+    if _is_remote(executor):
+        # Check existence first since remote execute doesn't return rowcount
+        check_sql = (
+            "SELECT COUNT(*) as cnt FROM service_instances WHERE package = ? AND instance = ?"
         )
+        rows = _remote_query(db_path, check_sql, params, executor=executor)  # type: ignore[arg-type]
+        if not rows or rows[0].get("cnt", 0) == 0:
+            return False
+        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        return True
+    with get_connection(db_path) as conn:
+        cursor = conn.execute(sql, params)
         conn.commit()
         return cursor.rowcount > 0
 
@@ -729,16 +787,20 @@ def record_service_action(
     action: str,
     success: bool = True,
     notes: str | None = None,
+    *,
+    executor: Executor | None = None,
 ) -> int:
     """Record a service action to the audit trail. Returns the action ID."""
+    sql = """
+        INSERT INTO service_actions (package, instance, action, success, notes)
+        VALUES (?, ?, ?, ?, ?)
+    """
+    params = (package, instance, action, 1 if success else 0, notes)
+    if _is_remote(executor):
+        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        return 0  # Remote doesn't return lastrowid
     with get_connection(db_path) as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO service_actions (package, instance, action, success, notes)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (package, instance, action, 1 if success else 0, notes),
-        )
+        cursor = conn.execute(sql, params)
         conn.commit()
         return cursor.lastrowid or 0
 
@@ -748,42 +810,47 @@ def get_service_actions(
     package: str | None = None,
     instance: str | None = None,
     limit: int = 50,
+    *,
+    executor: Executor | None = None,
 ) -> list[ServiceAction]:
     """Get service action history, optionally filtered."""
-    with get_connection(db_path) as conn:
-        if package and instance:
-            rows = conn.execute(
-                """
-                SELECT id, timestamp, package, instance, action, success, notes
-                FROM service_actions
-                WHERE package = ? AND instance = ?
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                (package, instance, limit),
-            ).fetchall()
-        elif package:
-            rows = conn.execute(
-                """
-                SELECT id, timestamp, package, instance, action, success, notes
-                FROM service_actions
-                WHERE package = ?
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                (package, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT id, timestamp, package, instance, action, success, notes
-                FROM service_actions
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
+    conditions: list[str] = []
+    params: list[int | str] = []
 
+    if package:
+        conditions.append("package = ?")
+        params.append(package)
+    if instance:
+        conditions.append("instance = ?")
+        params.append(instance)
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    sql = f"""
+        SELECT id, timestamp, package, instance, action, success, notes
+        FROM service_actions
+        {where_clause}
+        ORDER BY timestamp DESC
+        LIMIT ?
+    """
+    params.append(limit)
+
+    if _is_remote(executor):
+        rows = _remote_query(db_path, sql, tuple(params), executor=executor)  # type: ignore[arg-type]
+        return [
+            ServiceAction(
+                id=row["id"],
+                timestamp=row["timestamp"],
+                package=row["package"],
+                instance=row["instance"],
+                action=row["action"],
+                success=bool(row["success"]),
+                notes=row.get("notes"),
+            )
+            for row in rows
+        ]
+
+    with get_connection(db_path) as conn:
+        rows = conn.execute(sql, params).fetchall()
         return [
             ServiceAction(
                 id=row["id"],

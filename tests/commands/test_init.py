@@ -4,6 +4,28 @@
 from pathlib import Path
 
 import pytest
+from ots_shared.ssh import LocalExecutor
+
+
+def _mock_config(mocker, tmp_path, **overrides):
+    """Build a mock Config that returns a LocalExecutor.
+
+    Ensures init always takes the local code path in tests.
+    """
+    quadlet_dir = overrides.get("quadlet_dir", tmp_path / "etc" / "containers" / "systemd")
+
+    mock = mocker.MagicMock()
+    mock.config_dir = overrides.get("config_dir", tmp_path / "etc" / "onetimesecret")
+    mock.var_dir = overrides.get("var_dir", tmp_path / "var" / "lib" / "onetimesecret")
+    mock.web_template_path = quadlet_dir / "onetime-web@.container"
+    mock.worker_template_path = quadlet_dir / "onetime-worker@.container"
+    mock.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
+    mock.config_yaml = mock.config_dir / "config.yaml"
+    mock.db_path = mock.var_dir / "deployments.db"
+    mock.get_executor.return_value = LocalExecutor()
+
+    mocker.patch("ots_containers.commands.init.Config", return_value=mock)
+    return mock
 
 
 class TestInitCommandImports:
@@ -30,7 +52,6 @@ class TestCreateDirectory:
         """Should create directory and return True."""
         from ots_containers.commands.init import _create_directory
 
-        # Mock os.chown to avoid permission issues in tests
         mocker.patch("os.chown")
 
         new_dir = tmp_path / "new_dir"
@@ -58,7 +79,6 @@ class TestCreateDirectory:
         """Should return None and print denied message on PermissionError."""
         from ots_containers.commands.init import _create_directory
 
-        # Mock mkdir to raise PermissionError
         mocker.patch.object(Path, "mkdir", side_effect=PermissionError("denied"))
 
         new_dir = tmp_path / "denied_dir"
@@ -183,20 +203,9 @@ class TestInitCommand:
         """Check mode should report missing directories without creating."""
         from ots_containers.commands.init import init
 
-        quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
 
-        # Create a mock config pointing to tmp_path subdirs
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = tmp_path / "etc" / "onetimesecret"
-        mock_config.var_dir = tmp_path / "var" / "lib" / "onetimesecret"
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = mock_config.config_dir / "config.yaml"
-        mock_config.db_path = mock_config.var_dir / "deployments.db"
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(mocker, tmp_path)
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
@@ -208,7 +217,7 @@ class TestInitCommand:
         assert "[optional]" in captured.out
         assert "Missing components" in captured.out
         # Directories should NOT be created
-        assert not mock_config.config_dir.exists()
+        assert not (tmp_path / "etc" / "onetimesecret").exists()
 
     def test_check_mode_reports_ok_when_all_present(self, tmp_path, mocker, capsys):
         """Check mode should report OK when all components exist."""
@@ -234,16 +243,9 @@ class TestInitCommand:
         (quadlet_dir / "onetime-worker@.container").touch()
         (quadlet_dir / "onetime-scheduler@.container").touch()
 
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = config_dir
-        mock_config.var_dir = var_dir
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = config_dir / "config.yaml"
-        mock_config.db_path = var_dir / "deployments.db"
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(
+            mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
+        )
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
@@ -257,19 +259,9 @@ class TestInitCommand:
         """Init should continue after permission errors and report failure."""
         from ots_containers.commands.init import init
 
-        quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
 
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = tmp_path / "etc" / "onetimesecret"
-        mock_config.var_dir = tmp_path / "var" / "lib" / "onetimesecret"
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = mock_config.config_dir / "config.yaml"
-        mock_config.db_path = mock_config.var_dir / "deployments.db"
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(mocker, tmp_path)
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
 
         # Make mkdir always fail with PermissionError
@@ -294,18 +286,11 @@ class TestInitCommand:
         env_file.parent.mkdir(parents=True)
         env_file.touch()
 
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = config_dir
-        mock_config.var_dir = var_dir
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = config_dir / "config.yaml"
-        mock_config.db_path = var_dir / "deployments.db"
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(
+            mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
+        )
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
-        mocker.patch("os.chown")  # Avoid chown permission issues
+        mocker.patch("os.chown")
         mocker.patch("ots_containers.commands.init.db.init_db")
 
         result = init(quiet=False)
@@ -328,7 +313,6 @@ class TestInitCommand:
         (source_dir / "auth.yaml").write_text("auth: basic")
         (source_dir / "logging.yaml").write_text("level: info")
 
-        # Create target structure
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
@@ -336,16 +320,9 @@ class TestInitCommand:
         env_file.parent.mkdir(parents=True)
         env_file.touch()
 
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = config_dir
-        mock_config.var_dir = var_dir
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = config_dir / "config.yaml"
-        mock_config.db_path = var_dir / "deployments.db"
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(
+            mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
+        )
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
         mocker.patch("ots_containers.commands.init.db.init_db")
@@ -387,16 +364,9 @@ class TestInitCommand:
         (quadlet_dir / "onetime-scheduler@.container").touch()
         (var_dir / "deployments.db").touch()
 
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = config_dir
-        mock_config.var_dir = var_dir
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = config_dir / "config.yaml"
-        mock_config.db_path = var_dir / "deployments.db"
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(
+            mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
+        )
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
@@ -427,17 +397,9 @@ class TestInitCommand:
         env_file.parent.mkdir(parents=True)
         env_file.touch()
 
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = config_dir
-        mock_config.var_dir = var_dir
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = config_dir / "config.yaml"
-        mock_config.db_path = var_dir / "deployments.db"
-        # db_path doesn't exist, so init_db will be called
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(
+            mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
+        )
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
         mocker.patch(
@@ -475,16 +437,9 @@ class TestInitEnvFileScaffold:
         (quadlet_dir / "onetime-scheduler@.container").touch()
         (var_dir / "deployments.db").touch()
 
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = config_dir
-        mock_config.var_dir = var_dir
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = config_dir / "config.yaml"
-        mock_config.db_path = var_dir / "deployments.db"
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(
+            mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
+        )
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
@@ -514,16 +469,9 @@ class TestInitEnvFileScaffold:
         (quadlet_dir / "onetime-scheduler@.container").touch()
         (var_dir / "deployments.db").touch()
 
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = config_dir
-        mock_config.var_dir = var_dir
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = config_dir / "config.yaml"
-        mock_config.db_path = var_dir / "deployments.db"
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(
+            mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
+        )
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
@@ -544,16 +492,9 @@ class TestInitEnvFileScaffold:
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
         # env_file intentionally NOT created
 
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = config_dir
-        mock_config.var_dir = var_dir
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = config_dir / "config.yaml"
-        mock_config.db_path = var_dir / "deployments.db"
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(
+            mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
+        )
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
         mocker.patch("ots_containers.commands.init.db.init_db")
@@ -578,16 +519,9 @@ class TestInitEnvFileScaffold:
         env_file.parent.mkdir(parents=True)
         env_file.write_text("EXISTING_CONTENT=unchanged\n")
 
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = config_dir
-        mock_config.var_dir = var_dir
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = config_dir / "config.yaml"
-        mock_config.db_path = var_dir / "deployments.db"
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(
+            mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
+        )
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
         mocker.patch("ots_containers.commands.init.db.init_db")
@@ -610,16 +544,9 @@ class TestInitEnvFileScaffold:
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
         # env_file NOT created - so write will be attempted
 
-        mock_config = mocker.MagicMock()
-        mock_config.config_dir = config_dir
-        mock_config.var_dir = var_dir
-        mock_config.web_template_path = quadlet_dir / "onetime-web@.container"
-        mock_config.worker_template_path = quadlet_dir / "onetime-worker@.container"
-        mock_config.scheduler_template_path = quadlet_dir / "onetime-scheduler@.container"
-        mock_config.config_yaml = config_dir / "config.yaml"
-        mock_config.db_path = var_dir / "deployments.db"
-
-        mocker.patch("ots_containers.commands.init.Config", return_value=mock_config)
+        _mock_config(
+            mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
+        )
         mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
         mocker.patch("ots_containers.commands.init.db.init_db")

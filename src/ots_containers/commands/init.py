@@ -3,15 +3,21 @@
 """Init command for idempotent setup of ots-containers.
 
 Creates required directories and initializes the deployment database.
-Safe to run on new installs and existing systems.
+Safe to run on new installs and existing systems.  Supports remote
+execution via the --host flag and the executor abstraction.
 """
+
+from __future__ import annotations
 
 import os
 import shutil
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import cyclopts
+
+if TYPE_CHECKING:
+    from ots_shared.ssh import Executor
 
 from ots_containers import db
 from ots_containers.config import CONFIG_FILES, Config
@@ -34,37 +40,75 @@ def _get_owner_group() -> tuple[int, int]:
     return (os.getuid(), os.getgid())
 
 
-def _create_directory(path: Path, mode: int = 0o755, quiet: bool = False) -> bool | None:
+def _path_exists(path: Path, executor) -> bool:
+    """Check whether *path* exists (local or remote)."""
+    from ots_shared.ssh import is_remote
+
+    if is_remote(executor):
+        result = executor.run(["test", "-e", str(path)])
+        return result.ok
+    return path.exists()
+
+
+def _is_dir(path: Path, executor) -> bool:
+    """Check whether *path* is a directory (local or remote)."""
+    from ots_shared.ssh import is_remote
+
+    if is_remote(executor):
+        result = executor.run(["test", "-d", str(path)])
+        return result.ok
+    return path.is_dir()
+
+
+def _create_directory(
+    path: Path, *, mode: int = 0o755, quiet: bool = False, executor: Executor | None = None
+) -> bool | None:
     """Create directory with mode.
 
     Returns:
         True if created, False if existed, None if permission denied.
     """
-    if path.exists():
+    from ots_shared.ssh import is_remote
+
+    if _path_exists(path, executor):
         if not quiet:
             print(f"  [ok] {path}")
         return False
 
-    try:
-        path.mkdir(parents=True, mode=mode)
-        uid, gid = _get_owner_group()
-        os.chown(path, uid, gid)
-    except PermissionError:
-        print(f"  [denied] {path} - permission denied (run with sudo?)")
-        return None
+    if is_remote(executor):
+        assert executor is not None
+        result = executor.run(["mkdir", "-p", str(path)], sudo=True)
+        if not result.ok:
+            print(f"  [denied] {path} - remote mkdir failed: {result.stderr.strip()}")
+            return None
+        executor.run(["chmod", f"{mode:o}", str(path)], sudo=True)
+    else:
+        try:
+            path.mkdir(parents=True, mode=mode)
+            uid, gid = _get_owner_group()
+            os.chown(path, uid, gid)
+        except PermissionError:
+            print(f"  [denied] {path} - permission denied (run with sudo?)")
+            return None
 
     if not quiet:
         print(f"  [created] {path}")
     return True
 
 
-def _copy_template(src: Path, dest: Path, quiet: bool = False) -> bool | None:
+def _copy_template(
+    src: Path, dest: Path, *, quiet: bool = False, executor: Executor | None = None
+) -> bool | None:
     """Copy template file if destination doesn't exist.
+
+    For remote targets, reads source locally and writes to remote via executor.
 
     Returns:
         True if copied, False if existed or source missing, None if permission denied.
     """
-    if dest.exists():
+    from ots_shared.ssh import is_remote
+
+    if _path_exists(dest, executor):
         if not quiet:
             print(f"  [ok] {dest}")
         return False
@@ -74,17 +118,87 @@ def _copy_template(src: Path, dest: Path, quiet: bool = False) -> bool | None:
             print(f"  [skip] {dest} (source {src} not found)")
         return False
 
-    try:
-        shutil.copy2(src, dest)
-        uid, gid = _get_owner_group()
-        os.chown(dest, uid, gid)
-    except PermissionError:
-        print(f"  [denied] {dest} - permission denied (run with sudo?)")
-        return None
+    if is_remote(executor):
+        assert executor is not None
+        content = src.read_text()
+        result = executor.run(["tee", str(dest)], input=content, sudo=True)
+        if not result.ok:
+            print(f"  [denied] {dest} - remote write failed: {result.stderr.strip()}")
+            return None
+    else:
+        try:
+            shutil.copy2(src, dest)
+            uid, gid = _get_owner_group()
+            os.chown(dest, uid, gid)
+        except PermissionError:
+            print(f"  [denied] {dest} - permission denied (run with sudo?)")
+            return None
 
     if not quiet:
         print(f"  [copied] {src} -> {dest}")
     return True
+
+
+def _write_file(
+    path: Path, content: str, *, quiet: bool = False, executor: Executor | None = None
+) -> bool | None:
+    """Write content to a file if it doesn't exist.
+
+    Returns:
+        True if written, False if existed, None if permission denied.
+    """
+    from ots_shared.ssh import is_remote
+
+    if _path_exists(path, executor):
+        if not quiet:
+            print(f"  [ok] {path}")
+        return False
+
+    if is_remote(executor):
+        assert executor is not None
+        # Ensure parent dir exists
+        executor.run(["mkdir", "-p", str(path.parent)], sudo=True)
+        result = executor.run(["tee", str(path)], input=content, sudo=True)
+        if not result.ok:
+            print(f"  [denied] {path} - remote write failed: {result.stderr.strip()}")
+            return None
+    else:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+            uid, gid = _get_owner_group()
+            os.chown(path, uid, gid)
+        except PermissionError:
+            print(f"  [denied] {path} - permission denied (run with sudo?)")
+            return None
+
+    if not quiet:
+        print(f"  [created] {path}")
+    return True
+
+
+def _glob_env_files(var_dir: Path, executor) -> list[str]:
+    """List .env-* files in var_dir (local or remote)."""
+    from ots_shared.ssh import is_remote
+
+    if is_remote(executor):
+        result = executor.run(["sh", "-c", f"ls -1 {var_dir}/.env-* 2>/dev/null"])
+        if result.ok and result.stdout.strip():
+            return sorted(result.stdout.strip().splitlines())
+        return []
+    return sorted(str(p) for p in var_dir.glob(".env-*"))
+
+
+def _init_db(db_path: Path, *, executor=None) -> bool:
+    """Initialize the deployment database (local or remote).
+
+    Returns True on success, False on failure.
+    """
+    try:
+        db.init_db(db_path, executor=executor)
+        return True
+    except Exception:
+        return False
 
 
 @app.default
@@ -114,33 +228,42 @@ def init(
     Initializes the SQLite deployment database for tracking.
 
     This command is idempotent - safe to run multiple times.
+
+    When --host is set (global flag), runs initialization on the remote host.
     """
+    from ots_shared.ssh import is_remote
+
+    from ots_containers import context
+
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    remote = is_remote(ex)
+
     all_ok = True
 
     # Detect re-initialization (like git init)
-    is_reinit = cfg.db_path.exists() or cfg.var_dir.exists()
+    is_reinit = _path_exists(cfg.db_path, ex) or _path_exists(cfg.var_dir, ex)
 
     if check:
         print("Checking ots-containers setup...")
     else:
         if not quiet:
             prefix = "Re-initializing" if is_reinit else "Initializing"
-            print(f"{prefix} ots-containers...")
+            target = f" on {context.host_var.get('local')}" if remote else ""
+            print(f"{prefix} ots-containers{target}...")
 
     # 1. App Configuration - user-managed config files (all optional)
-    # Note: /etc/default/onetimesecret and Podman secrets are managed separately
     if not quiet or check:
         print("\nApp Configuration:")
     if check:
         for fname in CONFIG_FILES:
             fpath = cfg.config_dir / fname
-            if fpath.exists():
+            if _path_exists(fpath, ex):
                 print(f"  [ok] {fpath}")
             else:
                 print(f"  [optional] {fpath}")
     else:
-        result = _create_directory(cfg.config_dir, mode=0o755, quiet=True)
+        result = _create_directory(cfg.config_dir, mode=0o755, quiet=True, executor=ex)
         if result is None:
             all_ok = False
         else:
@@ -148,12 +271,17 @@ def init(
             if source_dir:
                 src = Path(source_dir)
                 for fname in CONFIG_FILES:
-                    if _copy_template(src / fname, cfg.config_dir / fname, quiet=quiet) is None:
+                    if (
+                        _copy_template(
+                            src / fname, cfg.config_dir / fname, quiet=quiet, executor=ex
+                        )
+                        is None
+                    ):
                         all_ok = False
             elif not quiet:
                 for fname in CONFIG_FILES:
                     fpath = cfg.config_dir / fname
-                    if fpath.exists():
+                    if _path_exists(fpath, ex):
                         print(f"  [ok] {fpath}")
                     else:
                         print(f"  [optional] {fpath}")
@@ -170,29 +298,39 @@ def init(
     ]
     if check:
         for template_path in template_paths:
-            if template_path.exists():
+            if _path_exists(template_path, ex):
                 print(f"  [ok] {template_path}")
             else:
                 print(f"  [missing] {template_path}")
                 all_ok = False
-        if users_dir.exists():
-            if any(users_dir.iterdir()):
+        if _is_dir(users_dir, ex):
+            if remote:
+                result = ex.run(["ls", str(users_dir)])
+                has_content = result.ok and result.stdout.strip()
+            else:
+                has_content = any(users_dir.iterdir())
+            if has_content:
                 print(f"  [ok] {users_dir}")
             else:
                 print(f"  [empty] {users_dir}")
         else:
             print(f"  [missing] {users_dir}")
     else:
-        if _create_directory(quadlet_dir, mode=0o755, quiet=True) is None:
+        if _create_directory(quadlet_dir, mode=0o755, quiet=True, executor=ex) is None:
             all_ok = False
         if not quiet:
             for template_path in template_paths:
-                if template_path.exists():
+                if _path_exists(template_path, ex):
                     print(f"  [ok] {template_path}")
                 else:
                     print(f"  [missing] {template_path}")
-            if users_dir.exists():
-                if any(users_dir.iterdir()):
+            if _is_dir(users_dir, ex):
+                if remote:
+                    result = ex.run(["ls", str(users_dir)])
+                    has_content = result.ok and result.stdout.strip()
+                else:
+                    has_content = any(users_dir.iterdir())
+                if has_content:
                     print(f"  [ok] {users_dir}")
                 else:
                     print(f"  [empty] {users_dir}")
@@ -201,69 +339,65 @@ def init(
     if not quiet or check:
         print("\nVariable Data:")
     if check:
-        if cfg.var_dir.exists():
-            # List env files
-            env_files = sorted(cfg.var_dir.glob(".env-*"))
+        if _path_exists(cfg.var_dir, ex):
+            env_files = _glob_env_files(cfg.var_dir, ex)
             for env_file in env_files:
                 print(f"  [ok] {env_file}")
-            if cfg.db_path.exists():
+            if _path_exists(cfg.db_path, ex):
                 print(f"  [ok] {cfg.db_path}")
             else:
                 print(f"  [missing] {cfg.db_path}")
                 all_ok = False
-            if not env_files and not cfg.db_path.exists():
+            if not env_files and not _path_exists(cfg.db_path, ex):
                 print(f"  [empty] {cfg.var_dir}")
         else:
             print(f"  [missing] {cfg.var_dir}")
             all_ok = False
     else:
-        if _create_directory(cfg.var_dir, mode=0o755, quiet=True) is None:
+        if _create_directory(cfg.var_dir, mode=0o755, quiet=True, executor=ex) is None:
             all_ok = False
         elif not quiet:
-            # List existing env files
-            env_files = sorted(cfg.var_dir.glob(".env-*"))
+            env_files = _glob_env_files(cfg.var_dir, ex)
             for env_file in env_files:
                 print(f"  [ok] {env_file}")
             # Handle database
-            if cfg.db_path.exists():
+            if _path_exists(cfg.db_path, ex):
                 print(f"  [ok] {cfg.db_path}")
             else:
-                try:
-                    db.init_db(cfg.db_path)
-                    uid, gid = _get_owner_group()
-                    os.chown(cfg.db_path, uid, gid)
+                if _init_db(cfg.db_path, executor=ex):
+                    if not remote:
+                        try:
+                            uid, gid = _get_owner_group()
+                            os.chown(cfg.db_path, uid, gid)
+                        except (PermissionError, OSError):
+                            pass
                     print(f"  [created] {cfg.db_path}")
-                except PermissionError:
-                    print(f"  [denied] {cfg.db_path} - permission denied (run with sudo?)")
+                else:
+                    suffix = " (run with sudo?)" if not remote else ""
+                    print(f"  [denied] {cfg.db_path} - database init failed{suffix}")
                     all_ok = False
 
     # 4. Infrastructure environment file (required before deploy)
     if not quiet or check:
         print("\nInfrastructure Configuration:")
     if check:
-        if DEFAULT_ENV_FILE.exists():
+        if _path_exists(DEFAULT_ENV_FILE, ex):
             print(f"  [ok] {DEFAULT_ENV_FILE}")
         else:
             print(f"  [missing] {DEFAULT_ENV_FILE}")
             print("  Run 'ots init' to scaffold this file, then configure it.")
             all_ok = False
     else:
-        if DEFAULT_ENV_FILE.exists():
+        if _path_exists(DEFAULT_ENV_FILE, ex):
             if not quiet:
                 print(f"  [ok] {DEFAULT_ENV_FILE}")
         else:
-            try:
-                DEFAULT_ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-                DEFAULT_ENV_FILE.write_text(ENV_FILE_TEMPLATE)
-                uid, gid = _get_owner_group()
-                os.chown(DEFAULT_ENV_FILE, uid, gid)
-                if not quiet:
-                    print(f"  [created] {DEFAULT_ENV_FILE}")
-                    print("    Edit it to add your connection strings and secret values,")
-                    print("    then run: sudo ots env process")
-            except PermissionError:
-                print(f"  [denied] {DEFAULT_ENV_FILE} - permission denied (run with sudo?)")
+            result = _write_file(DEFAULT_ENV_FILE, ENV_FILE_TEMPLATE, quiet=quiet, executor=ex)
+            if result is None:
                 all_ok = False
+            elif result and not quiet:
+                print("    Edit it to add your connection strings and secret values,")
+                print("    then run: sudo ots env process")
 
     # Summary
     if check:
@@ -279,7 +413,10 @@ def init(
             print("\nInitialization complete.")
         else:
             print("\nInitialization incomplete - some operations failed.")
-            print("Try running with elevated privileges: sudo ots init")
+            if remote:
+                print("Try running with elevated privileges on the remote host.")
+            else:
+                print("Try running with elevated privileges: sudo ots init")
         print("\nNext steps:")
         print(f"  1. (Optional) Place config overrides in {cfg.config_dir}/")
         print(f"  2. Edit {DEFAULT_ENV_FILE} with infrastructure env vars and secret values")

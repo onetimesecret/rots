@@ -190,3 +190,123 @@ class TestReloadCaddy:
             reload_caddy()
 
         assert "Failed to reload" in str(exc_info.value)
+
+
+class TestRemoteRenderTemplate:
+    """Test render_template with a remote executor."""
+
+    def _make_executor(self, mocker, responses):
+        """Create a mock executor that returns successive Results."""
+        from ots_shared.ssh.executor import Result
+
+        mock_ex = mocker.MagicMock()
+        mock_ex.run.side_effect = [
+            Result(command=r[0], returncode=r[1], stdout=r[2], stderr=r[3]) for r in responses
+        ]
+        return mock_ex
+
+    def test_render_template_remote(self, mocker):
+        """Should read template and pipe through envsubst on remote."""
+        from pathlib import Path
+
+        from ots_containers.commands.proxy._helpers import render_template
+
+        ex = self._make_executor(
+            mocker,
+            [
+                ("test -f /tpl", 0, "", ""),  # template exists
+                ("cat /tpl", 0, "Hello $NAME", ""),  # read template
+                ("envsubst", 0, "Hello World", ""),  # envsubst result
+            ],
+        )
+
+        result = render_template(Path("/tpl"), executor=ex)
+        assert result == "Hello World"
+        assert ex.run.call_count == 3
+
+    def test_render_template_remote_missing(self, mocker):
+        """Should raise ProxyError when remote template not found."""
+        from pathlib import Path
+
+        from ots_containers.commands.proxy._helpers import ProxyError, render_template
+
+        ex = self._make_executor(
+            mocker,
+            [("test -f /missing", 1, "", "")],  # template missing
+        )
+
+        with pytest.raises(ProxyError, match="Template not found"):
+            render_template(Path("/missing"), executor=ex)
+
+
+class TestRemoteValidateCaddyConfig:
+    """Test validate_caddy_config with a remote executor."""
+
+    def _make_executor(self, mocker, responses):
+        from ots_shared.ssh.executor import Result
+
+        mock_ex = mocker.MagicMock()
+        mock_ex.run.side_effect = [
+            Result(command=r[0], returncode=r[1], stdout=r[2], stderr=r[3]) for r in responses
+        ]
+        return mock_ex
+
+    def test_validate_remote_success(self, mocker):
+        """Should validate on remote host."""
+        from ots_containers.commands.proxy._helpers import validate_caddy_config
+
+        ex = self._make_executor(
+            mocker,
+            [
+                ("tee /tmp/...", 0, "", ""),  # write temp file
+                ("caddy validate ...", 0, "", ""),  # validate
+                ("rm -f /tmp/...", 0, "", ""),  # cleanup
+            ],
+        )
+
+        # Should not raise
+        validate_caddy_config("localhost { }", executor=ex)
+        assert ex.run.call_count == 3
+
+    def test_validate_remote_failure(self, mocker):
+        """Should raise ProxyError on remote validation failure."""
+        from ots_containers.commands.proxy._helpers import ProxyError, validate_caddy_config
+
+        ex = self._make_executor(
+            mocker,
+            [
+                ("tee /tmp/...", 0, "", ""),  # write temp file
+                ("caddy validate ...", 1, "", "syntax error"),  # validate fails
+                ("rm -f /tmp/...", 0, "", ""),  # cleanup still runs
+            ],
+        )
+
+        with pytest.raises(ProxyError, match="Caddy validation failed"):
+            validate_caddy_config("invalid config", executor=ex)
+
+
+class TestRemoteReloadCaddy:
+    """Test reload_caddy with a remote executor."""
+
+    def test_reload_remote(self, mocker):
+        """Should reload caddy on remote via executor."""
+        from ots_shared.ssh.executor import Result
+
+        from ots_containers.commands.proxy._helpers import reload_caddy
+
+        mock_ex = mocker.MagicMock()
+        mock_ex.run.return_value = Result(
+            command="sudo -- systemctl reload caddy",
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+
+        reload_caddy(executor=mock_ex)
+
+        mock_ex.run.assert_called_once_with(
+            ["systemctl", "reload", "caddy"],
+            sudo=True,
+            timeout=30,
+            check=True,
+        )

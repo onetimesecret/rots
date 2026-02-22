@@ -8,6 +8,16 @@ import pytest
 from ots_containers import db as db_module
 
 
+def _mock_config(mocker, db_path):
+    """Create a mock Config that returns a local executor and the given db_path."""
+    mock_cfg = mocker.Mock()
+    mock_cfg.db_path = db_path
+    mock_cfg.get_executor.return_value = None  # Local executor
+    mock_cfg.get_db_path.return_value = db_path
+    mocker.patch("ots_containers.commands.db.Config", return_value=mock_cfg)
+    return mock_cfg
+
+
 class TestDeploymentsCommand:
     """Tests for the 'ots db deployments' command."""
 
@@ -15,10 +25,7 @@ class TestDeploymentsCommand:
         """Should exit with code 1 when database does not exist."""
         from ots_containers.commands.db import deployments
 
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=tmp_path / "missing.db"),
-        )
+        _mock_config(mocker, tmp_path / "missing.db")
 
         with pytest.raises(SystemExit) as exc_info:
             deployments()
@@ -31,10 +38,7 @@ class TestDeploymentsCommand:
         """Should output JSON error when db is missing and --json is requested."""
         from ots_containers.commands.db import deployments
 
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=tmp_path / "missing.db"),
-        )
+        _mock_config(mocker, tmp_path / "missing.db")
 
         with pytest.raises(SystemExit) as exc_info:
             deployments(json_output=True)
@@ -51,11 +55,7 @@ class TestDeploymentsCommand:
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
 
         deployments()
 
@@ -68,11 +68,7 @@ class TestDeploymentsCommand:
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
 
         deployments(web=7043)
 
@@ -93,11 +89,7 @@ class TestDeploymentsCommand:
             port=7043,
             success=True,
         )
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
 
         deployments()
 
@@ -120,11 +112,7 @@ class TestDeploymentsCommand:
             port=7043,
             success=True,
         )
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
 
         deployments(json_output=True)
 
@@ -157,11 +145,7 @@ class TestDeploymentsCommand:
             action="deploy",
             port=7044,
         )
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
 
         deployments(web=7043, json_output=True)
 
@@ -185,11 +169,7 @@ class TestDeploymentsCommand:
                 action="deploy",
                 port=7043,
             )
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
 
         deployments(limit=3, json_output=True)
 
@@ -211,11 +191,7 @@ class TestDeploymentsCommand:
             port=7043,
             success=False,
         )
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
 
         deployments()
 
@@ -230,10 +206,7 @@ class TestBackupCommand:
         """Should exit with code 1 when source db does not exist."""
         from ots_containers.commands.db import backup
 
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=tmp_path / "missing.db"),
-        )
+        _mock_config(mocker, tmp_path / "missing.db")
 
         with pytest.raises(SystemExit) as exc_info:
             backup()
@@ -246,10 +219,7 @@ class TestBackupCommand:
         """Should emit JSON error when db is missing and --json is requested."""
         from ots_containers.commands.db import backup
 
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=tmp_path / "missing.db"),
-        )
+        _mock_config(mocker, tmp_path / "missing.db")
 
         with pytest.raises(SystemExit) as exc_info:
             backup(json_output=True)
@@ -265,11 +235,7 @@ class TestBackupCommand:
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
 
         backup()
 
@@ -286,11 +252,7 @@ class TestBackupCommand:
         db_path = tmp_path / "deploy.db"
         dest_path = tmp_path / "my_backup.db"
         db_module.init_db(db_path)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
 
         backup(dest=dest_path)
 
@@ -304,11 +266,7 @@ class TestBackupCommand:
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
 
         backup(json_output=True)
 
@@ -325,11 +283,7 @@ class TestBackupCommand:
         db_path = tmp_path / "deploy.db"
         dest_path = tmp_path / "subdir" / "nested" / "backup.db"
         db_module.init_db(db_path)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
 
         backup(dest=dest_path)
 
@@ -343,11 +297,7 @@ class TestBackupCommand:
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
         mocker.patch(
             "sqlite3.connect",
             side_effect=sqlite3.Error("disk full"),
@@ -368,11 +318,7 @@ class TestBackupCommand:
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=db_path),
-        )
+        _mock_config(mocker, db_path)
         mocker.patch(
             "sqlite3.connect",
             side_effect=sqlite3.Error("disk full"),
@@ -401,10 +347,7 @@ class TestRestoreCommand:
         from ots_containers.commands.db import restore
 
         src = tmp_path / "missing_backup.db"
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=tmp_path / "live.db"),
-        )
+        _mock_config(mocker, tmp_path / "live.db")
 
         with pytest.raises(SystemExit) as exc_info:
             restore(src=src, yes=True)
@@ -418,10 +361,7 @@ class TestRestoreCommand:
         from ots_containers.commands.db import restore
 
         src = tmp_path / "missing_backup.db"
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=tmp_path / "live.db"),
-        )
+        _mock_config(mocker, tmp_path / "live.db")
 
         with pytest.raises(SystemExit) as exc_info:
             restore(src=src, yes=True, json_output=True)
@@ -443,11 +383,7 @@ class TestRestoreCommand:
         conn.execute("CREATE TABLE other (x INTEGER)")
         conn.commit()
         conn.close()
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=tmp_path / "live.db"),
-        )
+        _mock_config(mocker, tmp_path / "live.db")
 
         with pytest.raises(SystemExit) as exc_info:
             restore(src=src, yes=True)
@@ -467,11 +403,7 @@ class TestRestoreCommand:
         conn.execute("CREATE TABLE other (x INTEGER)")
         conn.commit()
         conn.close()
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=tmp_path / "live.db"),
-        )
+        _mock_config(mocker, tmp_path / "live.db")
 
         with pytest.raises(SystemExit) as exc_info:
             restore(src=src, yes=True, json_output=True)
@@ -489,11 +421,7 @@ class TestRestoreCommand:
         src = tmp_path / "backup.db"
         live_db = tmp_path / "live.db"
         self._make_valid_backup(src)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=live_db),
-        )
+        _mock_config(mocker, live_db)
 
         restore(src=src, yes=True)
 
@@ -508,11 +436,7 @@ class TestRestoreCommand:
         src = tmp_path / "backup.db"
         live_db = tmp_path / "live.db"
         self._make_valid_backup(src)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=live_db),
-        )
+        _mock_config(mocker, live_db)
 
         restore(src=src, yes=True, json_output=True)
 
@@ -528,11 +452,7 @@ class TestRestoreCommand:
         src = tmp_path / "backup.db"
         live_db = tmp_path / "live.db"
         self._make_valid_backup(src)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=live_db),
-        )
+        _mock_config(mocker, live_db)
         mocker.patch("builtins.input", return_value="n")
 
         restore(src=src, yes=False)
@@ -548,11 +468,7 @@ class TestRestoreCommand:
         src = tmp_path / "backup.db"
         live_db = tmp_path / "live.db"
         self._make_valid_backup(src)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=live_db),
-        )
+        _mock_config(mocker, live_db)
         mocker.patch("builtins.input", return_value="y")
 
         restore(src=src, yes=False)
@@ -570,11 +486,7 @@ class TestRestoreCommand:
         self._make_valid_backup(src)
         # Create an existing live db
         db_module.init_db(live_db)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=live_db),
-        )
+        _mock_config(mocker, live_db)
 
         restore(src=src, yes=True)
 
@@ -592,11 +504,7 @@ class TestRestoreCommand:
         live_db = tmp_path / "live.db"
         self._make_valid_backup(src)
         db_module.init_db(live_db)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=live_db),
-        )
+        _mock_config(mocker, live_db)
 
         restore(src=src, yes=True, json_output=True)
 
@@ -612,11 +520,7 @@ class TestRestoreCommand:
         src = tmp_path / "backup.db"
         live_db = tmp_path / "nonexistent_live.db"
         self._make_valid_backup(src)
-
-        mocker.patch(
-            "ots_containers.commands.db.Config",
-            return_value=mocker.Mock(db_path=live_db),
-        )
+        _mock_config(mocker, live_db)
 
         restore(src=src, yes=True, json_output=True)
 
@@ -624,3 +528,63 @@ class TestRestoreCommand:
         data = json.loads(captured.out)
         assert data["success"] is True
         assert data["pre_restore_backup"] is None
+
+
+class TestInfoCommand:
+    """Tests for the 'ots db info' command."""
+
+    def test_info_db_not_found(self, tmp_path, mocker, capsys):
+        """Should show 'not found' when database does not exist."""
+        from ots_containers.commands.db import info
+
+        _mock_config(mocker, tmp_path / "missing.db")
+
+        info()
+
+        captured = capsys.readouterr()
+        assert "not found" in captured.out
+
+    def test_info_db_not_found_json(self, tmp_path, mocker, capsys):
+        """Should emit JSON with exists=False when database does not exist."""
+        from ots_containers.commands.db import info
+
+        _mock_config(mocker, tmp_path / "missing.db")
+
+        info(json_output=True)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert data["exists"] is False
+
+    def test_info_shows_stats(self, tmp_path, mocker, capsys):
+        """Should show size and deployment count for existing database."""
+        from ots_containers.commands.db import info
+
+        db_path = tmp_path / "deploy.db"
+        db_module.init_db(db_path)
+        db_module.record_deployment(db_path, "img", "v1", "deploy")
+        _mock_config(mocker, db_path)
+
+        info()
+
+        captured = capsys.readouterr()
+        assert "Deployments: 1" in captured.out
+
+    def test_info_json_output(self, tmp_path, mocker, capsys):
+        """Should emit valid JSON with stats for existing database."""
+        from ots_containers.commands.db import info
+
+        db_path = tmp_path / "deploy.db"
+        db_module.init_db(db_path)
+        db_module.record_deployment(db_path, "img", "v1", "deploy")
+        db_module.set_alias(db_path, "CURRENT", "img", "v1")
+        _mock_config(mocker, db_path)
+
+        info(json_output=True)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert data["exists"] is True
+        assert data["total_deployments"] == 1
+        assert data["size_bytes"] > 0
+        assert len(data["aliases"]) == 1

@@ -55,36 +55,48 @@ class TestRmCommand:
         captured = capsys.readouterr()
         assert "Aborted" in captured.out
 
-    def test_rm_removes_image_with_yes(self, mocker, capsys):
+    def test_rm_removes_image_with_yes(self, mocker, capsys, tmp_path):
         """Should remove image when --yes is provided."""
         from ots_containers.commands.image.app import rm
 
-        mock_rmi = mocker.patch(
-            "ots_containers.commands.image.app.podman.rmi",
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mock_run = mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(returncode=0, stdout="", stderr=""),
         )
 
         rm(tags=("v0.22.0",), yes=True)
 
-        mock_rmi.assert_called()
+        mock_run.assert_called()
         captured = capsys.readouterr()
         assert "Removed" in captured.out
 
-    def test_rm_tries_multiple_patterns(self, mocker, capsys):
+    def test_rm_tries_multiple_patterns(self, mocker, capsys, tmp_path):
         """Should try multiple image patterns."""
         from ots_containers.commands.image.app import rm
 
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
         call_count = 0
 
-        def mock_rmi_fail_twice(*_args, **_kwargs):
+        def mock_subprocess_run(*_args, **_kwargs):
             nonlocal call_count
             call_count += 1
             if call_count < 3:
-                raise Exception("Image not found")
-            return mocker.MagicMock()
+                return mocker.MagicMock(returncode=1, stdout="", stderr="not found")
+            return mocker.MagicMock(returncode=0, stdout="", stderr="")
 
         mocker.patch(
-            "ots_containers.commands.image.app.podman.rmi",
-            side_effect=mock_rmi_fail_twice,
+            "ots_containers.podman.subprocess.run",
+            side_effect=mock_subprocess_run,
         )
 
         rm(tags=("v0.22.0",), yes=True)
@@ -93,13 +105,18 @@ class TestRmCommand:
         captured = capsys.readouterr()
         assert "Removed" in captured.out
 
-    def test_rm_reports_not_found(self, mocker, capsys):
+    def test_rm_reports_not_found(self, mocker, capsys, tmp_path):
         """Should report when image not found."""
         from ots_containers.commands.image.app import rm
 
         mocker.patch(
-            "ots_containers.commands.image.app.podman.rmi",
-            side_effect=Exception("not found"),
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(returncode=1, stdout="", stderr="not found"),
         )
 
         rm(tags=("nonexistent",), yes=True)
@@ -107,17 +124,25 @@ class TestRmCommand:
         captured = capsys.readouterr()
         assert "Image not found" in captured.out
 
-    def test_rm_with_force(self, mocker):
+    def test_rm_with_force(self, mocker, tmp_path):
         """Should pass force flag to podman."""
         from ots_containers.commands.image.app import rm
 
-        mock_rmi = mocker.patch("ots_containers.commands.image.app.podman.rmi")
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mock_run = mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(returncode=0, stdout="", stderr=""),
+        )
 
         rm(tags=("v0.22.0",), force=True, yes=True)
 
         # Check force was passed to at least one call
-        calls = mock_rmi.call_args_list
-        assert any("force" in str(call) for call in calls)
+        calls = mock_run.call_args_list
+        assert any("--force" in str(call) for call in calls)
 
 
 class TestPruneCommand:
@@ -1349,6 +1374,18 @@ class TestRmImageBasenameDerivation:
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
 
+    def _extract_image_ref(self, cmd):
+        """Extract the image reference from a podman rm command list.
+
+        Command is like ["podman", "image", "rm", image_ref] or
+        ["podman", "image", "rm", "--force", image_ref].
+        The image ref is the last non-flag element.
+        """
+        for part in reversed(cmd):
+            if not part.startswith("--"):
+                return part
+        return None
+
     def test_rm_custom_image_env_var_tries_basename_patterns(
         self, mocker, monkeypatch, tmp_path, capsys
     ):
@@ -1364,11 +1401,11 @@ class TestRmImageBasenameDerivation:
 
         attempted_images = []
 
-        def mock_rmi(*args, **kwargs):
-            attempted_images.extend(args)
-            raise Exception("not found")
+        def mock_subprocess_run(cmd, **kwargs):
+            attempted_images.append(self._extract_image_ref(cmd))
+            return mocker.MagicMock(returncode=1, stdout="", stderr="not found")
 
-        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v1.0.0",), yes=True)
 
@@ -1392,11 +1429,11 @@ class TestRmImageBasenameDerivation:
 
         attempted_images = []
 
-        def mock_rmi(*args, **kwargs):
-            attempted_images.extend(args)
-            raise Exception("not found")
+        def mock_subprocess_run(cmd, **kwargs):
+            attempted_images.append(self._extract_image_ref(cmd))
+            return mocker.MagicMock(returncode=1, stdout="", stderr="not found")
 
-        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v0.23.0",), yes=True)
 
@@ -1418,11 +1455,11 @@ class TestRmImageBasenameDerivation:
 
         attempted_images = []
 
-        def mock_rmi(*args, **kwargs):
-            attempted_images.extend(args)
-            raise Exception("not found")
+        def mock_subprocess_run(cmd, **kwargs):
+            attempted_images.append(self._extract_image_ref(cmd))
+            return mocker.MagicMock(returncode=1, stdout="", stderr="not found")
 
-        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v0.23.0",), yes=True)
 
@@ -1444,11 +1481,12 @@ class TestRmImageBasenameDerivation:
 
         attempted_images = []
 
-        def mock_rmi(*args, **kwargs):
+        def mock_subprocess_run(cmd, **kwargs):
             # First call (myapp:v1.0.0) succeeds
-            attempted_images.extend(args)
+            attempted_images.append(self._extract_image_ref(cmd))
+            return mocker.MagicMock(returncode=0, stdout="", stderr="")
 
-        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v1.0.0",), yes=True)
 

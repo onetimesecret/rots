@@ -2,10 +2,14 @@
 """Tests for instance command helpers."""
 
 import fcntl
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from ots_containers.commands.instance._helpers import (
+    _remote_lock_acquire,
+    _remote_lock_release,
     _resolve_lock_path,
     deploy_lock,
     for_each_instance,
@@ -144,6 +148,142 @@ class TestResolveLockPath:
         _resolve_lock_path(lock_path)
         probe = tmp_path / ".ots_lock_probe"
         assert not probe.exists()
+
+
+def _make_mock_executor(run_side_effects=None):
+    """Create a mock Executor that is recognized as remote by is_remote()."""
+    executor = MagicMock()
+    # Make it NOT an instance of LocalExecutor so is_remote() returns True
+    executor.__class__ = type("SSHExecutorMock", (), {})
+    if run_side_effects:
+        executor.run.side_effect = run_side_effects
+    return executor
+
+
+def _ok(stdout="", stderr=""):
+    """Return a mock Result with returncode=0."""
+    from ots_shared.ssh.executor import Result
+
+    return Result(command="mock", returncode=0, stdout=stdout, stderr=stderr)
+
+
+def _fail(stdout="", stderr=""):
+    """Return a mock Result with returncode=1."""
+    from ots_shared.ssh.executor import Result
+
+    return Result(command="mock", returncode=1, stdout=stdout, stderr=stderr)
+
+
+class TestRemoteDeployLock:
+    """Tests for remote (SSH) deploy lock acquire/release."""
+
+    def test_acquire_succeeds_when_no_existing_lock(self):
+        """Should acquire lock when noclobber write succeeds."""
+        executor = _make_mock_executor(
+            [
+                _ok(),  # mkdir -p
+                _ok(),  # set -C; echo ... > lockfile
+            ]
+        )
+        # Should not raise
+        _remote_lock_acquire(Path("/var/lib/ots/deploy.lock"), executor)
+        assert executor.run.call_count == 2
+
+    def test_acquire_fails_when_lock_is_held(self, capsys):
+        """Should raise SystemExit(1) when lock file exists and is not stale."""
+        executor = _make_mock_executor(
+            [
+                _ok(),  # mkdir -p
+                _fail(),  # set -C fails (file exists)
+                _ok(stdout="0\n"),  # stat -c %Y (mtime=0, can't determine)
+                _ok(stdout="operator1:1234"),  # cat lockfile
+            ]
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            _remote_lock_acquire(Path("/var/lib/ots/deploy.lock"), executor)
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "another deploy" in captured.err
+
+    def test_acquire_breaks_stale_lock(self):
+        """Should break stale lock and re-acquire."""
+        now = 1700000000
+        stale_mtime = now - 3600  # 1 hour old (> 30 min stale threshold)
+        executor = _make_mock_executor(
+            [
+                _ok(),  # mkdir -p
+                _fail(),  # set -C fails (file exists)
+                _ok(stdout=f"{stale_mtime}\n"),  # stat -c %Y
+                _ok(stdout=f"{now}\n"),  # date +%s
+                _ok(stdout="stale-host:999"),  # cat lockfile
+                _ok(),  # rm -f (break stale lock)
+                _ok(),  # retry set -C (succeeds)
+            ]
+        )
+        # Should not raise
+        _remote_lock_acquire(Path("/var/lib/ots/deploy.lock"), executor)
+        assert executor.run.call_count == 7
+
+    def test_release_removes_lock_file(self):
+        """Should rm -f the lock file."""
+        executor = _make_mock_executor([_ok()])
+        _remote_lock_release(Path("/var/lib/ots/deploy.lock"), executor)
+        call_args = executor.run.call_args
+        assert "rm" in call_args[0][0]
+        assert "-f" in call_args[0][0]
+
+    def test_deploy_lock_uses_remote_path_for_ssh_executor(self, mocker):
+        """deploy_lock with remote executor should use remote acquire/release."""
+        mocker.patch(
+            "ots_containers.commands.instance._helpers._is_remote",
+            return_value=True,
+        )
+        mock_acquire = mocker.patch(
+            "ots_containers.commands.instance._helpers._remote_lock_acquire",
+        )
+        mock_release = mocker.patch(
+            "ots_containers.commands.instance._helpers._remote_lock_release",
+        )
+        executor = MagicMock()
+        reached = []
+        with deploy_lock(executor=executor):
+            reached.append(True)
+        assert reached == [True]
+        mock_acquire.assert_called_once()
+        mock_release.assert_called_once()
+
+    def test_deploy_lock_releases_on_exception(self, mocker):
+        """Remote lock must be released even when the body raises."""
+        mocker.patch(
+            "ots_containers.commands.instance._helpers._is_remote",
+            return_value=True,
+        )
+        mocker.patch(
+            "ots_containers.commands.instance._helpers._remote_lock_acquire",
+        )
+        mock_release = mocker.patch(
+            "ots_containers.commands.instance._helpers._remote_lock_release",
+        )
+        executor = MagicMock()
+        with pytest.raises(RuntimeError):
+            with deploy_lock(executor=executor):
+                raise RuntimeError("boom")
+        mock_release.assert_called_once()
+
+    def test_error_message_shows_holder_identity(self, capsys):
+        """Error message should show who holds the lock."""
+        executor = _make_mock_executor(
+            [
+                _ok(),  # mkdir -p
+                _fail(),  # set -C fails
+                _ok(stdout="0\n"),  # stat
+                _ok(stdout="web-01:5678"),  # cat lockfile
+            ]
+        )
+        with pytest.raises(SystemExit):
+            _remote_lock_acquire(Path("/var/lib/ots/deploy.lock"), executor)
+        captured = capsys.readouterr()
+        assert "web-01:5678" in captured.err
 
 
 class TestFormatJournalctlHint:

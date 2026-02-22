@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ots_shared.ssh import is_remote as _is_remote
+
 from .packages import ServicePackage
 
 if TYPE_CHECKING:
@@ -24,7 +26,106 @@ def _get_executor(executor: Executor | None = None) -> Executor:
     return LocalExecutor()
 
 
-def ensure_instances_dir(pkg: ServicePackage) -> Path:
+# ---------------------------------------------------------------------------
+# Remote-aware file operation primitives
+# ---------------------------------------------------------------------------
+
+
+def _file_exists(path: Path, executor: Executor | None) -> bool:
+    """Check if a file exists (local or remote)."""
+    if _is_remote(executor):
+        result = executor.run(["test", "-f", str(path)])  # type: ignore[union-attr]
+        return result.ok
+    return path.exists()
+
+
+def _dir_exists(path: Path, executor: Executor | None) -> bool:
+    """Check if a directory exists (local or remote)."""
+    if _is_remote(executor):
+        result = executor.run(["test", "-d", str(path)])  # type: ignore[union-attr]
+        return result.ok
+    return path.is_dir()
+
+
+def _read_text(path: Path, executor: Executor | None) -> str:
+    """Read text content from a file (local or remote)."""
+    if _is_remote(executor):
+        result = executor.run(["cat", str(path)], timeout=10)  # type: ignore[union-attr]
+        return result.stdout
+    return path.read_text()
+
+
+def _write_text(path: Path, content: str, executor: Executor | None) -> None:
+    """Write text content to a file (local or remote)."""
+    if _is_remote(executor):
+        executor.run(["tee", str(path)], input=content, timeout=10)  # type: ignore[union-attr]
+        return
+    path.write_text(content)
+
+
+def _mkdir_p(path: Path, mode: int, executor: Executor | None) -> None:
+    """Create directory with parents (local or remote)."""
+    if _is_remote(executor):
+        executor.run(["mkdir", "-p", "-m", f"{mode:o}", str(path)])  # type: ignore[union-attr]
+        return
+    path.mkdir(parents=True, mode=mode, exist_ok=True)
+
+
+def _copy_file(src: Path, dest: Path, executor: Executor | None) -> None:
+    """Copy a file preserving attributes (local or remote)."""
+    if _is_remote(executor):
+        executor.run(["cp", "-p", str(src), str(dest)])  # type: ignore[union-attr]
+        return
+    shutil.copy2(src, dest)
+
+
+def _chmod(path: Path, mode: int, executor: Executor | None) -> None:
+    """Set file permissions (local or remote)."""
+    if _is_remote(executor):
+        executor.run(["chmod", f"{mode:o}", str(path)])  # type: ignore[union-attr]
+        return
+    path.chmod(mode)
+
+
+def _chown(
+    path: Path,
+    user: str | None,
+    group: str | None,
+    executor: Executor | None,
+) -> None:
+    """Set file ownership (local or remote). Best-effort — silences errors."""
+    if not user:
+        return
+    owner = f"{user}:{group}" if group else user
+    if _is_remote(executor):
+        executor.run(["chown", owner, str(path)])  # type: ignore[union-attr]
+        return
+    try:
+        shutil.chown(path, user=user, group=group)
+    except (LookupError, PermissionError):
+        pass
+
+
+def _unlink(path: Path, executor: Executor | None) -> None:
+    """Remove a file (local or remote)."""
+    if _is_remote(executor):
+        executor.run(["rm", "-f", str(path)])  # type: ignore[union-attr]
+        return
+    import os
+
+    os.unlink(path)
+
+
+# ---------------------------------------------------------------------------
+# Service helpers
+# ---------------------------------------------------------------------------
+
+
+def ensure_instances_dir(
+    pkg: ServicePackage,
+    *,
+    executor: Executor | None = None,
+) -> Path:
     """Ensure the config directory (or instances subdir) exists with correct ownership.
 
     For packages using instances subdirectory (use_instances_subdir=True):
@@ -34,6 +135,7 @@ def ensure_instances_dir(pkg: ServicePackage) -> Path:
 
     Args:
         pkg: Service package definition
+        executor: Executor for command dispatch. None uses local filesystem.
 
     Returns:
         Path to the directory where instance configs will be placed
@@ -43,49 +145,46 @@ def ensure_instances_dir(pkg: ServicePackage) -> Path:
     else:
         config_dir = pkg.config_dir
 
-    if not config_dir.exists():
-        config_dir.mkdir(parents=True, mode=0o755)
-        # Set ownership if running as root and service user exists
-        if pkg.service_user:
-            try:
-                shutil.chown(config_dir, user=pkg.service_user, group=pkg.service_group)
-            except (LookupError, PermissionError):
-                pass  # User doesn't exist or not root
+    if not _dir_exists(config_dir, executor):
+        _mkdir_p(config_dir, 0o755, executor)
+        _chown(config_dir, pkg.service_user, pkg.service_group, executor)
     return config_dir
 
 
-def copy_default_config(pkg: ServicePackage, instance: str) -> Path:
+def copy_default_config(
+    pkg: ServicePackage,
+    instance: str,
+    *,
+    executor: Executor | None = None,
+) -> Path:
     """Copy default config to instance-specific config file.
 
     Args:
         pkg: Service package definition
         instance: Instance identifier (usually port number)
+        executor: Executor for command dispatch. None uses local filesystem.
 
     Returns:
         Path to the new config file
 
     Raises:
         FileNotFoundError: If default config doesn't exist
+        FileExistsError: If instance config already exists
     """
-    if not pkg.default_config or not pkg.default_config.exists():
+    if not pkg.default_config or not _file_exists(pkg.default_config, executor):
         raise FileNotFoundError(
             f"Default config not found: {pkg.default_config}. Is {pkg.name} package installed?"
         )
 
-    ensure_instances_dir(pkg)
+    ensure_instances_dir(pkg, executor=executor)
     dest = pkg.config_file(instance)
 
-    if dest.exists():
+    if _file_exists(dest, executor):
         raise FileExistsError(f"Config already exists: {dest}")
 
-    shutil.copy2(pkg.default_config, dest)
-    dest.chmod(0o644)
-
-    if pkg.service_user:
-        try:
-            shutil.chown(dest, user=pkg.service_user, group=pkg.service_group)
-        except (LookupError, PermissionError):
-            pass
+    _copy_file(pkg.default_config, dest, executor)
+    _chmod(dest, 0o644, executor)
+    _chown(dest, pkg.service_user, pkg.service_group, executor)
 
     return dest
 
@@ -95,6 +194,8 @@ def update_config_value(
     key: str,
     value: str,
     pkg: ServicePackage,
+    *,
+    executor: Executor | None = None,
 ) -> None:
     """Update or add a config value in a service config file.
 
@@ -103,8 +204,9 @@ def update_config_value(
         key: Config key to set
         value: Value to set
         pkg: Service package (for format info)
+        executor: Executor for command dispatch. None uses local filesystem.
     """
-    content = config_path.read_text()
+    content = _read_text(config_path, executor)
     lines = content.splitlines()
 
     # Determine separator based on config format
@@ -128,13 +230,15 @@ def update_config_value(
     if not found:
         lines.append(new_line)
 
-    config_path.write_text("\n".join(lines) + "\n")
+    _write_text(config_path, "\n".join(lines) + "\n", executor)
 
 
 def create_secrets_file(
     pkg: ServicePackage,
     instance: str,
     secrets: dict[str, str] | None = None,
+    *,
+    executor: Executor | None = None,
 ) -> Path | None:
     """Create a secrets file for an instance.
 
@@ -142,6 +246,7 @@ def create_secrets_file(
         pkg: Service package definition
         instance: Instance identifier
         secrets: Dict of secret key -> value pairs
+        executor: Executor for command dispatch. None uses local filesystem.
 
     Returns:
         Path to secrets file, or None if package doesn't use separate secrets
@@ -149,7 +254,7 @@ def create_secrets_file(
     if not pkg.secrets or not pkg.secrets.secrets_file_pattern:
         return None
 
-    ensure_instances_dir(pkg)
+    ensure_instances_dir(pkg, executor=executor)
     secrets_path = pkg.secrets_file(instance)
     if secrets_path is None:
         return None
@@ -164,14 +269,11 @@ def create_secrets_file(
         for key, value in secrets.items():
             lines.append(f"{key}{sep}{value}")
 
-    secrets_path.write_text("\n".join(lines) + "\n")
-    secrets_path.chmod(pkg.secrets.secrets_file_mode)
+    _write_text(secrets_path, "\n".join(lines) + "\n", executor)
+    _chmod(secrets_path, pkg.secrets.secrets_file_mode, executor)
 
-    if pkg.secrets.secrets_owned_by_service and pkg.service_user:
-        try:
-            shutil.chown(secrets_path, user=pkg.service_user, group=pkg.service_group)
-        except (LookupError, PermissionError):
-            pass
+    if pkg.secrets.secrets_owned_by_service:
+        _chown(secrets_path, pkg.service_user, pkg.service_group, executor)
 
     return secrets_path
 
@@ -180,6 +282,8 @@ def add_secrets_include(
     config_path: Path,
     secrets_path: Path,
     pkg: ServicePackage,
+    *,
+    executor: Executor | None = None,
 ) -> None:
     """Add include directive for secrets file to main config.
 
@@ -187,12 +291,13 @@ def add_secrets_include(
         config_path: Path to main config file
         secrets_path: Path to secrets file
         pkg: Service package definition
+        executor: Executor for command dispatch. None uses local filesystem.
     """
     if not pkg.secrets or not pkg.secrets.include_directive:
         return
 
     include_line = pkg.secrets.include_directive.format(secrets_path=secrets_path)
-    content = config_path.read_text()
+    content = _read_text(config_path, executor)
 
     # Check if include already exists
     if include_line in content:
@@ -202,28 +307,30 @@ def add_secrets_include(
     if not content.endswith("\n"):
         content += "\n"
     content += f"\n# Include secrets file\n{include_line}\n"
-    config_path.write_text(content)
+    _write_text(config_path, content, executor)
 
 
-def ensure_data_dir(pkg: ServicePackage, instance: str) -> Path:
+def ensure_data_dir(
+    pkg: ServicePackage,
+    instance: str,
+    *,
+    executor: Executor | None = None,
+) -> Path:
     """Ensure instance data directory exists with correct ownership.
 
     Args:
         pkg: Service package definition
         instance: Instance identifier
+        executor: Executor for command dispatch. None uses local filesystem.
 
     Returns:
         Path to the data directory
     """
     data_path = pkg.data_path(instance)
-    if not data_path.exists():
-        data_path.mkdir(parents=True, mode=0o750)
+    if not _dir_exists(data_path, executor):
+        _mkdir_p(data_path, 0o750, executor)
 
-    if pkg.service_user:
-        try:
-            shutil.chown(data_path, user=pkg.service_user, group=pkg.service_group)
-        except (LookupError, PermissionError):
-            pass
+    _chown(data_path, pkg.service_user, pkg.service_group, executor)
 
     return data_path
 
