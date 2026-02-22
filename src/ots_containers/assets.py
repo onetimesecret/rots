@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from ots_shared.ssh import is_remote as _is_remote
 
 from .config import Config
 from .podman import Podman
@@ -14,15 +15,6 @@ if TYPE_CHECKING:
     from ots_shared.ssh import Executor
 
 TEMP_CONTAINER_NAME = "ots-asset-sync-tmp"
-
-
-def _is_remote(executor: Executor | None) -> bool:
-    """Return True if executor targets a remote host."""
-    if executor is None:
-        return False
-    from ots_shared.ssh import LocalExecutor
-
-    return not isinstance(executor, LocalExecutor)
 
 
 def update(cfg: Config, create_volume: bool = True, *, executor: Executor | None = None) -> None:
@@ -35,17 +27,21 @@ def update(cfg: Config, create_volume: bool = True, *, executor: Executor | None
 
     try:
         result = p.volume.mount("static_assets", capture_output=True, text=True, check=True)
-    except (subprocess.CalledProcessError, Exception) as e:
+    except Exception as e:
+        # Local: CalledProcessError (e.stderr); Remote: CommandError (e.result.stderr)
         stderr = getattr(e, "stderr", "") or ""
         if hasattr(stderr, "strip"):
             stderr = stderr.strip()
         if not stderr and hasattr(e, "result"):
             stderr = e.result.stderr.strip()  # type: ignore[union-attr]
         raise SystemExit(f"Failed to mount volume 'static_assets': {stderr or e}")
+    # Note: Path() is used for path joining below, not for local filesystem
+    # operations. On remote hosts, these paths refer to the remote filesystem
+    # and only str() or executor.run() should operate on them.
     assets_dir = Path(result.stdout.strip())
 
     # Verify the image exists locally before proceeding
-    image_ref = cfg.resolved_image_with_tag
+    image_ref = cfg.resolved_image_with_tag(executor=executor)
     result = p.image.exists(image_ref, capture_output=True)
     if result.returncode != 0:
         # Distinguish unresolved alias from missing image
@@ -71,7 +67,8 @@ def update(cfg: Config, create_volume: bool = True, *, executor: Executor | None
             text=True,
             check=True,
         )
-    except (subprocess.CalledProcessError, Exception) as e:
+    except Exception as e:
+        # Local: CalledProcessError (e.stderr); Remote: CommandError (e.result.stderr)
         stderr = getattr(e, "stderr", "") or ""
         if hasattr(stderr, "strip"):
             stderr = stderr.strip()

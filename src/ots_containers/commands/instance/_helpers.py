@@ -15,6 +15,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ots_shared.ssh import is_remote as _is_remote
+
 from ots_containers import systemd
 from ots_containers.environment_file import get_secrets_from_env_file
 from ots_containers.systemd import SystemctlError
@@ -28,15 +30,6 @@ logger = logging.getLogger(__name__)
 
 #: Default lock file path for serialising concurrent deploy/redeploy operations.
 DEPLOY_LOCK_PATH = Path("/var/lib/onetimesecret/deploy.lock")
-
-
-def _is_remote(executor: Executor | None) -> bool:
-    """Return True if executor targets a remote host."""
-    if executor is None:
-        return False
-    from ots_shared.ssh import LocalExecutor
-
-    return not isinstance(executor, LocalExecutor)
 
 
 @contextlib.contextmanager
@@ -358,8 +351,6 @@ def run_hook(
     Raises:
         SystemExit(1): If the hook exits non-zero.
     """
-    from ots_containers.db import _is_remote
-
     if not quiet:
         print(f"Running {stage}: {hook_cmd}")
 

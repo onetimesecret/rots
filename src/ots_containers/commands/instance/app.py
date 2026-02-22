@@ -77,14 +77,13 @@ def _list_instances_impl(
                 active_status = systemd.is_active(service, executor=ex)
 
                 # Get deployment info
+                db_path = cfg.get_db_path(ex)
                 if inst_type == InstanceType.WEB:
-                    deployments = db.get_deployments(
-                        cfg.db_path, limit=1, port=int(id_), executor=ex
-                    )
+                    deployments = db.get_deployments(db_path, limit=1, port=int(id_), executor=ex)
                 else:
                     # Worker/scheduler: query by notes containing instance ID
                     deployments = db.get_deployments(
-                        cfg.db_path,
+                        db_path,
                         limit=1,
                         notes_like=f"%{inst_type.value}_id={id_}%",
                         executor=ex,
@@ -138,12 +137,13 @@ def _list_instances_impl(
             active_status = systemd.is_active(service, executor=ex)
 
             # Get last deployment from database
+            db_path = cfg.get_db_path(ex)
             if inst_type == InstanceType.WEB:
-                deployments = db.get_deployments(cfg.db_path, limit=1, port=int(id_), executor=ex)
+                deployments = db.get_deployments(db_path, limit=1, port=int(id_), executor=ex)
             else:
                 # Worker/scheduler: query by notes containing instance ID
                 deployments = db.get_deployments(
-                    cfg.db_path,
+                    db_path,
                     limit=1,
                     notes_like=f"%{inst_type.value}_id={id_}%",
                     executor=ex,
@@ -270,7 +270,7 @@ def run(
             image = cfg.image
             resolved_tag = tag
         else:
-            image, resolved_tag = cfg.resolve_image_tag()
+            image, resolved_tag = cfg.resolve_image_tag(executor=ex)
     else:
         # Local is the default
         image = "onetimesecret"  # localhost/onetimesecret
@@ -292,12 +292,15 @@ def run(
     cmd.extend(["-p", f"{port}:{port}"])
     cmd.extend(["-e", f"PORT={port}"])
 
-    # Check for local .env file in current directory
+    # Check for .env file in current directory (local only)
     from pathlib import Path
 
-    local_env = Path.cwd() / ".env"
-    if local_env.exists():
-        cmd.extend(["--env-file", str(local_env)])
+    from ots_shared.ssh import LocalExecutor as _LECheck
+
+    if isinstance(ex, _LECheck):
+        local_env = Path.cwd() / ".env"
+        if local_env.exists():
+            cmd.extend(["--env-file", str(local_env)])
 
     # Production mode: add env file, secrets, and volumes
     if production:
@@ -326,16 +329,7 @@ def run(
                 )
 
         # Config overrides (per-file)
-        from ots_containers.config import CONFIG_FILES
-
-        if not isinstance(ex, LocalExecutor):
-            config_files = []
-            for fname in CONFIG_FILES:
-                fpath = cfg.config_dir / fname
-                if ex.run(["test", "-f", str(fpath)]).ok:
-                    config_files.append(fpath)
-        else:
-            config_files = cfg.existing_config_files
+        config_files = cfg.get_existing_config_files(executor=ex)
         for f in config_files:
             cmd.extend(["-v", f"{f}:/app/etc/{f.name}:ro"])
         cmd.extend(["-v", "static_assets:/app/public:ro"])
@@ -464,11 +458,12 @@ def deploy(
     ex = cfg.get_executor(host=context.host_var.get(None))
 
     # Resolve image/tag (handles CURRENT/ROLLBACK aliases)
-    image, tag = cfg.resolve_image_tag()
+    image, tag = cfg.resolve_image_tag(executor=ex)
     if not quiet and not json_output:
         print(f"Image: {image}:{tag}")
-        if cfg.has_custom_config:
-            mounted = [f.name for f in cfg.existing_config_files]
+        config_files = cfg.get_existing_config_files(executor=ex)
+        if config_files:
+            mounted = [f.name for f in config_files]
             print(f"Config overrides: {', '.join(mounted)}")
         else:
             print("Config: using container built-in defaults")
@@ -569,7 +564,7 @@ def deploy(
                     systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60)
                 # Record successful deployment
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
                     tag=tag,
                     action=f"deploy-{inst_type.value}",
@@ -596,7 +591,7 @@ def deploy(
                     else f"{inst_type.value}_id={id_}; health-timeout: {e}"
                 )
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
                     tag=tag,
                     action=f"deploy-{inst_type.value}",
@@ -627,7 +622,7 @@ def deploy(
                     else f"{inst_type.value}_id={id_}; error={e}"
                 )
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
                     tag=tag,
                     action=f"deploy-{inst_type.value}",
@@ -776,11 +771,12 @@ def redeploy(
         return
 
     # Resolve image/tag (handles CURRENT/ROLLBACK aliases)
-    image, tag = cfg.resolve_image_tag()
+    image, tag = cfg.resolve_image_tag(executor=ex)
     if not quiet and not json_output:
         print(f"Image: {image}:{tag}")
-        if cfg.has_custom_config:
-            mounted = [f.name for f in cfg.existing_config_files]
+        config_files = cfg.get_existing_config_files(executor=ex)
+        if config_files:
+            mounted = [f.name for f in config_files]
             print(f"Config overrides: {', '.join(mounted)}")
         else:
             print("Config: using container built-in defaults")
@@ -911,7 +907,7 @@ def redeploy(
                     systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60, executor=ex)
 
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
                     tag=tag,
                     action=f"redeploy-{inst_type.value}",
@@ -938,7 +934,7 @@ def redeploy(
                     else f"{inst_type.value}_id={id_}; health-timeout: {e}"
                 )
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
                     tag=tag,
                     action=f"redeploy-{inst_type.value}",
@@ -969,7 +965,7 @@ def redeploy(
                     else f"{inst_type.value}_id={id_}; error={e}"
                 )
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
                     tag=tag,
                     action=f"redeploy-{inst_type.value}",
@@ -1091,7 +1087,7 @@ def undeploy(
                 print(f"[dry-run] Would undeploy {inst_type.value}: {', '.join(ids)}")
         return
 
-    image, tag = cfg.resolve_image_tag()
+    image, tag = cfg.resolve_image_tag(executor=ex)
     undeploy_results: list[dict] = []
 
     def do_undeploy(inst_type: InstanceType, id_: str) -> None:
@@ -1104,7 +1100,7 @@ def undeploy(
             systemd.reset_failed(unit, executor=ex)
             port = int(id_) if inst_type == InstanceType.WEB else 0
             db.record_deployment(
-                cfg.db_path,
+                cfg.get_db_path(ex),
                 image=image,
                 tag=tag,
                 action=f"undeploy-{inst_type.value}",
@@ -1130,7 +1126,7 @@ def undeploy(
                 else f"{inst_type.value}_id={id_}; error={e}"
             )
             db.record_deployment(
-                cfg.db_path,
+                cfg.get_db_path(ex),
                 image=image,
                 tag=tag,
                 action=f"undeploy-{inst_type.value}",
@@ -1670,7 +1666,7 @@ def shell(
             image = cfg.image
             resolved_tag = tag
         else:
-            image, resolved_tag = cfg.resolve_image_tag()
+            image, resolved_tag = cfg.resolve_image_tag(executor=ex)
     else:
         # Local is the default
         image = "onetimesecret"  # localhost/onetimesecret
@@ -1700,8 +1696,13 @@ def shell(
 
     # Data volume: bind-mount, persistent named volume, or tmpfs (default)
     if volume:
-        host_path = Path(volume).resolve()
-        host_path.mkdir(parents=True, exist_ok=True)
+        if not isinstance(ex, LocalExecutor):
+            # Remote: create directory on the remote host, use path as-is
+            host_path = Path(volume)
+            ex.run(["mkdir", "-p", str(host_path)])
+        else:
+            host_path = Path(volume).resolve()
+            host_path.mkdir(parents=True, exist_ok=True)
         cmd.extend(["-v", f"{host_path}:/app/data:rw,U"])
     elif persistent:
         volume_name = f"ots-migration-{persistent}"
@@ -1714,7 +1715,7 @@ def shell(
         cmd.extend(["-e", entry])
 
     # Config overrides (per-file, if any exist on host)
-    for f in cfg.existing_config_files:
+    for f in cfg.get_existing_config_files(executor=ex):
         resolved = f.resolve()  # symlink resolution for macOS podman VM
         cmd.extend(["-v", f"{resolved}:/app/etc/{f.name}:ro"])
 
@@ -1840,7 +1841,7 @@ def config_transform(
             image = cfg.image
             resolved_tag = tag
         else:
-            image, resolved_tag = cfg.resolve_image_tag()
+            image, resolved_tag = cfg.resolve_image_tag(executor=ex)
     else:
         image = "onetimesecret"
         resolved_tag = tag or cfg.tag
@@ -2219,7 +2220,7 @@ def rollback(
     ex = cfg.get_executor(host=context.host_var.get(None))
 
     # Determine rollback target from the deployment timeline
-    previous = db.get_previous_tags(cfg.db_path, limit=5, executor=ex)
+    previous = db.get_previous_tags(cfg.get_db_path(ex), limit=5, executor=ex)
     if len(previous) < 2:
         msg = "No previous deployment found in history - cannot roll back"
         if json_output:
@@ -2263,7 +2264,7 @@ def rollback(
             return
 
     # Update DB aliases (CURRENT -> ROLLBACK, rollback_tag -> CURRENT)
-    rollback_result = db.rollback(cfg.db_path, executor=ex)
+    rollback_result = db.rollback(cfg.get_db_path(ex), executor=ex)
     if rollback_result is None:
         msg = "Rollback failed - deployment timeline returned no result"
         if json_output:
@@ -2326,7 +2327,7 @@ def rollback(
             try:
                 systemd.recreate(unit, executor=ex)
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=new_image,
                     tag=new_tag,
                     action=f"rollback-{inst_type.value}",
@@ -2353,7 +2354,7 @@ def rollback(
                     else f"{inst_type.value}_id={id_}; rollback from {current_tag}; error={e}"
                 )
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=new_image,
                     tag=new_tag,
                     action=f"rollback-{inst_type.value}",

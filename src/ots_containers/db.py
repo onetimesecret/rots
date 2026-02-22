@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ots_shared.ssh import is_remote as _is_remote
+
 if TYPE_CHECKING:
     from ots_shared.ssh.executor import Executor
 
@@ -110,15 +112,6 @@ CREATE INDEX IF NOT EXISTS idx_service_actions_timestamp ON service_actions(time
 CREATE INDEX IF NOT EXISTS idx_service_actions_pkg_inst
     ON service_actions(package, instance);
 """
-
-
-def _is_remote(executor: Executor | None) -> bool:
-    """Return True if executor dispatches commands to a remote host."""
-    if executor is None:
-        return False
-    from ots_shared.ssh import LocalExecutor
-
-    return not isinstance(executor, LocalExecutor)
 
 
 def _escape_sql_string(value: str) -> str:

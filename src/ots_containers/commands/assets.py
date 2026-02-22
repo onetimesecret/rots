@@ -7,6 +7,7 @@ from typing import Annotated
 import cyclopts
 
 from .. import assets as assets_module
+from .. import context
 from ..config import Config
 
 app = cyclopts.App(name="assets", help="Extract web assets from container image to volume")
@@ -26,5 +27,5 @@ def sync(
     on initial setup.
     """
     cfg = Config()
-    ex = cfg.get_executor()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     assets_module.update(cfg, create_volume=create_volume, executor=ex)

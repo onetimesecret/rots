@@ -13,8 +13,10 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ots_shared.ssh import is_remote as _is_remote
+
 from . import systemd
-from .config import CONFIG_FILES, Config
+from .config import Config
 from .environment_file import (
     generate_quadlet_secret_lines,
     get_secrets_from_env_file,
@@ -28,15 +30,6 @@ if TYPE_CHECKING:
 # a circular import: quadlet -> commands -> env -> quadlet.
 # The value matches commands.common.EXIT_PRECOND.
 _EXIT_PRECOND = 3
-
-
-def _is_remote(executor: Executor | None) -> bool:
-    """Return True if executor targets a remote host."""
-    if executor is None:
-        return False
-    from ots_shared.ssh import LocalExecutor
-
-    return not isinstance(executor, LocalExecutor)
 
 
 # Default environment file path
@@ -254,15 +247,7 @@ def get_config_volumes_section(cfg: Config, *, executor: Executor | None = None)
 
     Only mounts files that exist on the host. Missing files use container defaults.
     """
-    if _is_remote(executor):
-        files = []
-        for fname in CONFIG_FILES:
-            fpath = cfg.config_dir / fname
-            result = executor.run(["test", "-f", str(fpath)])  # type: ignore[union-attr]
-            if result.ok:
-                files.append(fpath)
-    else:
-        files = cfg.existing_config_files
+    files = cfg.get_existing_config_files(executor=executor)
 
     if not files:
         return "# No host config overrides (using container built-in defaults)"
@@ -335,7 +320,7 @@ def _build_fmt_vars(
     config_volumes_section = get_config_volumes_section(cfg, executor=executor)
 
     fmt_vars: dict = {
-        "image": cfg.resolved_image_with_tag,
+        "image": cfg.resolved_image_with_tag(executor=executor),
         "config_dir": cfg.config_dir,
         "secrets_section": secrets_section,
         "config_volumes_section": config_volumes_section,

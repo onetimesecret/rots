@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import re
 import shutil
-import subprocess
 import sys
 from typing import TYPE_CHECKING
 
@@ -300,7 +299,7 @@ def daemon_reload(*, executor: Executor | None = None) -> None:
     logger.debug("  $ sudo -- %s", " ".join(cmd))
     result = ex.run(cmd, sudo=True, timeout=30)
     if not result.ok:
-        raise subprocess.CalledProcessError(result.returncode, " ".join(cmd))
+        raise SystemctlError("(all units)", "daemon-reload", result.stderr.strip())
 
 
 def start(unit: str, *, executor: Executor | None = None) -> None:

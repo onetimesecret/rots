@@ -6,6 +6,10 @@ import atexit
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ots_shared.ssh.executor import Executor
 
 # Default image registry (public)
 DEFAULT_IMAGE = "ghcr.io/onetimesecret/onetimesecret"
@@ -57,6 +61,12 @@ class Config:
         /etc/default/onetimesecret   - Infrastructure env vars (REDIS_URL, etc.)
         /var/lib/onetimesecret/      - Variable runtime data (deployments.db)
         /etc/containers/systemd/     - Quadlet unit files
+
+    Legacy path migration (v0.22 -> FHS):
+        /opt/onetimesecret/config/.env              -> /etc/default/onetimesecret
+        /opt/onetimesecret/config/config.yaml       -> /etc/onetimesecret/config.yaml
+        /opt/onetimesecret/config/auth.yaml         -> /etc/onetimesecret/auth.yaml
+        /opt/onetimesecret/config/Caddyfile.template -> /etc/onetimesecret/Caddyfile.template
 
     Secrets (via podman secret):
         ots_hmac_secret              - HMAC_SECRET env var
@@ -139,6 +149,41 @@ class Config:
         # System path (root on Linux only)
         return Path("/etc/containers/auth.json")
 
+    def get_registry_auth_file(self, executor: Executor | None = None) -> Path:
+        """Remote-aware registry auth file resolution.
+
+        When *executor* is None or a LocalExecutor, delegates to the
+        :attr:`registry_auth_file` property (local filesystem probing).
+        For remote executors, probes the remote filesystem and uses
+        remote-appropriate defaults (always Linux, always root on production).
+        """
+        from ots_shared.ssh import is_remote
+
+        if not is_remote(executor):
+            return self.registry_auth_file
+
+        # Explicit override
+        if self._registry_auth_file:
+            return self._registry_auth_file
+
+        # Environment variable (local CLI environment, but still useful)
+        env_path = os.environ.get("REGISTRY_AUTH_FILE")
+        if env_path:
+            return Path(env_path)
+
+        # On remote production hosts: check XDG_RUNTIME_DIR pattern
+        # then /etc/containers/auth.json (root on Linux)
+        for candidate in [
+            Path("/run/containers/0/auth.json"),  # rootless podman on systemd
+            Path("/etc/containers/auth.json"),  # root on Linux
+        ]:
+            result = executor.run(["test", "-f", str(candidate)])  # type: ignore[union-attr]
+            if result.ok:
+                return candidate
+
+        # Default to system path (root on Linux production)
+        return Path("/etc/containers/auth.json")
+
     @property
     def private_image(self) -> str | None:
         """Image path for private registry (requires OTS_REGISTRY env var)."""
@@ -160,14 +205,32 @@ class Config:
         return self.config_dir / "config.yaml"
 
     @property
+    def system_db_path(self) -> Path:
+        """System-level database path (always /var/lib/onetimesecret/deployments.db).
+
+        Use this for remote execution where the target host is a production
+        Linux server with writable /var/lib/onetimesecret/.  The local
+        fallback logic in ``db_path`` probes the *local* filesystem, which
+        gives the wrong answer when the CLI runs on macOS but deploys to a
+        remote Linux host.
+        """
+        return self.var_dir / "deployments.db"
+
+    @property
     def db_path(self) -> Path:
-        """SQLite database for deployment tracking.
+        """SQLite database for deployment tracking (local-only probing).
 
         Uses system path (/var/lib/onetimesecret/) on Linux production,
         falls back to user space (~/.local/share/ots-containers/) when
         system path is not writable (macOS, non-root user).
+
+        .. note::
+
+           This property probes the *local* filesystem.  For remote
+           execution, use ``get_db_path(executor)`` or ``system_db_path``
+           instead -- see ``get_db_path`` for details.
         """
-        system_path = self.var_dir / "deployments.db"
+        system_path = self.system_db_path
 
         # Check if system path is usable (exists and writable, or parent is writable)
         if system_path.exists() and os.access(system_path, os.W_OK):
@@ -180,17 +243,60 @@ class Config:
         user_dir = xdg_data / "ots-containers"
         return user_dir / "deployments.db"
 
+    def get_db_path(self, executor: Executor | None = None) -> Path:
+        """Return the correct database path for the given execution context.
+
+        When *executor* is a remote (SSH) executor, returns ``system_db_path``
+        unconditionally -- remote hosts are production Linux servers where
+        /var/lib/onetimesecret/ is always writable.
+
+        When *executor* is None or a LocalExecutor, falls back to the
+        ``db_path`` property which probes the local filesystem.
+        """
+        if executor is not None:
+            from ots_shared.ssh import LocalExecutor
+
+            if not isinstance(executor, LocalExecutor):
+                return self.system_db_path
+        return self.db_path
+
     @property
     def existing_config_files(self) -> list[Path]:
         """Host config files that exist and should be mounted into the container.
 
         Only files present on the host override the container's built-in defaults.
+
+        Note: This uses local Path.exists(). For remote-aware checks, use
+        :meth:`get_existing_config_files` with an executor argument.
         """
         return [self.config_dir / f for f in CONFIG_FILES if (self.config_dir / f).exists()]
 
+    def get_existing_config_files(self, executor: Executor | None = None) -> list[Path]:
+        """Remote-aware check for host config files.
+
+        When *executor* is None or a LocalExecutor, delegates to the
+        :attr:`existing_config_files` property.  For remote executors,
+        probes the remote filesystem via ``test -f``.
+        """
+        from ots_shared.ssh import is_remote
+
+        if not is_remote(executor):
+            return self.existing_config_files
+
+        files: list[Path] = []
+        for fname in CONFIG_FILES:
+            fpath = self.config_dir / fname
+            result = executor.run(["test", "-f", str(fpath)])  # type: ignore[union-attr]
+            if result.ok:
+                files.append(fpath)
+        return files
+
     @property
     def has_custom_config(self) -> bool:
-        """Whether any host config files exist to mount."""
+        """Whether any host config files exist to mount (local check only).
+
+        For remote-aware checks, use ``len(cfg.get_existing_config_files(executor)) > 0``.
+        """
         return len(self.existing_config_files) > 0
 
     def validate(self) -> None:
@@ -251,12 +357,16 @@ class Config:
             print("Connected.", file=sys.stderr, flush=True)
         return SSHExecutor(_ssh_cache[resolved])
 
-    def resolve_image_tag(self) -> tuple[str, str]:
+    def resolve_image_tag(self, *, executor: Executor | None = None) -> tuple[str, str]:
         """Resolve image and tag, checking database aliases if tag is an alias.
 
         Sentinel tags (@current, @rollback) and bare alias names (current,
         rollback) are looked up in the deployment database. Falls back to the
         literal tag if no alias is found.
+
+        Args:
+            executor: Optional executor for remote DB lookups. When None,
+                reads from the local database.
 
         Returns (image, tag) tuple.
         """
@@ -268,7 +378,7 @@ class Config:
 
         # Check if tag is an alias name (sentinel or bare)
         if tag_key.lower() in ("current", "rollback"):
-            alias = db.get_alias(self.db_path, tag_key)
+            alias = db.get_alias(self.db_path, tag_key, executor=executor)
             if alias:
                 return (alias.image, alias.tag)
 
@@ -277,8 +387,11 @@ class Config:
         # sentinel '@current' / '@rollback' and raise an appropriate error.
         return (self.image, self.tag)
 
-    @property
-    def resolved_image_with_tag(self) -> str:
-        """Image with tag, resolving aliases like 'current' and 'rollback'."""
-        image, tag = self.resolve_image_tag()
+    def resolved_image_with_tag(self, *, executor: Executor | None = None) -> str:
+        """Image with tag, resolving aliases like 'current' and 'rollback'.
+
+        Args:
+            executor: Optional executor for remote DB lookups.
+        """
+        image, tag = self.resolve_image_tag(executor=executor)
         return f"{image}:{tag}"

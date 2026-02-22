@@ -28,7 +28,6 @@ from . import __version__
 from .commands import assets as assets_cmd
 from .commands import cloudinit, env, image, init, instance, proxy, service
 from .commands import db as db_cmd
-from .podman import podman
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +102,14 @@ def _default():
 @app.command
 def ps():
     """Show running OTS containers (podman view)."""
-    podman.ps(
+    from . import context
+    from .config import Config
+    from .podman import Podman
+
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
+    p.ps(
         filter="name=onetime",
         format="table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\t{{.Names}}",
     )
@@ -216,7 +222,15 @@ def doctor():
         f"sudo mkdir -p {cfg.var_dir} && sudo chown $USER {cfg.var_dir}",
     )
 
-    # 5. Env file exists
+    # 5. config.yaml exists in config dir
+    config_yaml_ok = _path_exists(str(cfg.config_yaml))
+    _check(
+        f"{cfg.config_yaml} exists",
+        config_yaml_ok,
+        f"copy config.yaml to {cfg.config_dir}/",
+    )
+
+    # 6. Env file exists
     env_file_ok = _path_exists(str(DEFAULT_ENV_FILE))
     _check(
         f"{DEFAULT_ENV_FILE} exists",
@@ -224,7 +238,7 @@ def doctor():
         "run: sudo ots init",
     )
 
-    # 6. Env file has SECRET_VARIABLE_NAMES and they are processed
+    # 7. Env file has SECRET_VARIABLE_NAMES and they are processed
     #    (secrets check is local-only — podman secret store is not queryable remotely)
     secrets_ok = False
     secrets_detail = "run: sudo ots env process"
@@ -251,7 +265,7 @@ def doctor():
         secrets_detail = "run: sudo ots env process (on remote host)" if not secrets_ok else ""
     _check("podman secrets configured", secrets_ok, secrets_detail)
 
-    # 7. Web quadlet template exists
+    # 8. Web quadlet template exists
     web_quadlet_ok = _path_exists(str(cfg.web_template_path))
     _check(
         f"{cfg.web_template_path} exists",
@@ -259,7 +273,7 @@ def doctor():
         "run: sudo ots instances deploy --web <port>",
     )
 
-    # 8. At least one web instance running (best-effort)
+    # 9. At least one web instance running (best-effort)
     web_running = False
     web_running_detail = "run: sudo ots instances start --web"
     if _has_command("systemctl"):
@@ -277,7 +291,7 @@ def doctor():
             )
     _check("web instance(s) running", web_running, web_running_detail)
 
-    # 9. Caddy (proxy) running (best-effort)
+    # 10. Caddy (proxy) running (best-effort)
     caddy_ok = False
     caddy_detail = "run: sudo systemctl start caddy"
     if _has_command("systemctl"):

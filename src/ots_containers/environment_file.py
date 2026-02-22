@@ -17,26 +17,27 @@ from __future__ import annotations
 
 import logging
 import re
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-logger = logging.getLogger(__name__)
+from ots_shared.ssh import is_remote as _is_remote
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from ots_shared.ssh import Executor
 
+logger = logging.getLogger(__name__)
 
-def _is_remote(executor: Executor | None) -> bool:
-    """Return True if executor targets a remote host."""
-    if executor is None:
-        return False
+
+def _get_executor(executor: Executor | None = None) -> Executor:
+    """Return the given executor or a default LocalExecutor."""
+    if executor is not None:
+        return executor
     from ots_shared.ssh import LocalExecutor
 
-    return not isinstance(executor, LocalExecutor)
+    return LocalExecutor()
 
 
 # Regex to parse env file lines: KEY=VALUE or KEY="VALUE" or KEY='VALUE'
@@ -419,61 +420,29 @@ def ensure_podman_secret(secret_name: str, value: str, *, executor: Executor | N
 
     require_podman(executor=executor)
 
-    if _is_remote(executor):
-        # Remote: use executor for all podman commands
-        result = executor.run(["podman", "secret", "exists", secret_name])  # type: ignore[union-attr]
-        existed = result.ok
+    ex = _get_executor(executor)
+    result = ex.run(["podman", "secret", "exists", secret_name])
+    existed = result.ok
 
-        if existed:
-            executor.run(  # type: ignore[union-attr]
-                ["podman", "secret", "rm", secret_name], check=True
-            )
+    if existed:
+        ex.run(["podman", "secret", "rm", secret_name], check=True)
 
-        executor.run(  # type: ignore[union-attr]
-            ["podman", "secret", "create", secret_name, "-"],
-            input=value,
-            check=True,
-        )
-    else:
-        # Local: use subprocess directly
-        result = subprocess.run(
-            ["podman", "secret", "exists", secret_name],
-            capture_output=True,
-        )
-        existed = result.returncode == 0
-
-        if existed:
-            subprocess.run(
-                ["podman", "secret", "rm", secret_name],
-                capture_output=True,
-                check=True,
-            )
-
-        subprocess.run(
-            ["podman", "secret", "create", secret_name, "-"],
-            input=value.encode(),
-            check=True,
-            capture_output=True,
-        )
+    ex.run(
+        ["podman", "secret", "create", secret_name, "-"],
+        input=value,
+        check=True,
+    )
 
     return "replaced" if existed else "created"
 
 
 def secret_exists(secret_name: str, *, executor: Executor | None = None) -> bool:
     """Check if a podman secret exists. Returns False if podman is unavailable."""
-    if _is_remote(executor):
-        result = executor.run(  # type: ignore[union-attr]
-            ["podman", "secret", "exists", secret_name], timeout=10
-        )
-        return result.ok
     try:
-        result = subprocess.run(
-            ["podman", "secret", "exists", secret_name],
-            capture_output=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except (subprocess.SubprocessError, OSError):
+        ex = _get_executor(executor)
+        result = ex.run(["podman", "secret", "exists", secret_name], timeout=10)
+        return result.ok
+    except Exception:
         return False
 
 
