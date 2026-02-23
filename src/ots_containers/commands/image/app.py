@@ -1122,6 +1122,31 @@ def _validate_project_dir(project_dir: Path, skip_dockerfile_check: bool = False
         raise SystemExit(f"No package.json found in {project_dir}")
 
 
+def _format_build_error(e: Exception) -> str:
+    """Extract useful error details from build failures.
+
+    CommandError (from executor) wraps a Result with stdout/stderr,
+    but str() only shows the command and exit code. This extracts
+    the stderr/stdout so the user sees what actually went wrong.
+    """
+    from ots_shared.ssh.executor import CommandError
+
+    if isinstance(e, CommandError):
+        result = e.result
+        parts = [str(e)]
+        if result.stderr and result.stderr.strip():
+            parts.append(result.stderr.strip())
+        elif result.stdout and result.stdout.strip():
+            parts.append(result.stdout.strip())
+        return "\n".join(parts)
+    if isinstance(e, subprocess.CalledProcessError):
+        if e.stderr:
+            return f"{e}\n{e.stderr.strip()}"
+        if e.stdout:
+            return f"{e}\n{e.stdout.strip()}"
+    return str(e)
+
+
 def _load_oci_build_config(project_dir: Path) -> dict | None:
     """Load .oci-build.json from project dir, or None if absent."""
     config_path = project_dir / ".oci-build.json"
@@ -1277,8 +1302,11 @@ def build(
         ots image build -d . --push --registry registry.example.com
     """
     cfg = Config()
+    # Builds always run locally — use Podman without executor so that
+    # subprocess.run streams output to the terminal in real-time instead
+    # of buffering through LocalExecutor's capture_output=True.
     ex = cfg.get_executor(host=context.host_var.get(None))
-    p = Podman(executor=ex)
+    p = Podman()
 
     # Resolve project directory
     proj_dir = Path(project_dir) if project_dir else Path.cwd()
@@ -1370,7 +1398,7 @@ def _build_with_oci_config(
             if not quiet:
                 print(f"  Base: {base_tag}")
         except Exception as e:
-            print(f"Base build failed: {e}")
+            print(f"Base build failed: {_format_build_error(e)}")
             raise SystemExit(1)
 
     # Determine which variants to build
@@ -1474,7 +1502,7 @@ def _build_with_oci_config(
                 executor=ex,
             )
     except Exception as e:
-        print(f"Build failed: {e}")
+        print(f"Build failed: {_format_build_error(e)}")
         raise SystemExit(1)
     finally:
         # Clean up base image
@@ -1575,7 +1603,7 @@ def _build_legacy(
         if not quiet:
             print(f"Successfully built {local_image}")
     except Exception as e:
-        print(f"Build failed: {e}")
+        print(f"Build failed: {_format_build_error(e)}")
         raise SystemExit(1)
 
     # Record the build action
