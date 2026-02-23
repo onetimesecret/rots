@@ -349,6 +349,75 @@ def disable(unit: str, *, executor: Executor | None = None) -> None:
     ex.run(cmd, sudo=True, timeout=10)
 
 
+def get_container_health_map(
+    *,
+    executor: Executor | None = None,
+) -> dict[tuple[str, str], dict[str, str]]:
+    """Fetch health and uptime for all OTS containers via a single ``podman ps``.
+
+    Returns a dict keyed by ``(instance_type, identifier)`` tuples, e.g.
+    ``("web", "7043")``, with values like ``{"health": "healthy", "uptime": "Up 3 days"}``.
+
+    Handles both ``_`` and ``--`` separators in container names
+    (``systemd-onetime-web_7043`` and ``systemd-onetime-web--7043``).
+    """
+    import json as _json
+
+    ex = _get_executor(executor)
+    result = ex.run(
+        [
+            "podman",
+            "ps",
+            "--no-trunc",
+            "--format",
+            "json",
+            "--filter",
+            "name=systemd-onetime",
+        ],
+        timeout=15,
+    )
+
+    if not result.ok or not result.stdout.strip():
+        return {}
+
+    try:
+        containers = _json.loads(result.stdout)
+    except (ValueError, TypeError):
+        logger.debug("Failed to parse podman ps JSON output")
+        return {}
+
+    health_map: dict[tuple[str, str], dict[str, str]] = {}
+    # Match container names like systemd-onetime-web_7043 or systemd-onetime-worker--1
+    name_pattern = re.compile(r"systemd-onetime-(web|worker|scheduler)[_-]+(.+)")
+
+    for container in containers:
+        # podman JSON uses "Names" (list) or "Name" (string) depending on version
+        names = container.get("Names") or [container.get("Name", "")]
+        if isinstance(names, str):
+            names = [names]
+
+        for name in names:
+            m = name_pattern.match(name)
+            if not m:
+                continue
+            inst_type = m.group(1)
+            inst_id = m.group(2)
+
+            status_str = container.get("Status", "")
+            # Extract health: "Up 3 days (healthy)" → "healthy"
+            health_match = re.search(r"\((healthy|unhealthy|starting)\)", status_str)
+            health = health_match.group(1) if health_match else ""
+            # Extract uptime: everything before the parenthetical
+            uptime = re.sub(r"\s*\(.*?\)\s*$", "", status_str).strip()
+
+            health_map[(inst_type, inst_id)] = {
+                "health": health,
+                "uptime": uptime,
+            }
+
+    return health_map
+
+
 def unit_to_container_name(unit: str) -> str:
     """Convert systemd unit name to Quadlet container name.
 

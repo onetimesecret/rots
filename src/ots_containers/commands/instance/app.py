@@ -66,6 +66,9 @@ def _list_instances_impl(
         print("Deploy one first: ots instances deploy --help")
         return
 
+    # Fetch container health once for all instances
+    health_map = systemd.get_container_health_map(executor=ex)
+
     if json_output:
         import json
 
@@ -75,6 +78,11 @@ def _list_instances_impl(
                 unit = systemd.unit_name(inst_type.value, id_)
                 service = f"{unit}.service"
                 active_status = systemd.is_active(service, executor=ex)
+
+                # Look up container health
+                health_info = health_map.get((inst_type.value, id_), {})
+                health = health_info.get("health", "")
+                uptime = health_info.get("uptime", "")
 
                 # Get deployment info
                 db_path = cfg.get_db_path(ex)
@@ -97,6 +105,8 @@ def _list_instances_impl(
                             "service": service,
                             "container": unit,
                             "status": active_status,
+                            "health": health,
+                            "uptime": uptime,
                             "image": dep.image,
                             "tag": dep.tag,
                             "deployed": dep.timestamp,
@@ -111,6 +121,8 @@ def _list_instances_impl(
                             "service": service,
                             "container": unit,
                             "status": active_status,
+                            "health": health,
+                            "uptime": uptime,
                             "image": None,
                             "tag": None,
                             "deployed": None,
@@ -123,10 +135,10 @@ def _list_instances_impl(
     # Header
     header = (
         f"{'TYPE':<10} {'ID':<10} {'SERVICE':<28} {'CONTAINER':<24} "
-        f"{'STATUS':<12} {'IMAGE:TAG':<38} {'DEPLOYED':<20} {'ACTION':<10}"
+        f"{'STATUS':<22} {'IMAGE:TAG':<38} {'DEPLOYED':<20} {'ACTION':<10}"
     )
     print(header)
-    print("-" * 160)
+    print("-" * 170)
 
     for inst_type, ids in instances.items():
         for id_ in ids:
@@ -135,6 +147,14 @@ def _list_instances_impl(
 
             # Get systemd status
             active_status = systemd.is_active(service, executor=ex)
+
+            # Combine systemd status with container health
+            health_info = health_map.get((inst_type.value, id_), {})
+            health = health_info.get("health", "")
+            if health:
+                display_status = f"{active_status} ({health})"
+            else:
+                display_status = active_status
 
             # Get last deployment from database
             db_path = cfg.get_db_path(ex)
@@ -161,9 +181,42 @@ def _list_instances_impl(
 
             row = (
                 f"{inst_type.value:<10} {id_:<10} {service:<28} {unit:<24} "
-                f"{active_status:<12} {image_tag:<38} {deployed:<20} {action:<10}"
+                f"{display_status:<22} {image_tag:<38} {deployed:<20} {action:<10}"
             )
             print(row)
+
+
+@app.command
+def ps(
+    instance_type: TypeSelector = None,
+    web: WebFlag = False,
+    worker: WorkerFlag = False,
+    scheduler: SchedulerFlag = False,
+):
+    """Show running OTS containers (podman view).
+
+    Displays the podman-native view of containers, including health status.
+    Filters to the selected instance type when --web/--worker/--scheduler is given.
+
+    Examples:
+        ots instances ps                    # All OTS containers
+        ots instances ps --web              # Web containers only
+        ots instances ps --scheduler        # Scheduler containers only
+    """
+    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
+
+    if itype is not None:
+        name_filter = f"name=systemd-onetime-{itype.value}"
+    else:
+        name_filter = "name=systemd-onetime"
+
+    p.ps(
+        filter=name_filter,
+        format="table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}",
+    )
 
 
 @app.default
