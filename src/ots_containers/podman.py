@@ -66,7 +66,7 @@ class Podman:
         """
         cmd = [self.executable, *self._subcommand]
         for key, value in kwargs.items():
-            if key in ("capture_output", "text", "check", "timeout"):
+            if key in ("capture_output", "text", "check", "timeout", "input"):
                 continue
             flag = f"--{key.replace('_', '-')}"
             if isinstance(value, bool):
@@ -80,17 +80,20 @@ class Podman:
         cmd.extend(args)
 
         if self._executor is None:
-            return subprocess.run(
-                cmd,
+            sub_kwargs: dict = dict(
                 capture_output=kwargs.get("capture_output", False),
                 text=kwargs.get("text", False),
                 check=kwargs.get("check", False),
             )
+            if "input" in kwargs:
+                sub_kwargs["input"] = kwargs["input"]
+            return subprocess.run(cmd, **sub_kwargs)
 
         return self._executor.run(
             cmd,
             timeout=kwargs.get("timeout"),
             check=kwargs.get("check", False),
+            input=kwargs.get("input"),
         )
 
     def __getattr__(self, name: str):

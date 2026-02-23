@@ -745,8 +745,9 @@ def login(
         p.login(
             reg,
             username=user,
-            password=pw,
+            password_stdin=True,
             authfile=str(cfg.registry_auth_file),
+            input=pw,
             check=True,
             capture_output=True,
             text=True,
