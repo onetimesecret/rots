@@ -4,7 +4,7 @@
 import pytest
 import yaml
 
-from ots_containers.commands.cloudinit.app import app
+from rots.commands.cloudinit.app import app
 
 
 class TestCloudInitGenerate:

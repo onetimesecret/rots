@@ -5,8 +5,8 @@ Verifies the precedence chain:
   positional reference > --tag flag > TAG env > @current alias > DEFAULT_TAG
 """
 
-from ots_containers.commands import instance
-from ots_containers.config import DEFAULT_IMAGE
+from rots.commands import instance
+from rots.config import DEFAULT_IMAGE
 
 
 def _make_mock_config(mocker, tmp_path, image=DEFAULT_IMAGE, tag="@current"):
@@ -34,13 +34,13 @@ def _make_mock_config(mocker, tmp_path, image=DEFAULT_IMAGE, tag="@current"):
 def _setup_deploy_mocks(mocker, tmp_path, **config_kwargs):
     """Set up all mocks needed for deploy to succeed, returning (mock_config, replace_calls)."""
     mock_config = _make_mock_config(mocker, tmp_path, **config_kwargs)
-    mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-    mocker.patch("ots_containers.commands.instance.app.assets.update")
-    mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-    mocker.patch("ots_containers.commands.instance.app.quadlet.write_worker_template")
-    mocker.patch("ots_containers.commands.instance.app.quadlet.write_scheduler_template")
-    mocker.patch("ots_containers.commands.instance.app.systemd.start")
-    mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+    mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+    mocker.patch("rots.commands.instance.app.assets.update")
+    mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+    mocker.patch("rots.commands.instance.app.quadlet.write_worker_template")
+    mocker.patch("rots.commands.instance.app.quadlet.write_scheduler_template")
+    mocker.patch("rots.commands.instance.app.systemd.start")
+    mocker.patch("rots.commands.instance.app.db.record_deployment")
 
     # Track dataclasses.replace calls to verify image/tag overrides
     replace_calls = []
@@ -56,9 +56,7 @@ def _setup_deploy_mocks(mocker, tmp_path, **config_kwargs):
         obj.resolve_image_tag.return_value = (new_image, new_tag)
         return obj
 
-    mocker.patch(
-        "ots_containers.commands.instance.app.dataclasses.replace", side_effect=tracking_replace
-    )
+    mocker.patch("rots.commands.instance.app.dataclasses.replace", side_effect=tracking_replace)
 
     return mock_config, replace_calls
 
@@ -68,13 +66,13 @@ def _setup_redeploy_mocks(mocker, tmp_path, **config_kwargs):
     mock_config, replace_calls = _setup_deploy_mocks(mocker, tmp_path, **config_kwargs)
     # Redeploy needs resolve_identifiers to find running instances
     mocker.patch(
-        "ots_containers.commands.instance.app.resolve_identifiers",
+        "rots.commands.instance.app.resolve_identifiers",
         side_effect=lambda ids, itype, running_only=False, executor=None: (
             {itype: list(ids)} if ids else {}
         ),
     )
-    mocker.patch("ots_containers.commands.instance.app.systemd.container_exists", return_value=True)
-    mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
+    mocker.patch("rots.commands.instance.app.systemd.container_exists", return_value=True)
+    mocker.patch("rots.commands.instance.app.systemd.recreate")
     return mock_config, replace_calls
 
 
@@ -198,11 +196,11 @@ class TestDeployImageReference:
             image="ghcr.io/env/image",
             tag="env-tag",
         )
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.deploy(identifiers=("7043",), web=True, quiet=True)
 

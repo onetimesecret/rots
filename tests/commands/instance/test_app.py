@@ -8,10 +8,10 @@ requiring actual podman/systemd infrastructure.
 
 import pytest
 
-from ots_containers.commands import instance
-from ots_containers.commands.instance._helpers import format_command
-from ots_containers.commands.instance.annotations import InstanceType
-from ots_containers.config import Config
+from rots.commands import instance
+from rots.commands.instance._helpers import format_command
+from rots.commands.instance.annotations import InstanceType
+from rots.config import Config
 
 
 @pytest.fixture(autouse=True)
@@ -92,7 +92,7 @@ class TestInstanceHelp:
 
     def test_instance_deploy_help(self, capsys):
         """instance deploy --help should work."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         with pytest.raises(SystemExit) as exc_info:
             app(["instance", "deploy", "--help"])
@@ -102,7 +102,7 @@ class TestInstanceHelp:
 
     def test_instance_redeploy_help(self, capsys):
         """instance redeploy --help should work."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         with pytest.raises(SystemExit) as exc_info:
             app(["instance", "redeploy", "--help"])
@@ -112,7 +112,7 @@ class TestInstanceHelp:
 
     def test_instance_run_help(self, capsys):
         """instance run --help should work."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         with pytest.raises(SystemExit) as exc_info:
             app(["instance", "run", "--help"])
@@ -142,11 +142,11 @@ class TestRunCommand:
         mock_config.config_dir.mkdir()
         mock_config.registry = None
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -182,25 +182,25 @@ class TestRunCommand:
         mock_config.existing_config_files = []
         mock_config.registry = None
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Create env file with secrets
         env_file = tmp_path / "onetimesecret"
         env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\n")
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             env_file,
         )
 
         # Mock get_secrets_from_env_file (imported inside run function)
-        from ots_containers.environment_file import SecretSpec
+        from rots.environment_file import SecretSpec
 
         mock_secrets = [
             SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
             SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
         ]
         mocker.patch(
-            "ots_containers.environment_file.get_secrets_from_env_file",
+            "rots.environment_file.get_secrets_from_env_file",
             return_value=mock_secrets,
         )
 
@@ -227,7 +227,7 @@ class TestRunCommand:
         mock_config = mocker.MagicMock()
         mock_config.resolve_image_tag.return_value = ("onetimesecret", "latest")
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Call run command without production flag
         instance.run(port=7143, detach=True, quiet=True)
@@ -254,11 +254,11 @@ class TestDeployCommand:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         # Should not raise SystemExit - validation no longer blocks deploy
         instance.deploy(identifiers=("7143",), web=True)
@@ -286,13 +286,11 @@ class TestDeployCommand:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mock_assets = mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mock_quadlet = mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.write_web_template"
-        )
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mock_assets = mocker.patch("rots.commands.instance.app.assets.update")
+        mock_quadlet = mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.deploy(identifiers=("7143",), web=True)
 
@@ -317,12 +315,10 @@ class TestDeployWorkerCommand:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mock_quadlet = mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.write_worker_template"
-        )
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mock_quadlet = mocker.patch("rots.commands.instance.app.quadlet.write_worker_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.deploy(identifiers=("1",), worker=True)
 
@@ -342,11 +338,11 @@ class TestDeployWorkerCommand:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mock_assets = mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_worker_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mock_assets = mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_worker_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.deploy(identifiers=("1",), worker=True)
 
@@ -364,10 +360,10 @@ class TestDeployWorkerCommand:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_worker_template")
-        mock_start = mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.quadlet.write_worker_template")
+        mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.deploy(identifiers=("1",), worker=True)
 
@@ -380,15 +376,15 @@ class TestRedeployCommand:
     def test_redeploy_with_no_instances_found(self, mocker, capsys):
         """redeploy with no instances should print message."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -408,25 +404,25 @@ class TestRedeployCommand:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7143],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.container_exists",
+            "rots.commands.instance.app.systemd.container_exists",
             return_value=True,
         )
 
@@ -480,15 +476,15 @@ class TestExecCommand:
     def test_exec_with_no_instances(self, mocker, capsys):
         """exec_shell with no running instances should report none found."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
         instance.exec_shell(identifiers=())
@@ -498,7 +494,7 @@ class TestExecCommand:
     def test_exec_calls_podman_exec(self, mocker, capsys):
         """exec_shell should call run_interactive with correct container name."""
         mock_config = mocker.MagicMock()
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mock_ex = mock_config.get_executor()
         mock_ex.run_interactive.return_value = 0
         mocker.patch.dict("os.environ", {"SHELL": "/bin/bash"})
@@ -523,15 +519,15 @@ class TestListInstancesCommand:
     def test_list_with_no_instances(self, mocker, capsys):
         """list should print message when no instances found."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -543,19 +539,19 @@ class TestListInstancesCommand:
     def test_list_displays_header(self, mocker, capsys, tmp_path):
         """list should display table header."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.is_active",
+            "rots.commands.instance.app.systemd.is_active",
             return_value="active",
         )
 
@@ -564,11 +560,11 @@ class TestListInstancesCommand:
         mock_config.db_path = tmp_path / "test.db"
         mock_config.get_executor.return_value = None
         mocker.patch(
-            "ots_containers.commands.instance.app.Config",
+            "rots.commands.instance.app.Config",
             return_value=mock_config,
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.db.get_deployments",
+            "rots.commands.instance.app.db.get_deployments",
             return_value=[],
         )
 
@@ -593,18 +589,18 @@ class TestEnableCommand:
     def test_enable_calls_systemctl(self, mocker, capsys):
         """enable should call systemd.enable()."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
-        mock_enable = mocker.patch("ots_containers.commands.instance.app.systemd.enable")
+        mock_enable = mocker.patch("rots.commands.instance.app.systemd.enable")
 
         instance.enable(identifiers=("7043",), web=True)
 
@@ -624,7 +620,7 @@ class TestStopCommand:
 
     def test_stop_calls_systemd_stop(self, mocker, capsys):
         """stop should call systemd.stop for each instance."""
-        mock_stop = mocker.patch("ots_containers.commands.instance.app.systemd.stop")
+        mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
         instance.stop(identifiers=("7043",), web=True)
 
@@ -635,18 +631,18 @@ class TestStopCommand:
     def test_stop_discovers_instances_when_no_identifiers(self, mocker):
         """stop with no identifiers should discover all types."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043, 7044],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=["1"],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
-        mock_stop = mocker.patch("ots_containers.commands.instance.app.systemd.stop")
+        mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
         instance.stop(identifiers=())
 
@@ -667,7 +663,7 @@ class TestRestartCommand:
 
     def test_restart_calls_systemd_restart(self, mocker, capsys):
         """restart should call systemd.restart for each instance."""
-        mock_restart = mocker.patch("ots_containers.commands.instance.app.systemd.restart")
+        mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
 
         instance.restart(identifiers=("7043",), web=True)
 
@@ -677,8 +673,8 @@ class TestRestartCommand:
 
     def test_restart_multiple(self, mocker, capsys):
         """restart should call systemd.restart for each instance with delay."""
-        mock_restart = mocker.patch("ots_containers.commands.instance.app.systemd.restart")
-        mock_sleep = mocker.patch("ots_containers.commands.instance._helpers.time.sleep")
+        mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
+        mock_sleep = mocker.patch("rots.commands.instance._helpers.time.sleep")
 
         instance.restart(identifiers=("7043", "7044", "7045"), web=True)
 
@@ -703,15 +699,15 @@ class TestLogsCommand:
     def test_logs_discovers_all_instances_when_no_identifiers(self, mocker):
         """logs with no identifiers should discover all instances."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043, 7044],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=["1"],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
         mock_run = mocker.patch("subprocess.run")
@@ -742,15 +738,15 @@ class TestDisableCommand:
     def test_disable_aborts_without_confirmation(self, mocker, capsys):
         """disable should abort without --yes if user declines."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
         mocker.patch("builtins.input", return_value="n")
@@ -763,18 +759,18 @@ class TestDisableCommand:
     def test_disable_calls_systemctl(self, mocker, capsys):
         """disable should call systemctl disable with --yes."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
-        mock_disable = mocker.patch("ots_containers.commands.instance._helpers.systemd.disable")
+        mock_disable = mocker.patch("rots.commands.instance._helpers.systemd.disable")
 
         instance.disable(identifiers=("7043",), web=True, yes=True)
 
@@ -791,14 +787,14 @@ class TestResolveInstanceType:
 
     def test_returns_none_when_no_type_specified(self):
         """Should return None when no type specified."""
-        from ots_containers.commands.instance.annotations import resolve_instance_type
+        from rots.commands.instance.annotations import resolve_instance_type
 
         result = resolve_instance_type(None, web=False, worker=False, scheduler=False)
         assert result is None
 
     def test_returns_type_from_explicit_param(self):
         """Should return type from --type parameter."""
-        from ots_containers.commands.instance.annotations import resolve_instance_type
+        from rots.commands.instance.annotations import resolve_instance_type
 
         result = resolve_instance_type(
             InstanceType.WORKER, web=False, worker=False, scheduler=False
@@ -807,35 +803,35 @@ class TestResolveInstanceType:
 
     def test_returns_web_from_flag(self):
         """Should return WEB when --web flag set."""
-        from ots_containers.commands.instance.annotations import resolve_instance_type
+        from rots.commands.instance.annotations import resolve_instance_type
 
         result = resolve_instance_type(None, web=True, worker=False, scheduler=False)
         assert result == InstanceType.WEB
 
     def test_returns_worker_from_flag(self):
         """Should return WORKER when --worker flag set."""
-        from ots_containers.commands.instance.annotations import resolve_instance_type
+        from rots.commands.instance.annotations import resolve_instance_type
 
         result = resolve_instance_type(None, web=False, worker=True, scheduler=False)
         assert result == InstanceType.WORKER
 
     def test_returns_scheduler_from_flag(self):
         """Should return SCHEDULER when --scheduler flag set."""
-        from ots_containers.commands.instance.annotations import resolve_instance_type
+        from rots.commands.instance.annotations import resolve_instance_type
 
         result = resolve_instance_type(None, web=False, worker=False, scheduler=True)
         assert result == InstanceType.SCHEDULER
 
     def test_raises_on_multiple_flags(self):
         """Should raise when multiple shorthand flags set."""
-        from ots_containers.commands.instance.annotations import resolve_instance_type
+        from rots.commands.instance.annotations import resolve_instance_type
 
         with pytest.raises(SystemExit):
             resolve_instance_type(None, web=True, worker=True, scheduler=False)
 
     def test_raises_on_type_plus_flag(self):
         """Should raise when both --type and shorthand flag used."""
-        from ots_containers.commands.instance.annotations import resolve_instance_type
+        from rots.commands.instance.annotations import resolve_instance_type
 
         with pytest.raises(SystemExit):
             resolve_instance_type(InstanceType.WEB, web=False, worker=True, scheduler=False)
@@ -846,7 +842,7 @@ class TestSchedulerCommands:
 
     def test_stop_scheduler_with_flag(self, mocker, capsys):
         """stop --scheduler should call systemd.stop for scheduler instances."""
-        mock_stop = mocker.patch("ots_containers.commands.instance.app.systemd.stop")
+        mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
         instance.stop(identifiers=("main",), scheduler=True)
 
@@ -856,7 +852,7 @@ class TestSchedulerCommands:
 
     def test_restart_scheduler_with_flag(self, mocker, capsys):
         """restart --scheduler should call systemd.restart for scheduler instances."""
-        mock_restart = mocker.patch("ots_containers.commands.instance.app.systemd.restart")
+        mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
 
         instance.restart(identifiers=("main",), scheduler=True)
 
@@ -866,7 +862,7 @@ class TestSchedulerCommands:
 
     def test_start_scheduler_with_flag(self, mocker, capsys):
         """start --scheduler should call systemd.start for scheduler instances."""
-        mock_start = mocker.patch("ots_containers.commands.instance.app.systemd.start")
+        mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
 
         instance.start(identifiers=("main",), scheduler=True)
 
@@ -877,7 +873,7 @@ class TestSchedulerCommands:
     def test_status_scheduler_with_flag(self, mocker, capsys):
         """status --scheduler should show status for scheduler instances."""
         mock_status = mocker.patch(
-            "ots_containers.commands.instance.app.systemd.status",
+            "rots.commands.instance.app.systemd.status",
         )
 
         instance.status(identifiers=("main",), scheduler=True)
@@ -899,7 +895,7 @@ class TestSchedulerCommands:
 
     def test_enable_scheduler_with_flag(self, mocker, capsys):
         """enable --scheduler should call systemd.enable for scheduler instances."""
-        mock_enable = mocker.patch("ots_containers.commands.instance.app.systemd.enable")
+        mock_enable = mocker.patch("rots.commands.instance.app.systemd.enable")
 
         instance.enable(identifiers=("main",), scheduler=True)
 
@@ -907,7 +903,7 @@ class TestSchedulerCommands:
 
     def test_disable_scheduler_with_flag(self, mocker, capsys):
         """disable --scheduler should call systemd.disable for scheduler instances."""
-        mock_disable = mocker.patch("ots_containers.commands.instance.app.systemd.disable")
+        mock_disable = mocker.patch("rots.commands.instance.app.systemd.disable")
 
         instance.disable(identifiers=("main",), scheduler=True, yes=True)
 
@@ -916,10 +912,10 @@ class TestSchedulerCommands:
     def test_stop_discovers_scheduler_instances(self, mocker):
         """stop --scheduler with no identifiers should discover scheduler instances."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=["main", "cron"],
         )
-        mock_stop = mocker.patch("ots_containers.commands.instance.app.systemd.stop")
+        mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
         instance.stop(identifiers=(), scheduler=True)
 
@@ -931,10 +927,10 @@ class TestSchedulerCommands:
     def test_restart_discovers_scheduler_instances(self, mocker):
         """restart --scheduler with no identifiers should discover scheduler instances."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=["main"],
         )
-        mock_restart = mocker.patch("ots_containers.commands.instance.app.systemd.restart")
+        mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
 
         instance.restart(identifiers=(), scheduler=True)
 
@@ -942,7 +938,7 @@ class TestSchedulerCommands:
 
     def test_multiple_scheduler_identifiers(self, mocker, capsys):
         """Commands should handle multiple scheduler identifiers."""
-        mock_stop = mocker.patch("ots_containers.commands.instance.app.systemd.stop")
+        mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
         instance.stop(identifiers=("main", "cron", "backup"), scheduler=True)
 
@@ -954,7 +950,7 @@ class TestSchedulerCommands:
 
     def test_scheduler_with_type_parameter(self, mocker, capsys):
         """Commands should work with --type scheduler instead of --scheduler flag."""
-        mock_stop = mocker.patch("ots_containers.commands.instance.app.systemd.stop")
+        mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
         instance.stop(identifiers=("main",), instance_type=InstanceType.SCHEDULER)
 
@@ -962,7 +958,7 @@ class TestSchedulerCommands:
 
     def test_scheduler_named_instances(self, mocker, capsys):
         """Scheduler should accept string identifiers (not just numeric)."""
-        mock_restart = mocker.patch("ots_containers.commands.instance.app.systemd.restart")
+        mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
 
         instance.restart(identifiers=("daily-cleanup", "weekly-reports"), scheduler=True)
 
@@ -995,7 +991,7 @@ class TestDeployEnvVarResolution:
 
         # Mock db_path to avoid touching real filesystem
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1013,16 +1009,16 @@ class TestDeployEnvVarResolution:
 
         # Mock db_path
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
 
         # Mock all external calls needed for non-dry-run deploy
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.deploy(identifiers=("7043",), web=True)
 
@@ -1054,14 +1050,14 @@ class TestRedeployEnvVarResolution:
 
         # Mock db_path
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
 
         # Mock resolve_identifiers to return some instances
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
 
@@ -1078,26 +1074,26 @@ class TestRedeployEnvVarResolution:
 
         # Mock db_path
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
 
         # Mock resolve_identifiers to return some instances
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
 
         # Mock all external calls needed for non-dry-run redeploy
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.container_exists",
+            "rots.commands.instance.app.systemd.container_exists",
             return_value=True,
         )
-        mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
-        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.redeploy(identifiers=("7043",), web=True)
 
@@ -1125,11 +1121,11 @@ class TestDeployPermissionError:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.assets.update")
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.write_web_template",
+            "rots.commands.instance.app.quadlet.write_web_template",
             side_effect=PermissionError(
                 "[Errno 13] Permission denied: '/etc/containers/systemd/onetime-web@.container'"
             ),
@@ -1149,16 +1145,16 @@ class TestDeployPermissionError:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.assets.update")
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.write_web_template",
+            "rots.commands.instance.app.quadlet.write_web_template",
             side_effect=PermissionError(
                 "[Errno 13] Permission denied: '/etc/containers/systemd/onetime-web@.container'"
             ),
         )
-        mock_start = mocker.patch("ots_containers.commands.instance.app.systemd.start")
+        mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
 
         with pytest.raises(PermissionError):
             instance.deploy(identifiers=("7143",), web=True)
@@ -1175,7 +1171,7 @@ class TestDeployPortConflict:
 
     def test_deploy_systemctl_start_failure_records_failure(self, mocker, tmp_path):
         """SystemctlError from start should be caught, recorded as failed, and re-raised."""
-        from ots_containers.systemd import SystemctlError
+        from rots.systemd import SystemctlError
 
         mock_config = mocker.MagicMock()
         mock_config.config_dir = mocker.MagicMock()
@@ -1186,19 +1182,19 @@ class TestDeployPortConflict:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.start",
+            "rots.commands.instance.app.systemd.start",
             side_effect=SystemctlError(
                 "onetime-web@7143",
                 "start",
                 "Error response from daemon: address already in use: bind: 0.0.0.0:7143",
             ),
         )
-        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         with pytest.raises(SystemExit):
             instance.deploy(identifiers=("7143",), web=True)
@@ -1212,7 +1208,7 @@ class TestDeployPortConflict:
         self, mocker, tmp_path
     ):
         """After a start failure the loop should abort; subsequent instances must not start."""
-        from ots_containers.systemd import SystemctlError
+        from rots.systemd import SystemctlError
 
         mock_config = mocker.MagicMock()
         mock_config.config_dir = mocker.MagicMock()
@@ -1223,15 +1219,15 @@ class TestDeployPortConflict:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
         mock_start = mocker.patch(
-            "ots_containers.commands.instance.app.systemd.start",
+            "rots.commands.instance.app.systemd.start",
             side_effect=SystemctlError("onetime-web@7143", "start", "address already in use"),
         )
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         with pytest.raises(SystemExit):
             instance.deploy(identifiers=("7143", "7144"), web=True)
@@ -1258,16 +1254,16 @@ class TestDeployPartialFailure:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
-        mock_assets = mocker.patch("ots_containers.commands.instance.app.assets.update")
+        mock_assets = mocker.patch("rots.commands.instance.app.assets.update")
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.write_web_template",
+            "rots.commands.instance.app.quadlet.write_web_template",
             side_effect=PermissionError(
                 "[Errno 13] Permission denied: '/etc/containers/systemd/onetime-web@.container'"
             ),
         )
-        mock_start = mocker.patch("ots_containers.commands.instance.app.systemd.start")
+        mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
 
         with pytest.raises(PermissionError):
             instance.deploy(identifiers=("7143",), web=True)
@@ -1290,12 +1286,12 @@ class TestDeployPartialFailure:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.assets.update")
         target_path = "/etc/containers/systemd/onetime-web@.container"
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.write_web_template",
+            "rots.commands.instance.app.quadlet.write_web_template",
             side_effect=PermissionError(f"[Errno 13] Permission denied: '{target_path}'"),
         )
 
@@ -1329,14 +1325,12 @@ class TestDeployWaitFlag:
     def test_deploy_with_wait_calls_wait_for_http_healthy(self, mocker, tmp_path):
         """--wait should call wait_for_http_healthy with correct port and 60s timeout."""
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
-        mock_http_healthy = mocker.patch(
-            "ots_containers.commands.instance.app.systemd.wait_for_http_healthy"
-        )
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
+        mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
         instance.deploy(identifiers=("7043",), web=True, wait=True)
 
@@ -1347,14 +1341,12 @@ class TestDeployWaitFlag:
     def test_deploy_without_wait_does_not_call_wait_for_http_healthy(self, mocker, tmp_path):
         """Omitting --wait should not call wait_for_http_healthy."""
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
-        mock_http_healthy = mocker.patch(
-            "ots_containers.commands.instance.app.systemd.wait_for_http_healthy"
-        )
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
+        mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
         instance.deploy(identifiers=("7043",), web=True, wait=False)
 
@@ -1372,13 +1364,11 @@ class TestDeployWaitFlag:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_worker_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
-        mock_http_healthy = mocker.patch(
-            "ots_containers.commands.instance.app.systemd.wait_for_http_healthy"
-        )
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.quadlet.write_worker_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
+        mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
         instance.deploy(identifiers=("1",), worker=True, wait=True)
 
@@ -1396,13 +1386,11 @@ class TestDeployWaitFlag:
         mock_config.existing_config_files = []
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_scheduler_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
-        mock_http_healthy = mocker.patch(
-            "ots_containers.commands.instance.app.systemd.wait_for_http_healthy"
-        )
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.quadlet.write_scheduler_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
+        mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
         instance.deploy(identifiers=("main",), scheduler=True, wait=True)
 
@@ -1410,16 +1398,16 @@ class TestDeployWaitFlag:
 
     def test_deploy_wait_http_timeout_records_failure_and_exits(self, mocker, tmp_path):
         """When wait_for_http_healthy times out, deployment failure is recorded and exits 1."""
-        from ots_containers.systemd import HttpHealthCheckTimeoutError
+        from rots.systemd import HttpHealthCheckTimeoutError
 
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.wait_for_http_healthy",
+            "rots.commands.instance.app.systemd.wait_for_http_healthy",
             side_effect=HttpHealthCheckTimeoutError(7043, 60, "Connection refused"),
         )
 
@@ -1455,34 +1443,32 @@ class TestRedeployWaitFlag:
     def _patch_discover(self, mocker, web_ports=(7043,)):
         """Patch instance discovery to return specific ports."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=list(web_ports),
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
     def test_redeploy_with_wait_calls_wait_for_http_healthy(self, mocker, tmp_path):
         """--wait on redeploy should call wait_for_http_healthy with correct port."""
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         self._patch_discover(mocker)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.container_exists",
+            "rots.commands.instance.app.systemd.container_exists",
             return_value=True,
         )
-        mock_http_healthy = mocker.patch(
-            "ots_containers.commands.instance.app.systemd.wait_for_http_healthy"
-        )
+        mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
         instance.redeploy(identifiers=(), web=True, wait=True)
 
@@ -1495,19 +1481,17 @@ class TestRedeployWaitFlag:
     def test_redeploy_without_wait_does_not_call_wait_for_http_healthy(self, mocker, tmp_path):
         """Omitting --wait on redeploy should not call wait_for_http_healthy."""
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         self._patch_discover(mocker)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.container_exists",
+            "rots.commands.instance.app.systemd.container_exists",
             return_value=True,
         )
-        mock_http_healthy = mocker.patch(
-            "ots_containers.commands.instance.app.systemd.wait_for_http_healthy"
-        )
+        mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
         instance.redeploy(identifiers=(), web=True, wait=False)
 
@@ -1515,21 +1499,21 @@ class TestRedeployWaitFlag:
 
     def test_redeploy_wait_records_failure_on_http_timeout(self, mocker, tmp_path):
         """When wait_for_http_healthy times out during redeploy, failure is recorded."""
-        from ots_containers.systemd import HttpHealthCheckTimeoutError
+        from rots.systemd import HttpHealthCheckTimeoutError
 
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         self._patch_discover(mocker)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
-        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.container_exists",
+            "rots.commands.instance.app.systemd.container_exists",
             return_value=True,
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.wait_for_http_healthy",
+            "rots.commands.instance.app.systemd.wait_for_http_healthy",
             side_effect=HttpHealthCheckTimeoutError(7043, 60, "Connection refused"),
         )
 
@@ -1633,14 +1617,14 @@ class TestRollbackCommand:
         cfg_mock.web_template_path = tmp_path / "onetime-web@.container"
         cfg_mock.worker_template_path = tmp_path / "onetime-worker@.container"
         cfg_mock.scheduler_template_path = tmp_path / "onetime-scheduler@.container"
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=cfg_mock)
+        mocker.patch("rots.commands.instance.app.Config", return_value=cfg_mock)
         return cfg_mock
 
     def test_rollback_exits_when_no_history(self, mocker, tmp_path, capsys):
         """rollback should exit 1 when deployment history has fewer than 2 entries."""
         self._make_config_mock(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.db.get_previous_tags",
+            "rots.commands.instance.app.db.get_previous_tags",
             return_value=[("ghcr.io/ots/ots", "v1.0.0", "2025-01-01T00:00:00")],
         )
 
@@ -1655,7 +1639,7 @@ class TestRollbackCommand:
         """rollback should exit 1 when deployment history is completely empty."""
         self._make_config_mock(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.db.get_previous_tags",
+            "rots.commands.instance.app.db.get_previous_tags",
             return_value=[],
         )
 
@@ -1668,17 +1652,17 @@ class TestRollbackCommand:
         """rollback --dry-run should show from/to image:tag without systemd calls."""
         self._make_config_mock(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.db.get_previous_tags",
+            "rots.commands.instance.app.db.get_previous_tags",
             return_value=[
                 ("ghcr.io/ots/ots", "v2.0.0", "2025-02-01T00:00:00"),
                 ("ghcr.io/ots/ots", "v1.0.0", "2025-01-01T00:00:00"),
             ],
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={},
         )
-        mock_recreate = mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
+        mock_recreate = mocker.patch("rots.commands.instance.app.systemd.recreate")
 
         instance.rollback(web=True, dry_run=True)
 
@@ -1694,14 +1678,14 @@ class TestRollbackCommand:
 
         self._make_config_mock(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.db.get_previous_tags",
+            "rots.commands.instance.app.db.get_previous_tags",
             return_value=[
                 ("ghcr.io/ots/ots", "v2.0.0", "2025-02-01T00:00:00"),
                 ("ghcr.io/ots/ots", "v1.0.0", "2025-01-01T00:00:00"),
             ],
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={},
         )
 
@@ -1718,28 +1702,28 @@ class TestRollbackCommand:
 
     def test_rollback_updates_aliases_and_redeploys(self, mocker, tmp_path, capsys):
         """rollback should call db.rollback then recreate running instances."""
-        from ots_containers.commands.instance.annotations import InstanceType
+        from rots.commands.instance.annotations import InstanceType
 
         self._make_config_mock(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.db.get_previous_tags",
+            "rots.commands.instance.app.db.get_previous_tags",
             return_value=[
                 ("ghcr.io/ots/ots", "v2.0.0", "2025-02-01T00:00:00"),
                 ("ghcr.io/ots/ots", "v1.0.0", "2025-01-01T00:00:00"),
             ],
         )
         mock_db_rollback = mocker.patch(
-            "ots_containers.commands.instance.app.db.rollback",
+            "rots.commands.instance.app.db.rollback",
             return_value=("ghcr.io/ots/ots", "v1.0.0"),
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mock_recreate = mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
-        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mock_recreate = mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.rollback(web=True, yes=True)
 
@@ -1751,14 +1735,14 @@ class TestRollbackCommand:
         """When db.rollback returns None, rollback should exit 1."""
         self._make_config_mock(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.db.get_previous_tags",
+            "rots.commands.instance.app.db.get_previous_tags",
             return_value=[
                 ("ghcr.io/ots/ots", "v2.0.0", "2025-02-01T00:00:00"),
                 ("ghcr.io/ots/ots", "v1.0.0", "2025-01-01T00:00:00"),
             ],
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.db.rollback",
+            "rots.commands.instance.app.db.rollback",
             return_value=None,
         )
 
@@ -1771,21 +1755,21 @@ class TestRollbackCommand:
         """rollback when no instances are running should succeed (just update aliases)."""
         self._make_config_mock(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.db.get_previous_tags",
+            "rots.commands.instance.app.db.get_previous_tags",
             return_value=[
                 ("ghcr.io/ots/ots", "v2.0.0", "2025-02-01T00:00:00"),
                 ("ghcr.io/ots/ots", "v1.0.0", "2025-01-01T00:00:00"),
             ],
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.db.rollback",
+            "rots.commands.instance.app.db.rollback",
             return_value=("ghcr.io/ots/ots", "v1.0.0"),
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={},  # no running instances
         )
-        mock_recreate = mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
+        mock_recreate = mocker.patch("rots.commands.instance.app.systemd.recreate")
 
         instance.rollback(web=True, yes=True)
 
@@ -1815,12 +1799,12 @@ class TestDeployHooks:
     def test_pre_hook_is_called_before_deploy(self, mocker, tmp_path):
         """--pre-hook command must run before the deployment starts."""
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
-        mock_run_hook = mocker.patch("ots_containers.commands.instance.app.run_hook")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
+        mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
         instance.deploy(identifiers=("7043",), web=True, pre_hook="./scan.sh")
 
@@ -1833,12 +1817,12 @@ class TestDeployHooks:
     def test_post_hook_is_called_after_successful_deploy(self, mocker, tmp_path):
         """--post-hook command must run after all instances deploy successfully."""
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
-        mock_run_hook = mocker.patch("ots_containers.commands.instance.app.run_hook")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
+        mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
         instance.deploy(identifiers=("7043",), web=True, post_hook="./notify.sh")
 
@@ -1851,10 +1835,10 @@ class TestDeployHooks:
     def test_pre_hook_failure_aborts_deploy(self, mocker, tmp_path):
         """When --pre-hook exits non-zero, deployment must be aborted."""
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mock_start = mocker.patch("ots_containers.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
         mocker.patch(
-            "ots_containers.commands.instance.app.run_hook",
+            "rots.commands.instance.app.run_hook",
             side_effect=SystemExit(1),
         )
 
@@ -1870,11 +1854,9 @@ class TestDeployHooks:
         mock_config = self._make_mock_config(mocker, tmp_path)
         mock_config.web_template_path = tmp_path / "template"
         mock_config.web_template_path.touch()
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.render_web_template", return_value=""
-        )
-        mock_run_hook = mocker.patch("ots_containers.commands.instance.app.run_hook")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.quadlet.render_web_template", return_value="")
+        mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
         instance.deploy(identifiers=("7043",), web=True, pre_hook="./scan.sh", dry_run=True)
 
@@ -1885,11 +1867,9 @@ class TestDeployHooks:
         mock_config = self._make_mock_config(mocker, tmp_path)
         mock_config.web_template_path = tmp_path / "template"
         mock_config.web_template_path.touch()
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.render_web_template", return_value=""
-        )
-        mock_run_hook = mocker.patch("ots_containers.commands.instance.app.run_hook")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.quadlet.render_web_template", return_value="")
+        mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
         instance.deploy(identifiers=("7043",), web=True, post_hook="./notify.sh", dry_run=True)
 
@@ -1902,15 +1882,15 @@ class TestRedeployHooks:
     def _patch_discover(self, mocker, web_ports=(7043,)):
         """Patch instance discovery to return specific ports."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=list(web_ports),
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -1930,17 +1910,17 @@ class TestRedeployHooks:
     def test_pre_hook_is_called_before_redeploy(self, mocker, tmp_path):
         """--pre-hook must run before redeployment."""
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         self._patch_discover(mocker)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.container_exists",
+            "rots.commands.instance.app.systemd.container_exists",
             return_value=True,
         )
-        mock_run_hook = mocker.patch("ots_containers.commands.instance.app.run_hook")
+        mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
         instance.redeploy(identifiers=(), web=True, pre_hook="./scan.sh")
 
@@ -1953,17 +1933,17 @@ class TestRedeployHooks:
     def test_post_hook_is_called_after_successful_redeploy(self, mocker, tmp_path):
         """--post-hook must run after successful redeployment."""
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         self._patch_discover(mocker)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
-        mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.container_exists",
+            "rots.commands.instance.app.systemd.container_exists",
             return_value=True,
         )
-        mock_run_hook = mocker.patch("ots_containers.commands.instance.app.run_hook")
+        mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
         instance.redeploy(identifiers=(), web=True, post_hook="./notify.sh")
 
@@ -1976,11 +1956,11 @@ class TestRedeployHooks:
     def test_pre_hook_failure_aborts_redeploy(self, mocker, tmp_path):
         """When --pre-hook exits non-zero, redeployment must be aborted."""
         mock_config = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         self._patch_discover(mocker)
-        mock_recreate = mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
+        mock_recreate = mocker.patch("rots.commands.instance.app.systemd.recreate")
         mocker.patch(
-            "ots_containers.commands.instance.app.run_hook",
+            "rots.commands.instance.app.run_hook",
             side_effect=SystemExit(1),
         )
 
@@ -1996,12 +1976,12 @@ class TestRunHookExecutor:
 
     def test_run_hook_local_uses_subprocess(self, mocker):
         """run_hook without executor should use subprocess.run (local)."""
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mock_proc = mocker.MagicMock()
         mock_proc.returncode = 0
         mock_subprocess = mocker.patch(
-            "ots_containers.commands.instance._helpers.subprocess.run",
+            "rots.commands.instance._helpers.subprocess.run",
             return_value=mock_proc,
         )
 
@@ -2013,13 +1993,13 @@ class TestRunHookExecutor:
         """run_hook with remote executor should still use subprocess.run locally."""
         from unittest.mock import MagicMock
 
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mock_ex = MagicMock()
         mock_proc = mocker.MagicMock()
         mock_proc.returncode = 0
         mock_subprocess = mocker.patch(
-            "ots_containers.commands.instance._helpers.subprocess.run",
+            "rots.commands.instance._helpers.subprocess.run",
             return_value=mock_proc,
         )
 
@@ -2033,13 +2013,13 @@ class TestRunHookExecutor:
         """run_hook with remote executor still runs locally and raises on failure."""
         from unittest.mock import MagicMock
 
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mock_ex = MagicMock()
         mock_proc = mocker.MagicMock()
         mock_proc.returncode = 1
         mocker.patch(
-            "ots_containers.commands.instance._helpers.subprocess.run",
+            "rots.commands.instance._helpers.subprocess.run",
             return_value=mock_proc,
         )
 
@@ -2051,12 +2031,12 @@ class TestRunHookExecutor:
 
     def test_run_hook_local_failure_raises_system_exit(self, mocker):
         """run_hook local path should raise SystemExit on non-zero exit."""
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mock_proc = mocker.MagicMock()
         mock_proc.returncode = 42
         mocker.patch(
-            "ots_containers.commands.instance._helpers.subprocess.run",
+            "rots.commands.instance._helpers.subprocess.run",
             return_value=mock_proc,
         )
 
@@ -2097,18 +2077,18 @@ class TestEnableDisableRequireSystemctl:
     def test_enable_uses_systemd_module(self, mocker, capsys):
         """enable() should delegate to systemd.enable()."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
-        mock_enable = mocker.patch("ots_containers.commands.instance.app.systemd.enable")
+        mock_enable = mocker.patch("rots.commands.instance.app.systemd.enable")
 
         instance.enable(identifiers=("7043",), web=True)
 
@@ -2117,18 +2097,18 @@ class TestEnableDisableRequireSystemctl:
     def test_disable_uses_systemd_module(self, mocker, capsys):
         """disable() should delegate to systemd.disable()."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
-        mock_disable = mocker.patch("ots_containers.commands.instance.app.systemd.disable")
+        mock_disable = mocker.patch("rots.commands.instance.app.systemd.disable")
 
         instance.disable(identifiers=("7043",), web=True, yes=True)
 
@@ -2143,19 +2123,19 @@ class TestListInstancesJsonOutput:
         import json
 
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.is_active",
+            "rots.commands.instance.app.systemd.is_active",
             return_value="active",
         )
 
@@ -2163,11 +2143,11 @@ class TestListInstancesJsonOutput:
         mock_config.db_path = tmp_path / "test.db"
         mock_config.get_executor.return_value = None
         mocker.patch(
-            "ots_containers.commands.instance.app.Config",
+            "rots.commands.instance.app.Config",
             return_value=mock_config,
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.db.get_deployments",
+            "rots.commands.instance.app.db.get_deployments",
             return_value=[],
         )
 
@@ -2186,19 +2166,19 @@ class TestListInstancesJsonOutput:
         import json
 
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.is_active",
+            "rots.commands.instance.app.systemd.is_active",
             return_value="active",
         )
 
@@ -2206,7 +2186,7 @@ class TestListInstancesJsonOutput:
         mock_config.db_path = tmp_path / "test.db"
         mock_config.get_executor.return_value = None
         mocker.patch(
-            "ots_containers.commands.instance.app.Config",
+            "rots.commands.instance.app.Config",
             return_value=mock_config,
         )
 
@@ -2216,7 +2196,7 @@ class TestListInstancesJsonOutput:
         mock_dep.timestamp = "2025-01-01T10:00:00.000000"
         mock_dep.action = "deploy-web"
         mocker.patch(
-            "ots_containers.commands.instance.app.db.get_deployments",
+            "rots.commands.instance.app.db.get_deployments",
             return_value=[mock_dep],
         )
 
@@ -2251,9 +2231,9 @@ class TestRunCommandExists:
             "v0.23.0",
         )
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -2281,9 +2261,9 @@ class TestRunCommandExists:
         mock_config.existing_config_files = []
         mock_config.resolve_image_tag.return_value = (mock_config.image, mock_config.tag)
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -2311,9 +2291,9 @@ class TestRunCommandExists:
         mock_config.existing_config_files = []
         mock_config.resolve_image_tag.return_value = (mock_config.image, mock_config.tag)
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -2326,7 +2306,7 @@ class TestRunCommandExists:
         """run --tag should use specified tag in image."""
         from unittest.mock import Mock
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         mock_executor = mocker.MagicMock()
         mock_executor.run_stream.return_value = 0
@@ -2334,9 +2314,9 @@ class TestRunCommandExists:
         cfg = Config()
         cfg.resolve_image_tag = Mock(return_value=(cfg.image, "v0.19.0"))
         cfg.get_executor = Mock(return_value=mock_executor)
-        mocker.patch("ots_containers.commands.instance.app.Config", lambda: cfg)
+        mocker.patch("rots.commands.instance.app.Config", lambda: cfg)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -2351,7 +2331,7 @@ class TestRunCommandExists:
             return obj
 
         mocker.patch(
-            "ots_containers.commands.instance.app.dataclasses.replace",
+            "rots.commands.instance.app.dataclasses.replace",
             side_effect=tracking_replace,
         )
 
@@ -2377,9 +2357,9 @@ class TestRunCommandExists:
             "v0.23.0",
         )
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -2402,9 +2382,9 @@ class TestRunCommandExists:
         mock_config.existing_config_files = []
         mock_config.resolve_image_tag.return_value = (mock_config.image, mock_config.tag)
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -2425,9 +2405,9 @@ class TestRunCommandExists:
         mock_config.existing_config_files = []
         mock_config.resolve_image_tag.return_value = (mock_config.image, mock_config.tag)
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -2449,9 +2429,9 @@ class TestRunCommandExists:
         mock_config.existing_config_files = []
         mock_config.resolve_image_tag.return_value = (mock_config.image, mock_config.tag)
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -2472,15 +2452,15 @@ class TestExecShellCommand:
     def test_exec_no_running_instances(self, mocker, capsys):
         """exec with no running instances should print message."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -2492,20 +2472,20 @@ class TestExecShellCommand:
     def test_exec_calls_podman_exec(self, mocker, capsys):
         """exec with running instances should call run_interactive."""
         mock_config = mocker.MagicMock()
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mock_ex = mock_config.get_executor()
         mock_ex.run_interactive.return_value = 0
 
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -2520,20 +2500,20 @@ class TestExecShellCommand:
     def test_exec_with_custom_command(self, mocker, capsys):
         """exec --command should pass custom shell via run_interactive."""
         mock_config = mocker.MagicMock()
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mock_ex = mock_config.get_executor()
         mock_ex.run_interactive.return_value = 0
 
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -2554,15 +2534,15 @@ class TestMetricsCommand:
     def test_metrics_no_instances(self, mocker, capsys):
         """metrics with no configured instances should print message."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -2576,15 +2556,15 @@ class TestMetricsCommand:
         import json
 
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -2599,15 +2579,15 @@ class TestMetricsCommand:
         import json
 
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -2656,15 +2636,15 @@ class TestMetricsCommand:
         import json
 
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -2719,15 +2699,15 @@ class TestMetricsCommand:
         import json
 
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -2784,16 +2764,16 @@ class TestRemoteExecutorPropagation:
         mock_config.has_custom_config = False
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         return mock_config, mock_executor
 
     def test_deploy_passes_executor_to_systemd_and_db(self, mocker, tmp_path):
         """deploy should pass executor to systemd.start and db.record_deployment."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mock_start = mocker.patch("ots_containers.commands.instance.app.systemd.start")
-        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
+        mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.deploy(identifiers=("7143",), web=True)
 
@@ -2807,25 +2787,25 @@ class TestRemoteExecutorPropagation:
         """redeploy should pass the executor to systemd.recreate and db.record_deployment."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=["7043"],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.container_exists",
+            "rots.commands.instance.app.systemd.container_exists",
             return_value=True,
         )
-        mock_recreate = mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
-        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mock_recreate = mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.redeploy(identifiers=(), web=True)
 
@@ -2836,28 +2816,28 @@ class TestRemoteExecutorPropagation:
 
     def test_rollback_passes_executor_to_systemd_and_db(self, mocker, tmp_path):
         """rollback should pass the executor to systemd.recreate and db.record_deployment."""
-        from ots_containers.commands.instance.annotations import InstanceType
+        from rots.commands.instance.annotations import InstanceType
 
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mock_get_tags = mocker.patch(
-            "ots_containers.commands.instance.app.db.get_previous_tags",
+            "rots.commands.instance.app.db.get_previous_tags",
             return_value=[
                 ("ghcr.io/ots/ots", "v2.0.0", "2025-02-01T00:00:00"),
                 ("ghcr.io/ots/ots", "v1.0.0", "2025-01-01T00:00:00"),
             ],
         )
         mock_rollback = mocker.patch(
-            "ots_containers.commands.instance.app.db.rollback",
+            "rots.commands.instance.app.db.rollback",
             return_value=("ghcr.io/ots/ots", "v1.0.0"),
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
-        mocker.patch("ots_containers.commands.instance.app.assets.update")
-        mocker.patch("ots_containers.commands.instance.app.quadlet.write_web_template")
-        mock_recreate = mocker.patch("ots_containers.commands.instance.app.systemd.recreate")
-        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mock_recreate = mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.rollback(web=True, yes=True)
 
@@ -2876,13 +2856,13 @@ class TestRemoteExecutorPropagation:
         """undeploy passes executor to systemd and db."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
-        mock_stop = mocker.patch("ots_containers.commands.instance.app.systemd.stop")
-        mock_disable = mocker.patch("ots_containers.commands.instance.app.systemd.disable")
-        mock_reset = mocker.patch("ots_containers.commands.instance.app.systemd.reset_failed")
-        mock_record = mocker.patch("ots_containers.commands.instance.app.db.record_deployment")
+        mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
+        mock_disable = mocker.patch("rots.commands.instance.app.systemd.disable")
+        mock_reset = mocker.patch("rots.commands.instance.app.systemd.reset_failed")
+        mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.undeploy(identifiers=("7043",), web=True, yes=True)
 
@@ -2899,10 +2879,10 @@ class TestRemoteExecutorPropagation:
         """start should pass executor to systemd.start."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
-        mock_start = mocker.patch("ots_containers.commands.instance.app.systemd.start")
+        mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
 
         instance.start(identifiers=("7043",), web=True)
 
@@ -2913,10 +2893,10 @@ class TestRemoteExecutorPropagation:
         """stop should pass executor to systemd.stop."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
-        mock_stop = mocker.patch("ots_containers.commands.instance.app.systemd.stop")
+        mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
         instance.stop(identifiers=("7043",), web=True)
 
@@ -2927,10 +2907,10 @@ class TestRemoteExecutorPropagation:
         """restart should pass executor to systemd.restart."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
-        mock_restart = mocker.patch("ots_containers.commands.instance.app.systemd.restart")
+        mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
 
         instance.restart(identifiers=("7043",), web=True, delay=0)
 
@@ -2941,10 +2921,10 @@ class TestRemoteExecutorPropagation:
         """enable should pass executor to systemd.enable."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
-        mock_enable = mocker.patch("ots_containers.commands.instance.app.systemd.enable")
+        mock_enable = mocker.patch("rots.commands.instance.app.systemd.enable")
 
         instance.enable(identifiers=("7043",), web=True)
 
@@ -2955,10 +2935,10 @@ class TestRemoteExecutorPropagation:
         """disable should pass executor to systemd.disable."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
-        mock_disable = mocker.patch("ots_containers.commands.instance.app.systemd.disable")
+        mock_disable = mocker.patch("rots.commands.instance.app.systemd.disable")
 
         instance.disable(identifiers=("7043",), web=True, yes=True)
 
@@ -2969,11 +2949,11 @@ class TestRemoteExecutorPropagation:
         """status should pass executor to systemd.is_active (json mode) and systemd.status."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
         mock_is_active = mocker.patch(
-            "ots_containers.commands.instance.app.systemd.is_active",
+            "rots.commands.instance.app.systemd.is_active",
             return_value="active",
         )
 
@@ -2986,10 +2966,10 @@ class TestRemoteExecutorPropagation:
         """status (text mode) should pass executor to systemd.status."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
-        mock_status = mocker.patch("ots_containers.commands.instance.app.systemd.status")
+        mock_status = mocker.patch("rots.commands.instance.app.systemd.status")
 
         instance.status(identifiers=("7043",), web=True, json_output=False)
 
@@ -3000,12 +2980,12 @@ class TestRemoteExecutorPropagation:
         """logs should route journalctl command through the executor."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
-        # _get_executor is imported from ots_containers.systemd inside logs()
+        # _get_executor is imported from rots.systemd inside logs()
         mocker.patch(
-            "ots_containers.systemd._get_executor",
+            "rots.systemd._get_executor",
             return_value=mock_executor,
         )
         mock_result = mocker.MagicMock()
@@ -3027,14 +3007,14 @@ class TestRemoteExecutorPropagation:
         mock_volume_result.returncode = 0
         mock_podman.volume.rm.return_value = mock_volume_result
         mocker.patch(
-            "ots_containers.commands.instance.app.Podman",
+            "rots.commands.instance.app.Podman",
             return_value=mock_podman,
         )
 
         instance.cleanup(yes=True)
 
         # Verify Podman was constructed with the executor
-        from ots_containers.commands.instance.app import Podman
+        from rots.commands.instance.app import Podman
 
         Podman.assert_called_once_with(executor=mock_executor)
 
@@ -3042,15 +3022,15 @@ class TestRemoteExecutorPropagation:
         """metrics should pass executor to systemd.is_active for status checks."""
         mock_config, mock_executor = self._make_mock_config(mocker, tmp_path)
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -3099,7 +3079,7 @@ class TestStreamingCommands:
             "ghcr.io/onetimesecret/onetimesecret",
             "v0.24.0",
         )
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         mock_ex = mocker.MagicMock()
         mock_ex.run.return_value = mocker.MagicMock(ok=True, stdout="abc123\n", stderr="")
@@ -3115,7 +3095,7 @@ class TestStreamingCommands:
         _mock_config.config_dir.mkdir()
         _mock_config.registry = None
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -3132,15 +3112,15 @@ class TestStreamingCommands:
         _mock_config, mock_ex = self._mock_executor(mocker)
         mocker.patch.dict("os.environ", {"SHELL": "/bin/bash"})
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 
@@ -3157,7 +3137,7 @@ class TestStreamingCommands:
         _mock_config.config_dir = tmp_path / "etc"
         _mock_config.config_dir.mkdir()
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -3175,7 +3155,7 @@ class TestStreamingCommands:
         _mock_config.config_dir = tmp_path / "etc"
         _mock_config.config_dir.mkdir()
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -3191,15 +3171,15 @@ class TestStreamingCommands:
         """logs -f should use run_stream (not run) for real-time output."""
         _mock_config, mock_ex = self._mock_executor(mocker)
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
 

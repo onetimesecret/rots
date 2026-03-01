@@ -13,7 +13,7 @@ import dataclasses
 
 import pytest
 
-from ots_containers.config import DEFAULT_IMAGE, DEFAULT_TAG, Config, parse_image_reference
+from rots.config import DEFAULT_IMAGE, DEFAULT_TAG, Config, parse_image_reference
 
 
 def _apply_reference_overrides(cfg, reference=None, tag_flag=None):

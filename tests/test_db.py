@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ots_containers import db
+from rots import db
 
 
 class TestInitDb:
@@ -1113,7 +1113,7 @@ def _make_ssh_executor(mocker):
     """Create a mock SSHExecutor that _is_remote() recognises as remote."""
     mock_ex = mocker.MagicMock()
     # Patch _is_remote to return True for this executor
-    mocker.patch("ots_containers.db._is_remote", side_effect=lambda ex: ex is mock_ex)
+    mocker.patch("rots.db._is_remote", side_effect=lambda ex: ex is mock_ex)
     return mock_ex
 
 
@@ -1956,7 +1956,7 @@ def _make_remote_executor_for_db(mocker, db_path):
     The mock patches _is_remote to return True for this executor.
     """
     mock_ex = MagicMock()
-    mocker.patch("ots_containers.db._is_remote", side_effect=lambda ex: ex is mock_ex)
+    mocker.patch("rots.db._is_remote", side_effect=lambda ex: ex is mock_ex)
     mock_ex.run.return_value = _make_remote_result()
     return mock_ex
 

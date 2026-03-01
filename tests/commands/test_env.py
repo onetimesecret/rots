@@ -12,14 +12,14 @@ from unittest.mock import patch
 
 import pytest
 
-from ots_containers.commands.env.app import (
+from rots.commands.env.app import (
     app,
     process,
     quadlet_lines,
     show,
     verify,
 )
-from ots_containers.environment_file import SecretSpec
+from rots.environment_file import SecretSpec
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -45,7 +45,7 @@ class TestFileExists:
         """_file_exists should return True for an existing local file."""
         from ots_shared.ssh import LocalExecutor
 
-        from ots_containers.commands.env.app import _file_exists
+        from rots.commands.env.app import _file_exists
 
         f = tmp_path / "test.env"
         f.write_text("KEY=VALUE\n")
@@ -56,7 +56,7 @@ class TestFileExists:
         """_file_exists should return False for a missing local file."""
         from ots_shared.ssh import LocalExecutor
 
-        from ots_containers.commands.env.app import _file_exists
+        from rots.commands.env.app import _file_exists
 
         f = tmp_path / "nonexistent"
         assert _file_exists(f, LocalExecutor()) is False
@@ -73,7 +73,7 @@ class TestFileExists:
         from ots_shared.ssh import SSHExecutor
         from ots_shared.ssh.executor import Result
 
-        from ots_containers.commands.env.app import _file_exists
+        from rots.commands.env.app import _file_exists
 
         client = MagicMock(spec=paramiko.SSHClient)
         ex = SSHExecutor(client)
@@ -95,7 +95,7 @@ class TestFileExists:
         from ots_shared.ssh import SSHExecutor
         from ots_shared.ssh.executor import Result
 
-        from ots_containers.commands.env.app import _file_exists
+        from rots.commands.env.app import _file_exists
 
         client = MagicMock(spec=paramiko.SSHClient)
         ex = SSHExecutor(client)
@@ -120,25 +120,25 @@ class TestEnvCommandExecutorWiring:
         from ots_shared.ssh import LocalExecutor
 
         mock_ex = LocalExecutor()
-        mocker.patch("ots_containers.commands.env.app.Config.get_executor", return_value=mock_ex)
+        mocker.patch("rots.commands.env.app.Config.get_executor", return_value=mock_ex)
 
         env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc123\n"
         env_file = _make_env_file(tmp_path, env_content)
 
-        mock_parse = mocker.patch("ots_containers.commands.env.app.EnvFile.parse")
+        mock_parse = mocker.patch("rots.commands.env.app.EnvFile.parse")
         mock_parsed = MagicMock()
         mock_parsed.secret_variable_names = ["HMAC_SECRET"]
         mock_parsed.get.return_value = "HMAC_SECRET"
         mock_parsed.has.side_effect = lambda k: k == "HMAC_SECRET"
         mock_parse.return_value = mock_parsed
 
-        mock_extract = mocker.patch("ots_containers.commands.env.app.extract_secrets")
+        mock_extract = mocker.patch("rots.commands.env.app.extract_secrets")
         mock_extract.return_value = (
             [SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret")],
             [],
         )
 
-        mock_secret_exists = mocker.patch("ots_containers.commands.env.app.secret_exists")
+        mock_secret_exists = mocker.patch("rots.commands.env.app.secret_exists")
         mock_secret_exists.return_value = True
 
         show(env_file=env_file)
@@ -154,17 +154,17 @@ class TestEnvCommandExecutorWiring:
         from ots_shared.ssh import LocalExecutor
 
         mock_ex = LocalExecutor()
-        mocker.patch("ots_containers.commands.env.app.Config.get_executor", return_value=mock_ex)
+        mocker.patch("rots.commands.env.app.Config.get_executor", return_value=mock_ex)
 
         env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\nHMAC_SECRET=abc\nAPI_KEY=xyz\n"
         env_file = _make_env_file(tmp_path, env_content)
 
-        mock_parse = mocker.patch("ots_containers.commands.env.app.EnvFile.parse")
+        mock_parse = mocker.patch("rots.commands.env.app.EnvFile.parse")
         mock_parsed = MagicMock()
         mock_parsed.secret_variable_names = ["HMAC_SECRET", "API_KEY"]
         mock_parse.return_value = mock_parsed
 
-        mock_extract = mocker.patch("ots_containers.commands.env.app.extract_secrets")
+        mock_extract = mocker.patch("rots.commands.env.app.extract_secrets")
         mock_extract.return_value = (
             [
                 SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
@@ -173,7 +173,7 @@ class TestEnvCommandExecutorWiring:
             [],
         )
 
-        mock_secret_exists = mocker.patch("ots_containers.commands.env.app.secret_exists")
+        mock_secret_exists = mocker.patch("rots.commands.env.app.secret_exists")
         mock_secret_exists.return_value = True
 
         verify(env_file=env_file)
@@ -216,7 +216,7 @@ class TestEnvAppExists:
 class TestEnvProcess:
     """Tests for the 'ots env process' command."""
 
-    @patch("ots_containers.commands.env.app.process_env_file")
+    @patch("rots.commands.env.app.process_env_file")
     def test_env_process_happy_path(self, mock_process, tmp_path, capsys):
         """process should report secrets created successfully."""
         env_content = (
@@ -239,7 +239,7 @@ class TestEnvProcess:
         assert "ots_api_key" in captured.out
         assert "[created]" in captured.out
 
-    @patch("ots_containers.commands.env.app.process_env_file")
+    @patch("rots.commands.env.app.process_env_file")
     def test_env_process_dry_run(self, mock_process, tmp_path, capsys):
         """process --dry-run should report dry-run and not write secrets."""
         env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc123\n"
@@ -281,7 +281,7 @@ class TestEnvProcess:
         captured = capsys.readouterr()
         assert "SECRET_VARIABLE_NAMES" in captured.out
 
-    @patch("ots_containers.commands.env.app.process_env_file")
+    @patch("rots.commands.env.app.process_env_file")
     def test_env_process_reports_errors(self, mock_process, tmp_path, capsys):
         """process should raise SystemExit(1) when secrets have errors (empty/missing)."""
         env_content = "SECRET_VARIABLE_NAMES=MISSING_VAR\n"
@@ -307,8 +307,8 @@ class TestEnvProcess:
 class TestEnvShow:
     """Tests for the 'ots env show' command."""
 
-    @patch("ots_containers.commands.env.app.secret_exists")
-    @patch("ots_containers.commands.env.app.extract_secrets")
+    @patch("rots.commands.env.app.secret_exists")
+    @patch("rots.commands.env.app.extract_secrets")
     def test_env_show_json(self, mock_extract, mock_exists, tmp_path, capsys):
         """show --json should output valid JSON with secret status."""
         import json
@@ -330,8 +330,8 @@ class TestEnvShow:
         assert data["secrets"][0]["env_var"] == "HMAC_SECRET"
         assert data["secrets"][0]["podman_status"] == "exists"
 
-    @patch("ots_containers.commands.env.app.secret_exists")
-    @patch("ots_containers.commands.env.app.extract_secrets")
+    @patch("rots.commands.env.app.secret_exists")
+    @patch("rots.commands.env.app.extract_secrets")
     def test_env_show_text_output(self, mock_extract, mock_exists, tmp_path, capsys):
         """show should print human-readable secret status."""
         env_content = "SECRET_VARIABLE_NAMES=API_KEY\nAPI_KEY=secret\n"
@@ -371,8 +371,8 @@ class TestEnvShow:
 class TestEnvVerify:
     """Tests for the 'ots env verify' command."""
 
-    @patch("ots_containers.commands.env.app.secret_exists")
-    @patch("ots_containers.commands.env.app.extract_secrets")
+    @patch("rots.commands.env.app.secret_exists")
+    @patch("rots.commands.env.app.extract_secrets")
     def test_env_verify_all_exist(self, mock_extract, mock_exists, tmp_path, capsys):
         """verify should succeed when all secrets exist."""
         env_content = (
@@ -393,8 +393,8 @@ class TestEnvVerify:
         captured = capsys.readouterr()
         assert "All secrets verified" in captured.out
 
-    @patch("ots_containers.commands.env.app.secret_exists")
-    @patch("ots_containers.commands.env.app.extract_secrets")
+    @patch("rots.commands.env.app.secret_exists")
+    @patch("rots.commands.env.app.extract_secrets")
     def test_env_verify_missing_secrets(self, mock_extract, mock_exists, tmp_path, capsys):
         """verify should raise SystemExit(1) when a secret is missing."""
         env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc123\n"
@@ -439,7 +439,7 @@ class TestEnvVerify:
 class TestEnvQuadletLines:
     """Tests for the 'ots env quadlet-lines' command."""
 
-    @patch("ots_containers.commands.env.app.extract_secrets")
+    @patch("rots.commands.env.app.extract_secrets")
     def test_quadlet_lines_outputs_secret_directives(self, mock_extract, tmp_path, capsys):
         """quadlet-lines should print Secret= directives for each secret."""
         env_content = (
@@ -490,7 +490,7 @@ class TestServiceInitNonNumericInstance:
         the fix lands: the call should produce a clean CLI error, not a raw
         Python traceback. Until fixed, we assert ValueError is raised.
         """
-        from ots_containers.commands.service.app import init
+        from rots.commands.service.app import init
 
         with pytest.raises((ValueError, SystemExit)):
             # 'primary' is non-numeric and port is None -> int('primary') raises
@@ -507,7 +507,7 @@ class TestEnableDisableWithoutSystemctl:
 
     def test_enable_without_systemctl(self, mocker, capsys):
         """enable should exit with code 1 and a helpful message when systemctl is absent."""
-        from ots_containers.commands.instance.app import enable
+        from rots.commands.instance.app import enable
 
         mocker.patch("shutil.which", return_value=None)
 
@@ -520,7 +520,7 @@ class TestEnableDisableWithoutSystemctl:
 
     def test_disable_without_systemctl(self, mocker, capsys):
         """disable should exit with code 1 and a helpful message when systemctl is absent."""
-        from ots_containers.commands.instance.app import disable
+        from rots.commands.instance.app import disable
 
         mocker.patch("shutil.which", return_value=None)
 
@@ -542,7 +542,7 @@ class TestPodmanTimeoutKwarg:
 
     def test_podman_timeout_kwarg_not_passed_as_flag(self, mocker):
         """Passing timeout= to Podman() should not add --timeout to the podman command."""
-        from ots_containers.podman import Podman
+        from rots.podman import Podman
 
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
@@ -556,7 +556,7 @@ class TestPodmanTimeoutKwarg:
 
     def test_podman_kwargs_capture_output_not_in_cmd(self, mocker):
         """capture_output should not be converted to a --capture-output flag."""
-        from ots_containers.podman import Podman
+        from rots.podman import Podman
 
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
@@ -580,7 +580,7 @@ class TestExecShellFallback:
 
     def test_exec_uses_command_override_when_provided(self, mocker):
         """exec_shell with --command should use that command, not host $SHELL."""
-        from ots_containers.commands.instance.app import exec_shell
+        from rots.commands.instance.app import exec_shell
 
         mocker.patch("shutil.which", return_value="/usr/bin/systemctl")
         mock_run = mocker.patch("subprocess.run")
@@ -588,7 +588,7 @@ class TestExecShellFallback:
 
         # Mock resolve_identifiers to return one instance
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={},
         )
 
@@ -604,16 +604,16 @@ class TestExecShellFallback:
         """
         import os
 
-        from ots_containers.commands.instance.annotations import InstanceType
-        from ots_containers.commands.instance.app import exec_shell
+        from rots.commands.instance.annotations import InstanceType
+        from rots.commands.instance.app import exec_shell
 
         mocker.patch("shutil.which", return_value="/usr/bin/systemctl")
         mocker.patch(
-            "ots_containers.commands.instance.app.resolve_identifiers",
+            "rots.commands.instance.app.resolve_identifiers",
             return_value={InstanceType.WEB: ["7043"]},
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.unit_to_container_name",
+            "rots.commands.instance.app.systemd.unit_to_container_name",
             return_value="systemd-onetime-web_7043",
         )
         mock_run = mocker.patch("subprocess.run")

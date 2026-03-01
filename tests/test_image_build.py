@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from ots_containers.commands.image.app import (
+from rots.commands.image.app import (
     _determine_build_tag,
     _get_git_hash,
     _is_dev_version,
@@ -216,7 +216,7 @@ class TestBuildCommand:
 
     def test_build_help_exits_zero(self, capsys):
         """ots image build --help should exit with code 0."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         with pytest.raises(SystemExit) as exc_info:
             app(["image", "build", "--help"])
@@ -224,7 +224,7 @@ class TestBuildCommand:
 
     def test_build_help_shows_options(self, capsys):
         """ots image build --help should show all options."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         with pytest.raises(SystemExit):
             app(["image", "build", "--help"])
@@ -239,7 +239,7 @@ class TestBuildCommand:
 
     def test_build_validates_project_dir(self, mocker, tmp_path):
         """Build should validate project directory before building."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         # tmp_path has no Containerfile or package.json
         with pytest.raises(SystemExit) as exc:
@@ -267,7 +267,7 @@ class TestBuildCommand:
 
         # Mock Config to use tmp_path for database
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -278,9 +278,9 @@ class TestBuildCommand:
         )
 
         # Mock db.record_deployment to avoid actual database operations
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
-        from ots_containers.cli import app
+        from rots.cli import app
 
         # cyclopts calls sys.exit(0) on success
         with pytest.raises(SystemExit) as exc:
@@ -312,7 +312,7 @@ class TestBuildCommand:
 
         # Mock Config without registry
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -322,9 +322,9 @@ class TestBuildCommand:
             ),
         )
 
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
-        from ots_containers.cli import app
+        from rots.cli import app
 
         with pytest.raises(SystemExit) as exc:
             app(["image", "build", "--project-dir", str(tmp_path), "--push"])

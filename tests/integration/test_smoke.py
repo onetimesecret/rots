@@ -1,5 +1,5 @@
 # tests/integration/test_smoke.py
-"""Smoke tests for ots-containers CLI against a real systemd environment.
+"""Smoke tests for rots CLI against a real systemd environment.
 
 These tests require:
 - systemd (systemctl) to be available and functional
@@ -67,14 +67,14 @@ requires_podman = pytest.mark.skipif(
 
 
 def run_cli(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    """Run the ots-containers CLI with the given arguments.
+    """Run the rots CLI with the given arguments.
 
-    Uses ``sys.executable -m ots_containers.cli`` so the installed package
-    (or editable install) is used without requiring the ``ots-containers``
+    Uses ``sys.executable -m rots.cli`` so the installed package
+    (or editable install) is used without requiring the ``rots``
     script to be on PATH.
     """
     return subprocess.run(
-        [sys.executable, "-m", "ots_containers.cli", *args],
+        [sys.executable, "-m", "rots.cli", *args],
         capture_output=True,
         text=True,
         timeout=30,
@@ -91,12 +91,12 @@ class TestCliAvailability:
     """Verify the CLI entry point is importable and responds to --help."""
 
     def test_cli_help_exits_zero(self):
-        """ots-containers --help must exit 0."""
+        """rots --help must exit 0."""
         result = run_cli("--help", check=False)
         assert result.returncode == 0, f"--help failed: {result.stderr}"
 
     def test_cli_version_exits_zero(self):
-        """ots-containers --version must exit 0 and print a version string."""
+        """rots --version must exit 0 and print a version string."""
         result = run_cli("--version", check=False)
         assert result.returncode == 0, f"--version failed: {result.stderr}"
         # Version output should contain digits
@@ -104,22 +104,22 @@ class TestCliAvailability:
         assert any(c.isdigit() for c in combined), f"No version digits in output: {combined!r}"
 
     def test_instance_help_exits_zero(self):
-        """ots-containers instance --help must exit 0."""
+        """rots instance --help must exit 0."""
         result = run_cli("instance", "--help", check=False)
         assert result.returncode == 0, f"instance --help failed: {result.stderr}"
 
     def test_service_help_exits_zero(self):
-        """ots-containers service --help must exit 0."""
+        """rots service --help must exit 0."""
         result = run_cli("service", "--help", check=False)
         assert result.returncode == 0, f"service --help failed: {result.stderr}"
 
     def test_image_help_exits_zero(self):
-        """ots-containers image --help must exit 0."""
+        """rots image --help must exit 0."""
         result = run_cli("image", "--help", check=False)
         assert result.returncode == 0, f"image --help failed: {result.stderr}"
 
     def test_deploy_help_exits_zero(self):
-        """ots-containers instance deploy --help must exit 0."""
+        """rots instance deploy --help must exit 0."""
         result = run_cli("instance", "deploy", "--help", check=False)
         assert result.returncode == 0, f"instance deploy --help failed: {result.stderr}"
 
@@ -156,14 +156,14 @@ class TestSystemdIntegration:
     """
 
     def test_instance_list_exits_zero(self):
-        """ots-containers instance list must exit 0 even when no instances are running."""
+        """rots instance list must exit 0 even when no instances are running."""
         result = run_cli("instance", "list", check=False)
         assert result.returncode == 0, (
             f"instance list failed with code {result.returncode}:\n{result.stderr}"
         )
 
     def test_service_list_exits_zero(self):
-        """ots-containers service list must exit 0 when invoked without args."""
+        """rots service list must exit 0 when invoked without args."""
         result = run_cli("service", check=False)
         assert result.returncode == 0, (
             f"service list failed with code {result.returncode}:\n{result.stderr}"
@@ -198,7 +198,7 @@ class TestPodmanIntegration:
     """Smoke tests that require podman to be installed."""
 
     def test_image_list_exits_zero(self):
-        """ots-containers image list must exit 0."""
+        """rots image list must exit 0."""
         result = run_cli("image", "list", check=False)
         # May exit non-zero if podman daemon is not running, but should not crash
         assert result.returncode in (0, 1), (

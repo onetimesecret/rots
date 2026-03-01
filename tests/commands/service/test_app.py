@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from ots_shared.ssh.executor import CommandError, Result
 
-from ots_containers.commands.service.app import (
+from rots.commands.service.app import (
     app,
     disable,
     enable,
@@ -29,7 +29,7 @@ def _make_command_error(stderr: str = "", command: str = "systemctl") -> Command
 @pytest.fixture(autouse=True)
 def _local_executor():
     """Ensure all service commands use local execution (no Config/SSH)."""
-    with patch("ots_containers.commands.service.app._get_executor", return_value=None):
+    with patch("rots.commands.service.app._get_executor", return_value=None):
         yield
 
 
@@ -82,8 +82,8 @@ class TestServiceAppExists:
 class TestDefaultCommand:
     """Tests for default command (list_all)."""
 
-    @patch("ots_containers.commands.service.app.is_service_enabled")
-    @patch("ots_containers.commands.service.app.is_service_active")
+    @patch("rots.commands.service.app.is_service_enabled")
+    @patch("rots.commands.service.app.is_service_active")
     @patch("subprocess.run")
     def test_default_no_instances(self, mock_run, mock_active, mock_enabled, capsys):
         """Test default command when no instances found."""
@@ -101,12 +101,12 @@ class TestDefaultCommand:
 class TestInitCommand:
     """Tests for init command."""
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_calls_copy_default_config(
         self,
         mock_copy,
@@ -130,12 +130,12 @@ class TestInitCommand:
         assert call_args[0][0].name == "valkey"
         assert call_args[0][1] == "6379"
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_updates_port_and_bind(
         self,
         mock_copy,
@@ -158,13 +158,13 @@ class TestInitCommand:
         assert "port" in call_keys
         assert "bind" in call_keys
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.add_secrets_include")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.add_secrets_include")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_creates_secrets_file(
         self,
         mock_copy,
@@ -185,12 +185,12 @@ class TestInitCommand:
 
         mock_secrets.assert_called_once()
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_skips_secrets_with_no_secrets(
         self,
         mock_copy,
@@ -209,12 +209,12 @@ class TestInitCommand:
 
         mock_secrets.assert_not_called()
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_enables_service(
         self,
         mock_copy,
@@ -236,12 +236,12 @@ class TestInitCommand:
         calls = [str(call) for call in mock_systemctl.call_args_list]
         assert any("enable" in call for call in calls)
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_starts_service(
         self,
         mock_copy,
@@ -267,9 +267,9 @@ class TestInitCommand:
 class TestInitIdempotency:
     """Tests for init command idempotency (BUG: config modification on re-run)."""
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_skips_modifications_when_config_exists(
         self,
         mock_copy,
@@ -288,9 +288,9 @@ class TestInitIdempotency:
         assert "already exists" in captured.out
         assert "Skipping" in captured.out
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_returns_early_when_config_exists(
         self,
         mock_copy,
@@ -307,12 +307,12 @@ class TestInitIdempotency:
         captured = capsys.readouterr()
         assert "already configured" in captured.out.lower()
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_force_overwrites_existing_config(
         self,
         mock_copy,
@@ -341,7 +341,7 @@ class TestInitIdempotency:
         mock_secrets.return_value = None
 
         # Mock the pkg.config_file to return our existing config
-        with patch("ots_containers.commands.service.app.get_package") as mock_get_pkg:
+        with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
             mock_pkg.template_unit = "valkey-server@.service"
@@ -361,7 +361,7 @@ class TestInitIdempotency:
 
     def test_init_dry_run_existing_config_shows_skip_notice(self, capsys, tmp_path):
         """init --dry-run with existing config should show skip notice."""
-        with patch("ots_containers.commands.service.app.get_package") as mock_get_pkg:
+        with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
             mock_pkg.template_unit = "valkey-server@.service"
@@ -384,7 +384,7 @@ class TestInitIdempotency:
 class TestEnableCommand:
     """Tests for enable command."""
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_enable_calls_systemctl(self, mock_systemctl, capsys):
         """Test enable calls systemctl enable."""
         enable("valkey", "6379")
@@ -393,7 +393,7 @@ class TestEnableCommand:
             "enable", "valkey-server@6379.service", executor=None
         )
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_enable_prints_enabled(self, mock_systemctl, capsys):
         """Test enable prints enabled message."""
         enable("valkey", "6379")
@@ -406,7 +406,7 @@ class TestEnableCommand:
 class TestDisableCommand:
     """Tests for disable command."""
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_disable_calls_systemctl(self, mock_systemctl, capsys):
         """Test disable calls systemctl stop and disable."""
         disable("valkey", "6379", yes=True)
@@ -418,7 +418,7 @@ class TestDisableCommand:
 class TestStartCommand:
     """Tests for start command."""
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_start_calls_systemctl(self, mock_systemctl, capsys):
         """Test start calls systemctl start."""
         start("valkey", "6379")
@@ -429,7 +429,7 @@ class TestStartCommand:
 class TestStopCommand:
     """Tests for stop command."""
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_stop_calls_systemctl(self, mock_systemctl, capsys):
         """Test stop calls systemctl stop."""
         stop("valkey", "6379")
@@ -440,7 +440,7 @@ class TestStopCommand:
 class TestRestartCommand:
     """Tests for restart command."""
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_restart_calls_systemctl(self, mock_systemctl, capsys):
         """Test restart calls systemctl restart."""
         restart("valkey", "6379")
@@ -453,7 +453,7 @@ class TestRestartCommand:
 class TestStatusCommand:
     """Tests for status command."""
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_status_calls_systemctl_with_instance(self, mock_systemctl, capsys):
         """Test status calls systemctl status for specific instance."""
         mock_systemctl.return_value = MagicMock(stdout="active", stderr="")
@@ -511,8 +511,8 @@ class TestLogsCommand:
 class TestListCommand:
     """Tests for list command."""
 
-    @patch("ots_containers.commands.service.app.is_service_enabled")
-    @patch("ots_containers.commands.service.app.is_service_active")
+    @patch("rots.commands.service.app.is_service_enabled")
+    @patch("rots.commands.service.app.is_service_active")
     @patch("subprocess.run")
     def test_list_calls_systemctl(self, mock_run, mock_active, mock_enabled, capsys):
         """Test list calls systemctl list-units."""
@@ -529,12 +529,12 @@ class TestListCommand:
 class TestInitDefaults:
     """Verify that --start and --enable default to False (opt-in, not opt-out)."""
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_does_not_start_by_default(
         self,
         mock_copy,
@@ -558,12 +558,12 @@ class TestInitDefaults:
             "systemctl start was called despite --start defaulting to False"
         )
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_does_not_enable_by_default(
         self,
         mock_copy,
@@ -586,12 +586,12 @@ class TestInitDefaults:
             "systemctl enable was called despite --enable defaulting to False"
         )
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_no_systemctl_calls_by_default(
         self,
         mock_copy,
@@ -619,12 +619,12 @@ class TestServiceErrorPaths:
     SystemExit(1) on CommandError so the caller gets a non-zero exit.
     """
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_copy_default_config_file_not_found_exits(
         self,
         mock_copy,
@@ -650,12 +650,12 @@ class TestServiceErrorPaths:
         captured = capsys.readouterr()
         assert "ERROR" in captured.out
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_start_command_error_exits(
         self,
         mock_copy,
@@ -687,7 +687,7 @@ class TestServiceErrorPaths:
 
         assert exc_info.value.code == 1
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_enable_command_error_exits(self, mock_systemctl, capsys):
         """enable() exits with code 1 when systemctl enable raises CommandError."""
         import pytest
@@ -701,7 +701,7 @@ class TestServiceErrorPaths:
         captured = capsys.readouterr()
         assert "ERROR" in captured.out
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_disable_command_error_exits(self, mock_systemctl, capsys):
         """disable() exits with code 1 when systemctl disable raises CommandError."""
         import pytest
@@ -720,7 +720,7 @@ class TestServiceErrorPaths:
         captured = capsys.readouterr()
         assert "ERROR" in captured.out
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_start_command_error_exits(self, mock_systemctl, capsys):
         """start() exits with code 1 when systemctl start raises CommandError."""
         import pytest
@@ -734,7 +734,7 @@ class TestServiceErrorPaths:
         captured = capsys.readouterr()
         assert "ERROR" in captured.out
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_stop_command_error_exits(self, mock_systemctl, capsys):
         """stop() exits with code 1 when systemctl stop raises CommandError."""
         import pytest
@@ -748,7 +748,7 @@ class TestServiceErrorPaths:
         captured = capsys.readouterr()
         assert "ERROR" in captured.out
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_restart_command_error_exits(self, mock_systemctl, capsys):
         """restart() exits with code 1 when systemctl restart raises CommandError."""
         import pytest
@@ -776,12 +776,12 @@ class TestInitNonNumericInstance:
     def test_init_non_numeric_instance_with_port_succeeds(self, capsys, tmp_path):
         """init with non-numeric instance and explicit --port should work."""
         with (
-            patch("ots_containers.commands.service.app.check_default_service_conflict"),
-            patch("ots_containers.commands.service.app.copy_default_config") as mock_copy,
-            patch("ots_containers.commands.service.app.update_config_value"),
-            patch("ots_containers.commands.service.app.ensure_data_dir") as mock_data,
-            patch("ots_containers.commands.service.app.create_secrets_file") as mock_secrets,
-            patch("ots_containers.commands.service.app.systemctl"),
+            patch("rots.commands.service.app.check_default_service_conflict"),
+            patch("rots.commands.service.app.copy_default_config") as mock_copy,
+            patch("rots.commands.service.app.update_config_value"),
+            patch("rots.commands.service.app.ensure_data_dir") as mock_data,
+            patch("rots.commands.service.app.create_secrets_file") as mock_secrets,
+            patch("rots.commands.service.app.systemctl"),
         ):
             mock_copy.return_value = tmp_path / "primary.conf"
             mock_data.return_value = tmp_path / "data"
@@ -797,8 +797,8 @@ class TestInitNonNumericInstance:
 class TestListAllWithInstances:
     """Tests for list_all (default command) when instances are found."""
 
-    @patch("ots_containers.commands.service.app.is_service_enabled")
-    @patch("ots_containers.commands.service.app.is_service_active")
+    @patch("rots.commands.service.app.is_service_enabled")
+    @patch("rots.commands.service.app.is_service_active")
     @patch("subprocess.run")
     def test_list_all_with_instances_shows_table(self, mock_run, mock_active, mock_enabled, capsys):
         """list_all should display a table when instances are found."""
@@ -808,24 +808,22 @@ class TestListAllWithInstances:
         mock_run.return_value = MagicMock(
             stdout="valkey-server@6379.service loaded active running Valkey\n"
         )
-        with patch("ots_containers.commands.service.app.get_package") as mock_get_pkg:
+        with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
             mock_pkg.template = "valkey-server@"
             mock_pkg.config_file.return_value = MagicMock(exists=lambda: True)
             mock_get_pkg.return_value = mock_pkg
 
-            with patch(
-                "ots_containers.commands.service.app.list_packages", return_value=["valkey"]
-            ):
+            with patch("rots.commands.service.app.list_packages", return_value=["valkey"]):
                 list_all()
 
         captured = capsys.readouterr()
         assert "PACKAGE" in captured.out
         assert "INSTANCE" in captured.out
 
-    @patch("ots_containers.commands.service.app.is_service_enabled")
-    @patch("ots_containers.commands.service.app.is_service_active")
+    @patch("rots.commands.service.app.is_service_enabled")
+    @patch("rots.commands.service.app.is_service_active")
     @patch("subprocess.run")
     def test_list_all_json_output(self, mock_run, mock_active, mock_enabled, capsys):
         """list_all --json should output valid JSON."""
@@ -836,16 +834,14 @@ class TestListAllWithInstances:
         mock_run.return_value = MagicMock(
             stdout="valkey-server@6379.service loaded active running Valkey\n"
         )
-        with patch("ots_containers.commands.service.app.get_package") as mock_get_pkg:
+        with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
             mock_pkg.template = "valkey-server@"
             mock_pkg.config_file.return_value = MagicMock(exists=lambda: False)
             mock_get_pkg.return_value = mock_pkg
 
-            with patch(
-                "ots_containers.commands.service.app.list_packages", return_value=["valkey"]
-            ):
+            with patch("rots.commands.service.app.list_packages", return_value=["valkey"]):
                 list_all(json_output=True)
 
         captured = capsys.readouterr()
@@ -856,8 +852,8 @@ class TestListAllWithInstances:
 class TestListInstancesWithInstances:
     """Tests for list_instances when instances are found."""
 
-    @patch("ots_containers.commands.service.app.is_service_enabled")
-    @patch("ots_containers.commands.service.app.is_service_active")
+    @patch("rots.commands.service.app.is_service_enabled")
+    @patch("rots.commands.service.app.is_service_active")
     @patch("subprocess.run")
     def test_list_instances_shows_instance_details(
         self, mock_run, mock_active, mock_enabled, capsys, tmp_path
@@ -869,7 +865,7 @@ class TestListInstancesWithInstances:
             stdout="valkey-server@6379.service loaded active running Valkey\n"
         )
 
-        with patch("ots_containers.commands.service.app.get_package") as mock_get_pkg:
+        with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
             mock_pkg.template = "valkey-server@"
@@ -883,8 +879,8 @@ class TestListInstancesWithInstances:
         captured = capsys.readouterr()
         assert "6379" in captured.out
 
-    @patch("ots_containers.commands.service.app.is_service_enabled")
-    @patch("ots_containers.commands.service.app.is_service_active")
+    @patch("rots.commands.service.app.is_service_enabled")
+    @patch("rots.commands.service.app.is_service_active")
     @patch("subprocess.run")
     def test_list_instances_json_output(
         self, mock_run, mock_active, mock_enabled, capsys, tmp_path
@@ -898,7 +894,7 @@ class TestListInstancesWithInstances:
             stdout="valkey-server@6379.service loaded inactive dead Valkey\n"
         )
 
-        with patch("ots_containers.commands.service.app.get_package") as mock_get_pkg:
+        with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
             mock_pkg.template = "valkey-server@"
@@ -922,7 +918,7 @@ class TestInitDryRunCreate:
         """init --dry-run with no existing config should show 'Would create'."""
         non_existing = tmp_path / "nope.conf"
 
-        with patch("ots_containers.commands.service.app.get_package") as mock_get_pkg:
+        with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
             mock_pkg.template_unit = "valkey-server@.service"
@@ -942,12 +938,12 @@ class TestInitDryRunCreate:
 class TestInitForceFileNotFound:
     """Tests for init --force when default config is missing after removing existing."""
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_force_recreate_fails_with_file_not_found(
         self,
         mock_copy,
@@ -975,7 +971,7 @@ class TestInitForceFileNotFound:
 
         mock_copy.side_effect = copy_side_effect
 
-        with patch("ots_containers.commands.service.app.get_package") as mock_get_pkg:
+        with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
             mock_pkg.template_unit = "valkey-server@.service"
@@ -996,12 +992,12 @@ class TestInitForceFileNotFound:
 class TestInitEnableWarning:
     """Tests for init --enable when systemctl enable raises CommandError (warning)."""
 
-    @patch("ots_containers.commands.service.app.check_default_service_conflict")
-    @patch("ots_containers.commands.service.app.systemctl")
-    @patch("ots_containers.commands.service.app.create_secrets_file")
-    @patch("ots_containers.commands.service.app.ensure_data_dir")
-    @patch("ots_containers.commands.service.app.update_config_value")
-    @patch("ots_containers.commands.service.app.copy_default_config")
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
     def test_init_enable_failure_shows_warning_not_exit(
         self,
         mock_copy,
@@ -1035,7 +1031,7 @@ class TestInitEnableWarning:
 class TestDisableAbort:
     """Tests for disable confirmation prompt abort."""
 
-    @patch("ots_containers.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.systemctl")
     def test_disable_aborts_when_user_says_no(self, mock_systemctl, capsys, monkeypatch):
         """disable should abort without calling systemctl when user declines."""
         monkeypatch.setattr("builtins.input", lambda _: "n")

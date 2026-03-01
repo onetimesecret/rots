@@ -6,7 +6,7 @@ import subprocess
 import pytest
 from ots_shared.ssh.executor import CommandError, Result
 
-from ots_containers.podman import Podman, podman
+from rots.podman import Podman, podman
 
 
 class TestPodmanWrapper:

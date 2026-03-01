@@ -11,14 +11,14 @@ class TestRenderCommand:
 
     def test_render_dry_run_prints_output(self, tmp_path, mocker, capsys):
         """Should print rendered content in dry-run mode."""
-        from ots_containers.commands.proxy.app import render
+        from rots.commands.proxy.app import render
 
         template = tmp_path / "test.template"
         template.write_text("Hello $WORLD")
 
         # Patch where it's used, not where it's defined
         mocker.patch(
-            "ots_containers.commands.proxy.app.render_template",
+            "rots.commands.proxy.app.render_template",
             return_value="Hello Rendered",
         )
 
@@ -29,17 +29,17 @@ class TestRenderCommand:
 
     def test_render_writes_to_output(self, tmp_path, mocker, capsys):
         """Should write rendered content to output file."""
-        from ots_containers.commands.proxy.app import render
+        from rots.commands.proxy.app import render
 
         template = tmp_path / "test.template"
         template.write_text("Hello $WORLD")
         output = tmp_path / "output.conf"
 
         mocker.patch(
-            "ots_containers.commands.proxy.app.render_template",
+            "rots.commands.proxy.app.render_template",
             return_value="Hello Rendered",
         )
-        mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
+        mocker.patch("rots.commands.proxy.app.validate_caddy_config")
 
         render(template=template, output=output, dry_run=False)
 
@@ -50,17 +50,17 @@ class TestRenderCommand:
 
     def test_render_validates_before_writing(self, tmp_path, mocker):
         """Should call validate_caddy_config before writing."""
-        from ots_containers.commands.proxy.app import render
+        from rots.commands.proxy.app import render
 
         template = tmp_path / "test.template"
         template.write_text("Hello")
         output = tmp_path / "output.conf"
 
         mocker.patch(
-            "ots_containers.commands.proxy.app.render_template",
+            "rots.commands.proxy.app.render_template",
             return_value="rendered content",
         )
-        mock_validate = mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
+        mock_validate = mocker.patch("rots.commands.proxy.app.validate_caddy_config")
 
         render(template=template, output=output, dry_run=False)
 
@@ -68,14 +68,14 @@ class TestRenderCommand:
 
     def test_render_error_exits(self, tmp_path, mocker):
         """Should exit with error message on ProxyError."""
-        from ots_containers.commands.proxy._helpers import ProxyError
-        from ots_containers.commands.proxy.app import render
+        from rots.commands.proxy._helpers import ProxyError
+        from rots.commands.proxy.app import render
 
         template = tmp_path / "test.template"
         template.write_text("Hello")
 
         mocker.patch(
-            "ots_containers.commands.proxy.app.render_template",
+            "rots.commands.proxy.app.render_template",
             side_effect=ProxyError("test error"),
         )
 
@@ -89,14 +89,14 @@ class TestRenderCommand:
         """Should use Config paths when no args provided."""
         from pathlib import Path
 
-        from ots_containers.commands.proxy.app import render
-        from ots_containers.config import Config
+        from rots.commands.proxy.app import render
+        from rots.config import Config
 
         mock_render = mocker.patch(
-            "ots_containers.commands.proxy.app.render_template",
+            "rots.commands.proxy.app.render_template",
             return_value="content",
         )
-        mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
+        mocker.patch("rots.commands.proxy.app.validate_caddy_config")
         # Mock the file write
         mocker.patch.object(Path, "write_text")
         mocker.patch.object(Path, "mkdir")
@@ -125,7 +125,7 @@ class TestPushCommand:
 
     def test_push_requires_remote_host(self, tmp_path, mocker):
         """push should exit when running locally (no --host)."""
-        from ots_containers.commands.proxy.app import push
+        from rots.commands.proxy.app import push
 
         template = tmp_path / "Caddyfile.template"
         template.write_text("localhost { }")
@@ -137,7 +137,7 @@ class TestPushCommand:
 
     def test_push_missing_template_exits(self, tmp_path, mocker):
         """push should exit when template file doesn't exist."""
-        from ots_containers.commands.proxy.app import push
+        from rots.commands.proxy.app import push
 
         missing = tmp_path / "nonexistent.template"
 
@@ -145,7 +145,7 @@ class TestPushCommand:
         mock_ex = self._mock_remote_executor(mocker)
         mock_cfg = mocker.MagicMock()
         mock_cfg.get_executor.return_value = mock_ex
-        mocker.patch("ots_containers.commands.proxy.app.Config", return_value=mock_cfg)
+        mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
 
         with pytest.raises(SystemExit) as exc_info:
             push(template_file=missing)
@@ -154,7 +154,7 @@ class TestPushCommand:
 
     def test_push_dry_run_prints_actions(self, tmp_path, mocker, capsys):
         """push --dry-run should print expected actions without side effects."""
-        from ots_containers.commands.proxy.app import push
+        from rots.commands.proxy.app import push
 
         template = tmp_path / "Caddyfile.template"
         template.write_text("localhost { }")
@@ -164,7 +164,7 @@ class TestPushCommand:
         mock_cfg.get_executor.return_value = mock_ex
         mock_cfg.proxy_template.return_value = "/etc/onetimesecret/Caddyfile.template"
         mock_cfg.proxy_config.return_value = "/etc/caddy/Caddyfile"
-        mocker.patch("ots_containers.commands.proxy.app.Config", return_value=mock_cfg)
+        mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
 
         push(template_file=template, dry_run=True)
 
@@ -177,7 +177,7 @@ class TestPushCommand:
 
     def test_push_happy_path(self, tmp_path, mocker, capsys):
         """push should push template, render, validate, and reload."""
-        from ots_containers.commands.proxy.app import push
+        from rots.commands.proxy.app import push
 
         template = tmp_path / "Caddyfile.template"
         template.write_text("localhost { respond 200 }")
@@ -187,14 +187,14 @@ class TestPushCommand:
         mock_cfg.get_executor.return_value = mock_ex
         mock_cfg.proxy_template = tmp_path / "remote-template"
         mock_cfg.proxy_config = tmp_path / "remote-config"
-        mocker.patch("ots_containers.commands.proxy.app.Config", return_value=mock_cfg)
+        mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
 
         mock_render = mocker.patch(
-            "ots_containers.commands.proxy.app.render_template",
+            "rots.commands.proxy.app.render_template",
             return_value="rendered content",
         )
-        mock_validate = mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
-        mock_reload = mocker.patch("ots_containers.commands.proxy.app.reload_caddy")
+        mock_validate = mocker.patch("rots.commands.proxy.app.validate_caddy_config")
+        mock_reload = mocker.patch("rots.commands.proxy.app.reload_caddy")
 
         push(template_file=template)
 
@@ -210,7 +210,7 @@ class TestPushCommand:
 
     def test_push_write_failure_exits(self, tmp_path, mocker):
         """push should exit when remote write fails."""
-        from ots_containers.commands.proxy.app import push
+        from rots.commands.proxy.app import push
 
         template = tmp_path / "Caddyfile.template"
         template.write_text("localhost { }")
@@ -225,7 +225,7 @@ class TestPushCommand:
         mock_cfg.get_executor.return_value = mock_ex
         mock_cfg.proxy_template = tmp_path / "remote-template"
         mock_cfg.proxy_config = tmp_path / "remote-config"
-        mocker.patch("ots_containers.commands.proxy.app.Config", return_value=mock_cfg)
+        mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
 
         with pytest.raises(SystemExit) as exc_info:
             push(template_file=template)
@@ -238,9 +238,9 @@ class TestReloadCommand:
 
     def test_reload_calls_helper(self, mocker, capsys):
         """Should call reload_caddy helper with executor."""
-        from ots_containers.commands.proxy.app import reload
+        from rots.commands.proxy.app import reload
 
-        mock_reload = mocker.patch("ots_containers.commands.proxy.app.reload_caddy")
+        mock_reload = mocker.patch("rots.commands.proxy.app.reload_caddy")
 
         reload()
 
@@ -250,11 +250,11 @@ class TestReloadCommand:
 
     def test_reload_error_exits(self, mocker):
         """Should exit with error message on ProxyError."""
-        from ots_containers.commands.proxy._helpers import ProxyError
-        from ots_containers.commands.proxy.app import reload
+        from rots.commands.proxy._helpers import ProxyError
+        from rots.commands.proxy.app import reload
 
         mocker.patch(
-            "ots_containers.commands.proxy.app.reload_caddy",
+            "rots.commands.proxy.app.reload_caddy",
             side_effect=ProxyError("reload failed"),
         )
 
@@ -270,7 +270,7 @@ class TestStatusCommand:
 
     def test_status_prints_output(self, mocker, capsys):
         """Should print systemctl output via executor."""
-        from ots_containers.commands.proxy.app import status
+        from rots.commands.proxy.app import status
 
         # Mock subprocess.run which LocalExecutor uses internally
         mocker.patch(
@@ -289,7 +289,7 @@ class TestStatusCommand:
 
     def test_status_shows_stderr_if_present(self, mocker, capsys):
         """Should show stderr output if present."""
-        from ots_containers.commands.proxy.app import status
+        from rots.commands.proxy.app import status
 
         mocker.patch(
             "subprocess.run",
@@ -308,7 +308,7 @@ class TestStatusCommand:
 
     def test_status_error_exits(self, mocker):
         """Should exit on exception."""
-        from ots_containers.commands.proxy.app import status
+        from rots.commands.proxy.app import status
 
         mocker.patch("subprocess.run", side_effect=Exception("systemctl failed"))
 
@@ -323,12 +323,12 @@ class TestValidateCommand:
 
     def test_validate_existing_file(self, tmp_path, mocker, capsys):
         """Should validate an existing config file."""
-        from ots_containers.commands.proxy.app import validate
+        from rots.commands.proxy.app import validate
 
         config = tmp_path / "Caddyfile"
         config.write_text("localhost { }")
 
-        mock_validate = mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
+        mock_validate = mocker.patch("rots.commands.proxy.app.validate_caddy_config")
 
         validate(config_file=config)
 
@@ -338,7 +338,7 @@ class TestValidateCommand:
 
     def test_validate_uses_default_path(self, tmp_path, mocker):
         """Should use default config path when none provided."""
-        from ots_containers.commands.proxy.app import validate
+        from rots.commands.proxy.app import validate
 
         # Create a mock config with a real path that exists
         default_config = tmp_path / "Caddyfile"
@@ -351,11 +351,11 @@ class TestValidateCommand:
 
         mock_cfg.get_executor.return_value = LocalExecutor()
         mocker.patch(
-            "ots_containers.commands.proxy.app.Config",
+            "rots.commands.proxy.app.Config",
             return_value=mock_cfg,
         )
 
-        mock_validate = mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
+        mock_validate = mocker.patch("rots.commands.proxy.app.validate_caddy_config")
 
         validate(config_file=None)
 
@@ -363,12 +363,12 @@ class TestValidateCommand:
 
     def test_validate_success_with_output(self, tmp_path, mocker, capsys):
         """Should print [ok] when validation succeeds."""
-        from ots_containers.commands.proxy.app import validate
+        from rots.commands.proxy.app import validate
 
         config = tmp_path / "Caddyfile"
         config.write_text("localhost { }")
 
-        mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
+        mocker.patch("rots.commands.proxy.app.validate_caddy_config")
 
         validate(config_file=config)
 
@@ -377,7 +377,7 @@ class TestValidateCommand:
 
     def test_validate_missing_file_exits(self, tmp_path):
         """Should exit if config file doesn't exist."""
-        from ots_containers.commands.proxy.app import validate
+        from rots.commands.proxy.app import validate
 
         missing = tmp_path / "nonexistent"
 
@@ -389,14 +389,14 @@ class TestValidateCommand:
 
     def test_validate_failure_exits(self, tmp_path, mocker):
         """Should exit on validation failure."""
-        from ots_containers.commands.proxy._helpers import ProxyError
-        from ots_containers.commands.proxy.app import validate
+        from rots.commands.proxy._helpers import ProxyError
+        from rots.commands.proxy.app import validate
 
         config = tmp_path / "Caddyfile"
         config.write_text("invalid config")
 
         mocker.patch(
-            "ots_containers.commands.proxy.app.validate_caddy_config",
+            "rots.commands.proxy.app.validate_caddy_config",
             side_effect=ProxyError("Caddy validation failed:\nsyntax error"),
         )
 
@@ -407,13 +407,13 @@ class TestValidateCommand:
 
     def test_validate_caddy_not_found_exits(self, tmp_path, mocker):
         """Should exit if caddy not in PATH."""
-        from ots_containers.commands.proxy.app import validate
+        from rots.commands.proxy.app import validate
 
         config = tmp_path / "Caddyfile"
         config.write_text("localhost { }")
 
         mocker.patch(
-            "ots_containers.commands.proxy.app.validate_caddy_config",
+            "rots.commands.proxy.app.validate_caddy_config",
             side_effect=FileNotFoundError(),
         )
 

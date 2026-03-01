@@ -24,7 +24,7 @@ pytest tests/test_service.py
 pytest tests/commands/cloudinit/
 
 # Run tests with coverage (CI threshold: 70%)
-pytest tests/ --cov=ots_containers --cov-report=term-missing --cov-fail-under=70
+pytest tests/ --cov=rots --cov-report=term-missing --cov-fail-under=70
 
 # IMPORTANT: See docs/TESTING.md for testing patterns
 # Key rule: mock responses must use tmp_path, not real system paths
@@ -52,7 +52,7 @@ This is a dual-purpose service orchestration tool:
 1. **Container management**: OneTimeSecret containers via Podman Quadlets (systemd integration)
 2. **Service management**: Native systemd services for dependencies (Valkey, Redis)
 
-### Core Modules (`src/ots_containers/`)
+### Core Modules (`src/rots/`)
 
 - **cli.py** - Entry point (`app`), registers subcommand groups
 - **config.py** - `Config` dataclass: image, tag, paths. Reads from env vars (IMAGE, TAG, etc.)
@@ -61,7 +61,7 @@ This is a dual-purpose service orchestration tool:
 - **podman.py** - `Podman` class: chainable interface to podman CLI (e.g., `podman.container.ls()`)
 - **assets.py** - Extracts `/app/public` from container image to shared volume
 
-### Commands (`src/ots_containers/commands/`)
+### Commands (`src/rots/commands/`)
 
 #### Container Commands
 

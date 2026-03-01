@@ -5,14 +5,14 @@
 #   pip install .                     # System-wide
 #   pip install -e .                  # Development mode
 #
-# Verify: ots-containers --help
+# Verify: rots --help
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "ots-containers"
+name = "rots"
 version = "0.4.0"
 description = "Service orchestration for OneTimeSecret: Podman Quadlets and systemd service management"
 readme = "README.md"
@@ -38,19 +38,19 @@ dev = ["pre-commit>=3.0", "pyright>=1.1.390", "ruff>=0.9"]
 test = ["pytest>=8.0", "pytest-mock>=3.14", "pytest-cov>=6.0", "coverage>=7.10"]
 
 [project.scripts]
-ots-containers = "ots_containers.cli:main"
+rots = "rots.cli:main"
 
 [project.urls]
 Homepage = "https://onetimesecret.com"
-Repository = "https://github.com/onetimesecret/ots-containers"
-Issues = "https://github.com/onetimesecret/ots-containers/issues"
+Repository = "https://github.com/onetimesecret/rots"
+Issues = "https://github.com/onetimesecret/rots/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ots_containers"]
+packages = ["src/rots"]
 
 [tool.pyright]
 pythonVersion = "3.11"
@@ -59,7 +59,7 @@ include = ["src"]
 extraPaths = ["../../ots_shared/src"]
 
 [tool.coverage.run]
-source = ["ots_containers"]
+source = ["rots"]
 
 [tool.coverage.report]
 # Global minimum enforced by --cov-fail-under=70 in pytest invocation.
@@ -69,6 +69,15 @@ source = ["ots_containers"]
 #   commands/db.py      baseline 29%  target 70%
 show_missing = true
 skip_empty = true
+
+[tool.uv]
+dev-dependencies = []
+
+[tool.uv.workspace]
+members = ["packages/ots-shared"]
+
+[tool.uv.sources]
+ots-shared = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"

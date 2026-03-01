@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from ots_shared.ssh.executor import Result
 
-from ots_containers.commands.host.app import (
+from rots.commands.host.app import (
     _get_executor,
     _resolve_config_dir,
     _resolve_ssh_host,
@@ -71,7 +71,7 @@ class TestResolveSshHost:
             _resolve_ssh_host()
 
     def test_context_host_takes_priority(self, monkeypatch):
-        from ots_containers import context
+        from rots import context
 
         monkeypatch.setenv("OTS_HOST", "env-host")
         token = context.host_var.set("context-host")
@@ -129,12 +129,12 @@ class TestGetExecutor:
 
     def test_routes_through_config_get_executor(self, mocker):
         """_get_executor should call Config.get_executor with context host."""
-        from ots_containers import context
+        from rots import context
 
         mock_executor = MagicMock()
         mock_config = MagicMock()
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.config.Config", return_value=mock_config)
+        mocker.patch("rots.config.Config", return_value=mock_config)
 
         token = context.host_var.set("test-host")
         try:
@@ -146,12 +146,12 @@ class TestGetExecutor:
 
     def test_passes_none_when_no_host(self, mocker):
         """_get_executor should pass host=None when context has no host."""
-        from ots_containers import context
+        from rots import context
 
         mock_executor = MagicMock()
         mock_config = MagicMock()
         mock_config.get_executor.return_value = mock_executor
-        mocker.patch("ots_containers.config.Config", return_value=mock_config)
+        mocker.patch("rots.config.Config", return_value=mock_config)
 
         token = context.host_var.set(None)
         try:
@@ -184,8 +184,8 @@ class TestDiffCommand:
 
         return config_dir
 
-    @patch("ots_containers.commands.host.app._get_executor")
-    @patch("ots_containers.commands.host.app._resolve_ssh_host")
+    @patch("rots.commands.host.app._get_executor")
+    @patch("rots.commands.host.app._resolve_ssh_host")
     def test_diff_calls_executor_cat_with_timeout(self, mock_host, mock_get_ex, tmp_path):
         """diff should call executor.run(['cat', ...]) with timeout=30."""
         mock_host.return_value = "test-host"
@@ -207,8 +207,8 @@ class TestDiffCommand:
         assert call_args[0][0] == ["cat", "/etc/onetimesecret/config.yaml"]
         assert call_args[1]["timeout"] == 30
 
-    @patch("ots_containers.commands.host.app._get_executor")
-    @patch("ots_containers.commands.host.app._resolve_ssh_host")
+    @patch("rots.commands.host.app._get_executor")
+    @patch("rots.commands.host.app._resolve_ssh_host")
     def test_diff_shows_new_file_when_remote_missing(
         self, mock_host, mock_get_ex, tmp_path, capsys
     ):
@@ -229,8 +229,8 @@ class TestDiffCommand:
         captured = capsys.readouterr()
         assert "not found" in captured.out
 
-    @patch("ots_containers.commands.host.app._get_executor")
-    @patch("ots_containers.commands.host.app._resolve_ssh_host")
+    @patch("rots.commands.host.app._get_executor")
+    @patch("rots.commands.host.app._resolve_ssh_host")
     def test_diff_shows_identical_when_same(self, mock_host, mock_get_ex, tmp_path, capsys):
         """diff should show [identical] when local and remote match."""
         mock_host.return_value = "test-host"
@@ -268,8 +268,8 @@ class TestPullCommand:
 
         return config_dir
 
-    @patch("ots_containers.commands.host.app._get_executor")
-    @patch("ots_containers.commands.host.app._resolve_ssh_host")
+    @patch("rots.commands.host.app._get_executor")
+    @patch("rots.commands.host.app._resolve_ssh_host")
     def test_pull_calls_executor_cat_with_timeout(self, mock_host, mock_get_ex, tmp_path):
         """pull should call executor.run(['cat', ...]) with timeout=30."""
         mock_host.return_value = "test-host"
@@ -291,8 +291,8 @@ class TestPullCommand:
         assert call_args[0][0] == ["cat", "/etc/onetimesecret/config.yaml"]
         assert call_args[1]["timeout"] == 30
 
-    @patch("ots_containers.commands.host.app._get_executor")
-    @patch("ots_containers.commands.host.app._resolve_ssh_host")
+    @patch("rots.commands.host.app._get_executor")
+    @patch("rots.commands.host.app._resolve_ssh_host")
     def test_pull_apply_writes_file(self, mock_host, mock_get_ex, tmp_path):
         """pull --apply should write remote content to local file."""
         mock_host.return_value = "test-host"
@@ -312,8 +312,8 @@ class TestPullCommand:
         assert local_file.exists()
         assert local_file.read_text() == "remote: pulled content\n"
 
-    @patch("ots_containers.commands.host.app._get_executor")
-    @patch("ots_containers.commands.host.app._resolve_ssh_host")
+    @patch("rots.commands.host.app._get_executor")
+    @patch("rots.commands.host.app._resolve_ssh_host")
     def test_pull_skips_missing_remote_file(self, mock_host, mock_get_ex, tmp_path, capsys):
         """pull should skip files that don't exist on remote."""
         mock_host.return_value = "test-host"
@@ -350,8 +350,8 @@ class TestStatusCommand:
 
         return config_dir
 
-    @patch("ots_containers.commands.host.app._get_executor")
-    @patch("ots_containers.commands.host.app._resolve_ssh_host")
+    @patch("rots.commands.host.app._get_executor")
+    @patch("rots.commands.host.app._resolve_ssh_host")
     def test_status_calls_executor_test_with_timeout(self, mock_host, mock_get_ex, tmp_path):
         """status should call executor.run(['test', '-f', ...]) with timeout=10."""
         mock_host.return_value = "test-host"
@@ -372,8 +372,8 @@ class TestStatusCommand:
         assert call_args[0][0] == ["test", "-f", "/etc/onetimesecret/config.yaml"]
         assert call_args[1]["timeout"] == 10
 
-    @patch("ots_containers.commands.host.app._get_executor")
-    @patch("ots_containers.commands.host.app._resolve_ssh_host")
+    @patch("rots.commands.host.app._get_executor")
+    @patch("rots.commands.host.app._resolve_ssh_host")
     def test_status_shows_yes_when_remote_exists(self, mock_host, mock_get_ex, tmp_path, capsys):
         """status should show 'yes' for remote when test -f returns 0."""
         mock_host.return_value = "test-host"
@@ -396,8 +396,8 @@ class TestStatusCommand:
         assert len(data_line) == 1
         assert "yes" in data_line[0]
 
-    @patch("ots_containers.commands.host.app._get_executor")
-    @patch("ots_containers.commands.host.app._resolve_ssh_host")
+    @patch("rots.commands.host.app._get_executor")
+    @patch("rots.commands.host.app._resolve_ssh_host")
     def test_status_shows_no_when_remote_missing(self, mock_host, mock_get_ex, tmp_path, capsys):
         """status should show 'no' for remote when test -f returns non-zero."""
         mock_host.return_value = "test-host"

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ots_containers.commands.service.packages import (
+from rots.commands.service.packages import (
     PACKAGES,
     REDIS,
     VALKEY,

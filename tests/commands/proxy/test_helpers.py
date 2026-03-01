@@ -11,7 +11,7 @@ class TestRenderTemplate:
 
     def test_render_template_calls_envsubst(self, tmp_path, mocker):
         """Should call envsubst with template content."""
-        from ots_containers.commands.proxy._helpers import render_template
+        from rots.commands.proxy._helpers import render_template
 
         template = tmp_path / "test.template"
         template.write_text("Hello $NAME")
@@ -32,7 +32,7 @@ class TestRenderTemplate:
 
     def test_render_template_missing_file_raises(self, tmp_path):
         """Should raise ProxyError when template not found."""
-        from ots_containers.commands.proxy._helpers import ProxyError, render_template
+        from rots.commands.proxy._helpers import ProxyError, render_template
 
         missing = tmp_path / "nonexistent.template"
 
@@ -43,7 +43,7 @@ class TestRenderTemplate:
 
     def test_render_template_envsubst_failure_raises(self, tmp_path, mocker):
         """Should raise ProxyError when envsubst fails."""
-        from ots_containers.commands.proxy._helpers import ProxyError, render_template
+        from rots.commands.proxy._helpers import ProxyError, render_template
 
         template = tmp_path / "test.template"
         template.write_text("Hello $NAME")
@@ -60,7 +60,7 @@ class TestRenderTemplate:
 
     def test_render_template_envsubst_not_found_raises(self, tmp_path, mocker):
         """Should raise ProxyError when envsubst not installed."""
-        from ots_containers.commands.proxy._helpers import ProxyError, render_template
+        from rots.commands.proxy._helpers import ProxyError, render_template
 
         template = tmp_path / "test.template"
         template.write_text("Hello $NAME")
@@ -81,7 +81,7 @@ class TestValidateCaddyConfig:
 
     def test_validate_caddy_config_success(self, mocker):
         """Should pass when caddy validate succeeds."""
-        from ots_containers.commands.proxy._helpers import validate_caddy_config
+        from rots.commands.proxy._helpers import validate_caddy_config
 
         mock_result = mocker.Mock()
         mock_result.returncode = 0
@@ -92,7 +92,7 @@ class TestValidateCaddyConfig:
 
     def test_validate_caddy_config_failure_raises(self, mocker):
         """Should raise ProxyError when validation fails."""
-        from ots_containers.commands.proxy._helpers import ProxyError, validate_caddy_config
+        from rots.commands.proxy._helpers import ProxyError, validate_caddy_config
 
         mock_result = mocker.Mock()
         mock_result.returncode = 1
@@ -106,7 +106,7 @@ class TestValidateCaddyConfig:
 
     def test_validate_caddy_config_calls_caddy_correctly(self, mocker):
         """Should call caddy validate with temp file."""
-        from ots_containers.commands.proxy._helpers import validate_caddy_config
+        from rots.commands.proxy._helpers import validate_caddy_config
 
         mock_result = mocker.Mock()
         mock_result.returncode = 0
@@ -128,7 +128,7 @@ class TestValidateCaddyConfig:
         fails on '#' comments with 'invalid character looking for beginning of
         value'. See the fix in _helpers.py line 72.
         """
-        from ots_containers.commands.proxy._helpers import validate_caddy_config
+        from rots.commands.proxy._helpers import validate_caddy_config
 
         mock_result = mocker.Mock()
         mock_result.returncode = 0
@@ -148,7 +148,7 @@ class TestValidateCaddyConfig:
 
     def test_validate_caddy_config_caddy_not_found_raises(self, mocker):
         """Should raise ProxyError when caddy not installed."""
-        from ots_containers.commands.proxy._helpers import ProxyError, validate_caddy_config
+        from rots.commands.proxy._helpers import ProxyError, validate_caddy_config
 
         mocker.patch(
             "subprocess.run",
@@ -166,7 +166,7 @@ class TestReloadCaddy:
 
     def test_reload_caddy_calls_systemctl(self, mocker):
         """Should call systemctl reload caddy."""
-        from ots_containers.commands.proxy._helpers import reload_caddy
+        from rots.commands.proxy._helpers import reload_caddy
 
         mock_run = mocker.patch("subprocess.run")
 
@@ -179,7 +179,7 @@ class TestReloadCaddy:
 
     def test_reload_caddy_failure_raises(self, mocker):
         """Should raise ProxyError when reload fails."""
-        from ots_containers.commands.proxy._helpers import ProxyError, reload_caddy
+        from rots.commands.proxy._helpers import ProxyError, reload_caddy
 
         mocker.patch(
             "subprocess.run",
@@ -209,7 +209,7 @@ class TestRemoteRenderTemplate:
         """Should read template and pipe through envsubst on remote."""
         from pathlib import Path
 
-        from ots_containers.commands.proxy._helpers import render_template
+        from rots.commands.proxy._helpers import render_template
 
         ex = self._make_executor(
             mocker,
@@ -231,7 +231,7 @@ class TestRemoteRenderTemplate:
         """Should raise ProxyError when remote template not found."""
         from pathlib import Path
 
-        from ots_containers.commands.proxy._helpers import ProxyError, render_template
+        from rots.commands.proxy._helpers import ProxyError, render_template
 
         ex = self._make_executor(
             mocker,
@@ -256,7 +256,7 @@ class TestRemoteValidateCaddyConfig:
 
     def test_validate_remote_success(self, mocker):
         """Should validate on remote host using mktemp for unique temp file."""
-        from ots_containers.commands.proxy._helpers import validate_caddy_config
+        from rots.commands.proxy._helpers import validate_caddy_config
 
         ex = self._make_executor(
             mocker,
@@ -281,7 +281,7 @@ class TestRemoteValidateCaddyConfig:
 
     def test_validate_remote_failure(self, mocker):
         """Should raise ProxyError on remote validation failure."""
-        from ots_containers.commands.proxy._helpers import ProxyError, validate_caddy_config
+        from rots.commands.proxy._helpers import ProxyError, validate_caddy_config
 
         ex = self._make_executor(
             mocker,
@@ -304,7 +304,7 @@ class TestRemoteValidateCaddyConfig:
 
     def test_validate_remote_mktemp_failure(self, mocker):
         """Should raise ProxyError when mktemp fails on remote."""
-        from ots_containers.commands.proxy._helpers import ProxyError, validate_caddy_config
+        from rots.commands.proxy._helpers import ProxyError, validate_caddy_config
 
         ex = self._make_executor(
             mocker,
@@ -324,7 +324,7 @@ class TestRemoteReloadCaddy:
         """Should reload caddy on remote via executor."""
         from ots_shared.ssh.executor import Result
 
-        from ots_containers.commands.proxy._helpers import reload_caddy
+        from rots.commands.proxy._helpers import reload_caddy
 
         mock_ex = mocker.MagicMock()
         mock_ex.run.return_value = Result(

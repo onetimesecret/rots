@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from ots_containers.commands import instance
-from ots_containers.config import Config
-from ots_containers.systemd import get_container_health_map
+from rots.commands import instance
+from rots.config import Config
+from rots.systemd import get_container_health_map
 
 
 @pytest.fixture(autouse=True)
@@ -132,7 +132,7 @@ class TestGetContainerHealthMap:
 
         assert ("web", "7043") in result
 
-    def test_non_ots_containers_ignored(self, mocker):
+    def test_non_rots_ignored(self, mocker):
         """Should skip containers that don't match the naming pattern."""
         output = json.dumps(
             [
@@ -159,15 +159,15 @@ class TestListInstancesWithHealth:
     def _mock_discovery(self, mocker, web_ports=None, workers=None, schedulers=None):
         """Mock instance discovery."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=web_ports or [],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=workers or [],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=schedulers or [],
         )
 
@@ -175,19 +175,19 @@ class TestListInstancesWithHealth:
         """List should combine systemd status with container health."""
         self._mock_discovery(mocker, web_ports=[7043])
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.is_active",
+            "rots.commands.instance.app.systemd.is_active",
             return_value="active",
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.get_container_health_map",
+            "rots.commands.instance.app.systemd.get_container_health_map",
             return_value={("web", "7043"): {"health": "healthy", "uptime": "Up 3 days"}},
         )
 
         mock_config = mocker.Mock()
         mock_config.db_path = tmp_path / "test.db"
         mock_config.get_executor.return_value = None
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.db.get_deployments", return_value=[])
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.db.get_deployments", return_value=[])
 
         instance.list_instances()
 
@@ -198,19 +198,19 @@ class TestListInstancesWithHealth:
         """List should show unhealthy status when container health is bad."""
         self._mock_discovery(mocker, workers=["1"])
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.is_active",
+            "rots.commands.instance.app.systemd.is_active",
             return_value="active",
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.get_container_health_map",
+            "rots.commands.instance.app.systemd.get_container_health_map",
             return_value={("worker", "1"): {"health": "unhealthy", "uptime": "Up 3 days"}},
         )
 
         mock_config = mocker.Mock()
         mock_config.db_path = tmp_path / "test.db"
         mock_config.get_executor.return_value = None
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.db.get_deployments", return_value=[])
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.db.get_deployments", return_value=[])
 
         instance.list_instances()
 
@@ -221,19 +221,19 @@ class TestListInstancesWithHealth:
         """When no health data, should show plain systemd status."""
         self._mock_discovery(mocker, web_ports=[7043])
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.is_active",
+            "rots.commands.instance.app.systemd.is_active",
             return_value="active",
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.get_container_health_map",
+            "rots.commands.instance.app.systemd.get_container_health_map",
             return_value={},
         )
 
         mock_config = mocker.Mock()
         mock_config.db_path = tmp_path / "test.db"
         mock_config.get_executor.return_value = None
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.db.get_deployments", return_value=[])
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.db.get_deployments", return_value=[])
 
         instance.list_instances()
 
@@ -247,19 +247,19 @@ class TestListInstancesWithHealth:
         """JSON output should include health and uptime fields."""
         self._mock_discovery(mocker, web_ports=[7043])
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.is_active",
+            "rots.commands.instance.app.systemd.is_active",
             return_value="active",
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.get_container_health_map",
+            "rots.commands.instance.app.systemd.get_container_health_map",
             return_value={("web", "7043"): {"health": "healthy", "uptime": "Up 3 days"}},
         )
 
         mock_config = mocker.Mock()
         mock_config.db_path = tmp_path / "test.db"
         mock_config.get_executor.return_value = None
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.db.get_deployments", return_value=[])
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.db.get_deployments", return_value=[])
 
         instance.list_instances(json_output=True)
 
@@ -272,19 +272,19 @@ class TestListInstancesWithHealth:
         """JSON output should have empty health when no data available."""
         self._mock_discovery(mocker, web_ports=[7043])
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.is_active",
+            "rots.commands.instance.app.systemd.is_active",
             return_value="active",
         )
         mocker.patch(
-            "ots_containers.commands.instance.app.systemd.get_container_health_map",
+            "rots.commands.instance.app.systemd.get_container_health_map",
             return_value={},
         )
 
         mock_config = mocker.Mock()
         mock_config.db_path = tmp_path / "test.db"
         mock_config.get_executor.return_value = None
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch("ots_containers.commands.instance.app.db.get_deployments", return_value=[])
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.db.get_deployments", return_value=[])
 
         instance.list_instances(json_output=True)
 
@@ -306,13 +306,13 @@ class TestPsCommand:
         """ps with no type filter should use broad name filter."""
         mock_config = mocker.Mock()
         mock_config.get_executor.return_value = None
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         mock_podman_instance = mocker.Mock()
         mock_podman_ps = mocker.Mock()
         mock_podman_instance.ps = mock_podman_ps
         mocker.patch(
-            "ots_containers.commands.instance.app.Podman",
+            "rots.commands.instance.app.Podman",
             return_value=mock_podman_instance,
         )
 
@@ -326,13 +326,13 @@ class TestPsCommand:
         """ps --web should filter to web containers."""
         mock_config = mocker.Mock()
         mock_config.get_executor.return_value = None
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         mock_podman_instance = mocker.Mock()
         mock_podman_ps = mocker.Mock()
         mock_podman_instance.ps = mock_podman_ps
         mocker.patch(
-            "ots_containers.commands.instance.app.Podman",
+            "rots.commands.instance.app.Podman",
             return_value=mock_podman_instance,
         )
 
@@ -345,13 +345,13 @@ class TestPsCommand:
         """ps --scheduler should filter to scheduler containers."""
         mock_config = mocker.Mock()
         mock_config.get_executor.return_value = None
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         mock_podman_instance = mocker.Mock()
         mock_podman_ps = mocker.Mock()
         mock_podman_instance.ps = mock_podman_ps
         mocker.patch(
-            "ots_containers.commands.instance.app.Podman",
+            "rots.commands.instance.app.Podman",
             return_value=mock_podman_instance,
         )
 
@@ -364,13 +364,13 @@ class TestPsCommand:
         """ps --worker should filter to worker containers."""
         mock_config = mocker.Mock()
         mock_config.get_executor.return_value = None
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         mock_podman_instance = mocker.Mock()
         mock_podman_ps = mocker.Mock()
         mock_podman_instance.ps = mock_podman_ps
         mocker.patch(
-            "ots_containers.commands.instance.app.Podman",
+            "rots.commands.instance.app.Podman",
             return_value=mock_podman_instance,
         )
 
@@ -383,13 +383,13 @@ class TestPsCommand:
         """ps should use table format with expected columns."""
         mock_config = mocker.Mock()
         mock_config.get_executor.return_value = None
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         mock_podman_instance = mocker.Mock()
         mock_podman_ps = mocker.Mock()
         mock_podman_instance.ps = mock_podman_ps
         mocker.patch(
-            "ots_containers.commands.instance.app.Podman",
+            "rots.commands.instance.app.Podman",
             return_value=mock_podman_instance,
         )
 

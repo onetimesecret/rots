@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from ots_containers.commands.image.app import _load_oci_build_config, build
+from rots.commands.image.app import _load_oci_build_config, build
 
 
 class TestBuildVersionDetection:
@@ -42,7 +42,7 @@ class TestBuildVersionDetection:
 
         # Mock Config
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -51,7 +51,7 @@ class TestBuildVersionDetection:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(project_dir=project_dir, quiet=True)
 
@@ -90,7 +90,7 @@ class TestBuildVersionDetection:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_side_effect)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -99,7 +99,7 @@ class TestBuildVersionDetection:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(project_dir=project_dir, quiet=True)
 
@@ -175,7 +175,7 @@ class TestBuildPodmanInvocation:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -184,7 +184,7 @@ class TestBuildPodmanInvocation:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(project_dir=project_dir, quiet=True)
 
@@ -218,7 +218,7 @@ class TestBuildPodmanInvocation:
         mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -227,7 +227,7 @@ class TestBuildPodmanInvocation:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         with pytest.raises(SystemExit) as exc:
             build(project_dir=project_dir, push=True)
@@ -257,7 +257,7 @@ class TestBuildPodmanInvocation:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -266,7 +266,7 @@ class TestBuildPodmanInvocation:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(project_dir=project_dir, push=True, quiet=True)
 
@@ -297,7 +297,7 @@ class TestBuildPodmanInvocation:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -306,7 +306,7 @@ class TestBuildPodmanInvocation:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(project_dir=project_dir, platform="linux/arm64", quiet=True)
 
@@ -340,7 +340,7 @@ class TestBuildPodmanInvocation:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -349,7 +349,7 @@ class TestBuildPodmanInvocation:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(project_dir=project_dir, tag="custom-tag", quiet=True)
 
@@ -391,7 +391,7 @@ class TestBuildDefaultBehavior:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -400,7 +400,7 @@ class TestBuildDefaultBehavior:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         # Call without project_dir argument
         build(quiet=True)
@@ -429,7 +429,7 @@ class TestBuildDefaultBehavior:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -438,7 +438,7 @@ class TestBuildDefaultBehavior:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(project_dir=project_dir, quiet=True)
 
@@ -473,7 +473,7 @@ class TestBuildDefaultBehavior:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -482,7 +482,7 @@ class TestBuildDefaultBehavior:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(project_dir=project_dir, quiet=True)
 
@@ -514,7 +514,7 @@ class TestBuildErrorHandling:
         mock_run.side_effect = subprocess.CalledProcessError(1, "podman")
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -523,7 +523,7 @@ class TestBuildErrorHandling:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         with pytest.raises(SystemExit) as exc:
             build(project_dir=project_dir)
@@ -590,7 +590,7 @@ class TestBuildVariants:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -599,7 +599,7 @@ class TestBuildVariants:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(
             project_dir=project_dir,
@@ -644,7 +644,7 @@ class TestBuildVariants:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -653,7 +653,7 @@ class TestBuildVariants:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(
             project_dir=project_dir,
@@ -714,7 +714,7 @@ class TestBuildVariants:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -723,7 +723,7 @@ class TestBuildVariants:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(
             project_dir=project_dir,
@@ -769,7 +769,7 @@ def _mock_build_env(mocker, tmp_path):
     mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
     mocker.patch(
-        "ots_containers.commands.image.app.Config",
+        "rots.commands.image.app.Config",
         return_value=mocker.Mock(
             db_path=var_dir / "deployments.db",
             image="ghcr.io/onetimesecret/onetimesecret",
@@ -778,7 +778,7 @@ def _mock_build_env(mocker, tmp_path):
             get_executor=lambda host=None: None,
         ),
     )
-    mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+    mocker.patch("rots.commands.image.app.db.record_deployment")
 
     return mock_run
 
@@ -912,7 +912,7 @@ class TestBuildAllVariants:
         (project_dir / "docker" / "lite.dockerfile").write_text("FROM ruby:3.2-slim\n")
 
         _mock_build_env(mocker, tmp_path)
-        mock_record = mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mock_record = mocker.patch("rots.commands.image.app.db.record_deployment")
 
         build(project_dir=project_dir, quiet=True)
 
@@ -1063,7 +1063,7 @@ class TestBuildBaseCleanup:
         var_dir = tmp_path / "var"
         var_dir.mkdir(exist_ok=True)
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 image="ghcr.io/onetimesecret/onetimesecret",
@@ -1072,7 +1072,7 @@ class TestBuildBaseCleanup:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         with pytest.raises(SystemExit):
             build(project_dir=project_dir, quiet=True)
@@ -1197,7 +1197,7 @@ class TestBuildImageNameFallback:
         mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
 
         mocker.patch(
-            "ots_containers.commands.image.app.Config",
+            "rots.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
                 registry=None,
@@ -1206,7 +1206,7 @@ class TestBuildImageNameFallback:
                 get_executor=lambda host=None: None,
             ),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
 
         return mock_run
 

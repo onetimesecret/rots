@@ -12,35 +12,35 @@ class TestConfigDefaults:
 
     def test_default_config_dir(self):
         """Should default to /etc/onetimesecret."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.config_dir == Path("/etc/onetimesecret")
 
     def test_default_var_dir(self):
         """Should default to /var/lib/onetimesecret."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.var_dir == Path("/var/lib/onetimesecret")
 
     def test_default_web_template_path(self):
         """Should default to systemd quadlet location for web."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.web_template_path == Path("/etc/containers/systemd/onetime-web@.container")
 
     def test_default_worker_template_path(self):
         """Should default to systemd quadlet location for worker."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.worker_template_path == Path("/etc/containers/systemd/onetime-worker@.container")
 
     def test_default_scheduler_template_path(self):
         """Should default to systemd quadlet location for scheduler."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.scheduler_template_path == Path(
@@ -54,7 +54,7 @@ class TestConfigImageSettings:
     def test_default_image(self, monkeypatch):
         """Should default to ghcr.io/onetimesecret/onetimesecret."""
         monkeypatch.delenv("IMAGE", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.image == "ghcr.io/onetimesecret/onetimesecret"
@@ -62,7 +62,7 @@ class TestConfigImageSettings:
     def test_image_from_env(self, monkeypatch):
         """Should use IMAGE env var when set."""
         monkeypatch.setenv("IMAGE", "custom/image")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.image == "custom/image"
@@ -70,7 +70,7 @@ class TestConfigImageSettings:
     def test_default_tag(self, monkeypatch):
         """Should default to '@current' sentinel (not the literal registry tag 'current')."""
         monkeypatch.delenv("TAG", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.tag == "@current"
@@ -78,7 +78,7 @@ class TestConfigImageSettings:
     def test_tag_from_env(self, monkeypatch):
         """Should use TAG env var when set."""
         monkeypatch.setenv("TAG", "v1.2.3")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.tag == "v1.2.3"
@@ -87,7 +87,7 @@ class TestConfigImageSettings:
         """Should combine image and tag correctly."""
         monkeypatch.setenv("IMAGE", "myregistry/myimage")
         monkeypatch.setenv("TAG", "latest")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.image_with_tag == "myregistry/myimage:latest"
@@ -98,25 +98,25 @@ class TestConfigPaths:
 
     def test_config_yaml_path(self):
         """Should return correct path for config.yaml."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(config_dir=Path("/etc/ots"))
         assert cfg.config_yaml == Path("/etc/ots/config.yaml")
 
     def test_db_path_with_writable_var_dir(self, tmp_path):
         """Should use system path when var_dir is writable."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(var_dir=tmp_path)
         assert cfg.db_path == tmp_path / "deployments.db"
 
     def test_db_path_falls_back_to_user_space(self):
         """Should fall back to ~/.local/share when var_dir not writable."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         # Non-existent path triggers fallback
         cfg = Config(var_dir=Path("/nonexistent/path"))
-        assert ".local/share/ots-containers/deployments.db" in str(cfg.db_path)
+        assert ".local/share/rots/deployments.db" in str(cfg.db_path)
 
 
 class TestConfigValidate:
@@ -126,7 +126,7 @@ class TestConfigValidate:
         """Should not raise with default image and @current sentinel tag."""
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("TAG", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         cfg.validate()  # Should not raise
@@ -135,7 +135,7 @@ class TestConfigValidate:
         """Should accept a well-formed OCI tag."""
         monkeypatch.setenv("TAG", "v1.2.3-rc1")
         monkeypatch.delenv("IMAGE", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         cfg.validate()  # Should not raise
@@ -144,7 +144,7 @@ class TestConfigValidate:
         """Should accept the @current sentinel tag."""
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("TAG", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.tag == "@current"
@@ -154,7 +154,7 @@ class TestConfigValidate:
         """Should accept the @rollback sentinel tag."""
         monkeypatch.setenv("TAG", "@rollback")
         monkeypatch.delenv("IMAGE", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         cfg.validate()  # Should not raise
@@ -162,7 +162,7 @@ class TestConfigValidate:
     def test_validate_rejects_tag_with_shell_metacharacters(self, monkeypatch):
         """Should reject tags containing shell metacharacters."""
         monkeypatch.delenv("IMAGE", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         with pytest.raises(ValueError, match="Invalid tag"):
             Config(tag="; rm -rf /")
@@ -170,7 +170,7 @@ class TestConfigValidate:
     def test_validate_rejects_tag_with_spaces(self, monkeypatch):
         """Should reject tags containing whitespace."""
         monkeypatch.delenv("IMAGE", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         with pytest.raises(ValueError, match="Invalid tag"):
             Config(tag="v1 2")
@@ -178,7 +178,7 @@ class TestConfigValidate:
     def test_validate_rejects_empty_tag(self, monkeypatch):
         """Should reject empty string as tag."""
         monkeypatch.delenv("IMAGE", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         with pytest.raises(ValueError, match="Invalid tag"):
             Config(tag="")
@@ -186,7 +186,7 @@ class TestConfigValidate:
     def test_validate_rejects_image_with_shell_metacharacters(self, monkeypatch):
         """Should reject image names with shell injection attempts."""
         monkeypatch.delenv("TAG", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         with pytest.raises(ValueError, match="Invalid image"):
             Config(image="$(whoami)")
@@ -194,7 +194,7 @@ class TestConfigValidate:
     def test_validate_rejects_image_with_spaces(self, monkeypatch):
         """Should reject image names containing whitespace."""
         monkeypatch.delenv("TAG", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         with pytest.raises(ValueError, match="Invalid image"):
             Config(image="my image")
@@ -202,7 +202,7 @@ class TestConfigValidate:
     def test_validate_rejects_empty_image(self, monkeypatch):
         """Should reject empty string as image name."""
         monkeypatch.delenv("TAG", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         with pytest.raises(ValueError, match="Invalid image"):
             Config(image="")
@@ -211,7 +211,7 @@ class TestConfigValidate:
         """Should accept standard ghcr.io image path."""
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("TAG", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(image="ghcr.io/onetimesecret/onetimesecret")
         cfg.validate()  # Should not raise
@@ -219,7 +219,7 @@ class TestConfigValidate:
     def test_validate_accepts_tag_with_dots_and_hyphens(self, monkeypatch):
         """Should accept tags with dots, hyphens, and underscores."""
         monkeypatch.delenv("IMAGE", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(tag="v0.19.0-beta_1")
         cfg.validate()  # Should not raise
@@ -228,7 +228,7 @@ class TestConfigValidate:
         """Should not raise even when config files are missing."""
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("TAG", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(config_dir=tmp_path)
         cfg.validate()  # Should not raise
@@ -236,7 +236,7 @@ class TestConfigValidate:
     def test_validate_rejects_tag_with_colon(self, monkeypatch):
         """Should reject tags containing colons (would break image:tag format)."""
         monkeypatch.delenv("IMAGE", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         with pytest.raises(ValueError, match="Invalid tag"):
             Config(tag="v1:latest")
@@ -244,7 +244,7 @@ class TestConfigValidate:
     def test_validate_rejects_image_with_backtick(self, monkeypatch):
         """Should reject image names with backtick command substitution."""
         monkeypatch.delenv("TAG", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         with pytest.raises(ValueError, match="Invalid image"):
             Config(image="`whoami`/image")
@@ -255,7 +255,7 @@ class TestConfigFiles:
 
     def test_config_files_contains_expected_files(self):
         """CONFIG_FILES should list the six known config files."""
-        from ots_containers.config import CONFIG_FILES
+        from rots.config import CONFIG_FILES
 
         assert "config.yaml" in CONFIG_FILES
         assert "auth.yaml" in CONFIG_FILES
@@ -266,13 +266,13 @@ class TestConfigFiles:
 
     def test_config_files_length(self):
         """CONFIG_FILES should contain exactly 6 entries."""
-        from ots_containers.config import CONFIG_FILES
+        from rots.config import CONFIG_FILES
 
         assert len(CONFIG_FILES) == 6
 
     def test_config_files_is_tuple(self):
         """CONFIG_FILES should be a tuple (immutable)."""
-        from ots_containers.config import CONFIG_FILES
+        from rots.config import CONFIG_FILES
 
         assert isinstance(CONFIG_FILES, tuple)
 
@@ -282,14 +282,14 @@ class TestExistingConfigFiles:
 
     def test_returns_empty_when_config_dir_missing(self):
         """Should return empty list when config_dir does not exist."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(config_dir=Path("/nonexistent/config/dir"))
         assert cfg.existing_config_files == []
 
     def test_returns_empty_when_no_yaml_files(self, tmp_path):
         """Should return empty list when config_dir exists but has no yaml files."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         config_dir = tmp_path / "etc"
         config_dir.mkdir()
@@ -299,7 +299,7 @@ class TestExistingConfigFiles:
 
     def test_returns_only_existing_files(self, tmp_path):
         """Should return only files that actually exist on disk."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         config_dir = tmp_path / "etc"
         config_dir.mkdir()
@@ -316,7 +316,7 @@ class TestExistingConfigFiles:
 
     def test_returns_all_three_when_all_exist(self, tmp_path):
         """Should return all 3 paths when all config files exist."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         config_dir = tmp_path / "etc"
         config_dir.mkdir()
@@ -333,7 +333,7 @@ class TestExistingConfigFiles:
 
     def test_ignores_non_config_files(self, tmp_path):
         """Should not include files not listed in CONFIG_FILES."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         config_dir = tmp_path / "etc"
         config_dir.mkdir()
@@ -352,14 +352,14 @@ class TestHasCustomConfig:
 
     def test_false_when_no_config_dir(self):
         """Should return False when config_dir does not exist."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(config_dir=Path("/nonexistent/config/dir"))
         assert cfg.has_custom_config is False
 
     def test_false_when_empty_config_dir(self, tmp_path):
         """Should return False when config_dir exists but is empty."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         config_dir = tmp_path / "etc"
         config_dir.mkdir()
@@ -369,7 +369,7 @@ class TestHasCustomConfig:
 
     def test_true_when_one_yaml_exists(self, tmp_path):
         """Should return True when at least one config file exists."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         config_dir = tmp_path / "etc"
         config_dir.mkdir()
@@ -380,7 +380,7 @@ class TestHasCustomConfig:
 
     def test_true_when_all_yaml_files_exist(self, tmp_path):
         """Should return True when all config files exist."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         config_dir = tmp_path / "etc"
         config_dir.mkdir()
@@ -397,7 +397,7 @@ class TestGetExistingConfigFilesRemote:
 
     def test_delegates_to_property_when_no_executor(self, tmp_path):
         """Should use local Path.exists() when executor is None."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         config_dir = tmp_path / "etc"
         config_dir.mkdir()
@@ -412,7 +412,7 @@ class TestGetExistingConfigFilesRemote:
         """Should use local Path.exists() when executor is LocalExecutor."""
         from ots_shared.ssh import LocalExecutor
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         config_dir = tmp_path / "etc"
         config_dir.mkdir()
@@ -436,7 +436,7 @@ class TestGetExistingConfigFilesRemote:
         from ots_shared.ssh import SSHExecutor
         from ots_shared.ssh.executor import Result
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         mock_client = MagicMock(spec=paramiko.SSHClient)
         ex = SSHExecutor(mock_client)
@@ -467,7 +467,7 @@ class TestConfigRegistry:
     def test_registry_from_env(self, monkeypatch):
         """Should read OTS_REGISTRY env var."""
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com/myorg")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.registry == "registry.example.com/myorg"
@@ -475,7 +475,7 @@ class TestConfigRegistry:
     def test_registry_defaults_to_none(self, monkeypatch):
         """Should default to None when OTS_REGISTRY is absent."""
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.registry is None
@@ -491,7 +491,7 @@ class TestConfigRegistryAuthFile:
         monkeypatch.setenv("REGISTRY_AUTH_FILE", str(auth_file))
         # Set XDG_RUNTIME_DIR too to prove env var takes precedence
         monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "xdg"))
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.registry_auth_file == auth_file
@@ -501,7 +501,7 @@ class TestConfigRegistryAuthFile:
         env_file = tmp_path / "env-auth.json"
         explicit_file = tmp_path / "explicit-auth.json"
         monkeypatch.setenv("REGISTRY_AUTH_FILE", str(env_file))
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(_registry_auth_file=explicit_file)
         assert cfg.registry_auth_file == explicit_file
@@ -515,7 +515,7 @@ class TestConfigRegistryAuthFile:
         auth_file = auth_dir / "auth.json"
         auth_file.touch()
         monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg_dir))
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.registry_auth_file == auth_file
@@ -527,7 +527,7 @@ class TestConfigRegistryAuthFile:
         xdg_dir.mkdir(parents=True)
         # Do NOT create containers/auth.json
         monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg_dir))
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         # Should fall through to user config or system path, not the XDG path
@@ -539,7 +539,7 @@ class TestConfigRegistryAuthFile:
 
         monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
         monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         # On macOS (our test platform), should return user config path
@@ -554,7 +554,7 @@ class TestGetRegistryAuthFile:
     def test_none_executor_delegates_to_property(self, monkeypatch):
         """get_registry_auth_file(None) should return same as registry_auth_file property."""
         monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.get_registry_auth_file(None) == cfg.registry_auth_file
@@ -564,7 +564,7 @@ class TestGetRegistryAuthFile:
         monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
         from ots_shared.ssh import LocalExecutor
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         ex = LocalExecutor()
@@ -572,7 +572,7 @@ class TestGetRegistryAuthFile:
 
     def test_remote_executor_with_override_returns_override(self):
         """get_registry_auth_file with _registry_auth_file override should return it."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         override = Path("/custom/auth.json")
         mock_executor = MagicMock()
@@ -582,7 +582,7 @@ class TestGetRegistryAuthFile:
     def test_remote_executor_with_env_var(self, monkeypatch):
         """get_registry_auth_file should use REGISTRY_AUTH_FILE env var for remote."""
         monkeypatch.setenv("REGISTRY_AUTH_FILE", "/env/auth.json")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         mock_executor = MagicMock()
         cfg = Config()
@@ -593,7 +593,7 @@ class TestGetRegistryAuthFile:
         monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
         from ots_shared.ssh.executor import Result
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         mock_executor = MagicMock()
         # First candidate (/run/containers/0/auth.json) exists
@@ -607,7 +607,7 @@ class TestGetRegistryAuthFile:
         monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
         from ots_shared.ssh.executor import Result
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         mock_executor = MagicMock()
         mock_executor.run.side_effect = [
@@ -623,7 +623,7 @@ class TestGetRegistryAuthFile:
         monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
         from ots_shared.ssh.executor import Result
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         mock_executor = MagicMock()
         mock_executor.run.return_value = Result(command="test", returncode=1, stdout="", stderr="")
@@ -638,7 +638,7 @@ class TestConfigPrivateImage:
     def test_private_image_none_when_no_registry(self, monkeypatch):
         """Should return None when registry is None."""
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.private_image is None
@@ -646,7 +646,7 @@ class TestConfigPrivateImage:
     def test_private_image_with_registry(self, monkeypatch):
         """Should return formatted string when registry is set."""
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com/myorg")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.private_image == "registry.example.com/myorg/onetimesecret"
@@ -654,7 +654,7 @@ class TestConfigPrivateImage:
     def test_private_image_with_tag_none_when_no_registry(self, monkeypatch):
         """Should return None when registry is None."""
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.private_image_with_tag is None
@@ -663,7 +663,7 @@ class TestConfigPrivateImage:
         """Should combine registry, image name, and tag."""
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com/myorg")
         monkeypatch.setenv("TAG", "v2.0.0")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.private_image_with_tag == "registry.example.com/myorg/onetimesecret:v2.0.0"
@@ -672,7 +672,7 @@ class TestConfigPrivateImage:
         """Should use default tag when TAG env var is absent."""
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com/myorg")
         monkeypatch.delenv("TAG", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.private_image_with_tag == "registry.example.com/myorg/onetimesecret:@current"
@@ -681,7 +681,7 @@ class TestConfigPrivateImage:
         """IMAGE env var with multi-segment path uses only the last segment as basename."""
         monkeypatch.setenv("IMAGE", "docker.io/myorg/customapp")
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         # basename of "docker.io/myorg/customapp" is "customapp"
@@ -691,7 +691,7 @@ class TestConfigPrivateImage:
         """IMAGE with three path components strips all but the last as basename."""
         monkeypatch.setenv("IMAGE", "registry.corp.com/team/webapp")
         monkeypatch.setenv("OTS_REGISTRY", "myreg.example.com")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         # basename of "registry.corp.com/team/webapp" is "webapp"
@@ -703,8 +703,8 @@ class TestConfigResolveImageTag:
 
     def test_resolves_current_alias(self, monkeypatch, tmp_path):
         """Should resolve 'current' tag to the aliased image and tag from the database."""
-        from ots_containers import db
-        from ots_containers.config import Config
+        from rots import db
+        from rots.config import Config
 
         # Set up a real database
         db_path = tmp_path / "deployments.db"
@@ -723,8 +723,8 @@ class TestConfigResolveImageTag:
 
     def test_resolves_rollback_alias(self, monkeypatch, tmp_path):
         """Should resolve 'rollback' tag to the previous image and tag."""
-        from ots_containers import db
-        from ots_containers.config import Config
+        from rots import db
+        from rots.config import Config
 
         db_path = tmp_path / "deployments.db"
         db.init_db(db_path)
@@ -745,8 +745,8 @@ class TestConfigResolveImageTag:
         Callers (e.g. image pull) are expected to detect the sentinel and raise
         a helpful error rather than passing '@current' to the registry.
         """
-        from ots_containers import db
-        from ots_containers.config import Config
+        from rots import db
+        from rots.config import Config
 
         db_path = tmp_path / "deployments.db"
         db.init_db(db_path)
@@ -762,7 +762,7 @@ class TestConfigResolveImageTag:
 
     def test_non_alias_tag_passes_through(self, monkeypatch, tmp_path):
         """A concrete tag like 'v3.0.0' should pass through without database lookup."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         monkeypatch.setenv("TAG", "v3.0.0")
         monkeypatch.setenv("IMAGE", "myregistry/myimage")
@@ -778,7 +778,7 @@ class TestConfigValkeyService:
     def test_valkey_service_from_env(self, monkeypatch):
         """Should read OTS_VALKEY_SERVICE env var and store it in valkey_service."""
         monkeypatch.setenv("OTS_VALKEY_SERVICE", "valkey-server@6379.service")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.valkey_service == "valkey-server@6379.service"
@@ -786,7 +786,7 @@ class TestConfigValkeyService:
     def test_valkey_service_defaults_to_none(self, monkeypatch):
         """Should default to None when OTS_VALKEY_SERVICE is not set."""
         monkeypatch.delenv("OTS_VALKEY_SERVICE", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.valkey_service is None
@@ -794,17 +794,17 @@ class TestConfigValkeyService:
     def test_valkey_service_explicit_override(self, monkeypatch):
         """Constructor override takes precedence over env var."""
         monkeypatch.setenv("OTS_VALKEY_SERVICE", "valkey-server@6380.service")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(valkey_service="redis@6379.service")
         assert cfg.valkey_service == "redis@6379.service"
 
     def test_valkey_service_in_quadlet_adds_after_and_wants(self, mocker, tmp_path, monkeypatch):
         """When valkey_service is set the written quadlet should include After= and Wants= lines."""
-        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        mocker.patch("rots.quadlet.systemd.daemon_reload")
         monkeypatch.delenv("OTS_VALKEY_SERVICE", raising=False)
-        from ots_containers import quadlet
-        from ots_containers.config import Config
+        from rots import quadlet
+        from rots.config import Config
 
         cfg = Config(
             web_template_path=tmp_path / "onetime-web@.container",
@@ -821,10 +821,10 @@ class TestConfigValkeyService:
 
     def test_no_valkey_service_quadlet_omits_valkey_lines(self, mocker, tmp_path, monkeypatch):
         """When valkey_service is None the quadlet should not reference valkey unit."""
-        mocker.patch("ots_containers.quadlet.systemd.daemon_reload")
+        mocker.patch("rots.quadlet.systemd.daemon_reload")
         monkeypatch.delenv("OTS_VALKEY_SERVICE", raising=False)
-        from ots_containers import quadlet
-        from ots_containers.config import Config
+        from rots import quadlet
+        from rots.config import Config
 
         cfg = Config(
             web_template_path=tmp_path / "onetime-web@.container",
@@ -844,7 +844,7 @@ class TestConfigResourceLimits:
     def test_memory_max_from_env(self, monkeypatch):
         """Should read MEMORY_MAX env var."""
         monkeypatch.setenv("MEMORY_MAX", "1G")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.memory_max == "1G"
@@ -852,7 +852,7 @@ class TestConfigResourceLimits:
     def test_memory_max_defaults_to_none(self, monkeypatch):
         """Should default to None when MEMORY_MAX is not set."""
         monkeypatch.delenv("MEMORY_MAX", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.memory_max is None
@@ -860,7 +860,7 @@ class TestConfigResourceLimits:
     def test_cpu_quota_from_env(self, monkeypatch):
         """Should read CPU_QUOTA env var."""
         monkeypatch.setenv("CPU_QUOTA", "80%")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.cpu_quota == "80%"
@@ -868,7 +868,7 @@ class TestConfigResourceLimits:
     def test_cpu_quota_defaults_to_none(self, monkeypatch):
         """Should default to None when CPU_QUOTA is not set."""
         monkeypatch.delenv("CPU_QUOTA", raising=False)
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.cpu_quota is None
@@ -876,7 +876,7 @@ class TestConfigResourceLimits:
     def test_memory_max_explicit_override(self, monkeypatch):
         """Constructor value overrides env var."""
         monkeypatch.setenv("MEMORY_MAX", "512M")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(memory_max="2G")
         assert cfg.memory_max == "2G"
@@ -884,7 +884,7 @@ class TestConfigResourceLimits:
     def test_cpu_quota_explicit_override(self, monkeypatch):
         """Constructor value overrides env var."""
         monkeypatch.setenv("CPU_QUOTA", "50%")
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(cpu_quota="90%")
         assert cfg.cpu_quota == "90%"
@@ -895,14 +895,14 @@ class TestSystemDbPath:
 
     def test_system_db_path_is_var_dir_plus_filename(self):
         """system_db_path should always be var_dir / deployments.db."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(var_dir=Path("/var/lib/onetimesecret"))
         assert cfg.system_db_path == Path("/var/lib/onetimesecret/deployments.db")
 
     def test_system_db_path_with_custom_var_dir(self, tmp_path):
         """system_db_path should use the configured var_dir."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(var_dir=tmp_path)
         assert cfg.system_db_path == tmp_path / "deployments.db"
@@ -913,7 +913,7 @@ class TestGetDbPath:
 
     def test_get_db_path_none_falls_through_to_db_path(self, tmp_path):
         """get_db_path(None) should return the same as db_path property."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(var_dir=tmp_path)
         assert cfg.get_db_path(None) == cfg.db_path
@@ -922,7 +922,7 @@ class TestGetDbPath:
         """get_db_path(LocalExecutor()) should return the same as db_path."""
         from ots_shared.ssh import LocalExecutor
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(var_dir=tmp_path)
         ex = LocalExecutor()
@@ -930,7 +930,7 @@ class TestGetDbPath:
 
     def test_get_db_path_remote_executor_returns_system_db_path(self, tmp_path):
         """get_db_path with a non-local executor should return system_db_path."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         # Use a mock executor that is not a LocalExecutor
         mock_executor = MagicMock()
@@ -946,7 +946,7 @@ class TestGetDbPath:
 
         from ots_shared.ssh import SSHExecutor
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         mock_client = MagicMock(spec=paramiko.SSHClient)
         ssh_ex = SSHExecutor(mock_client)
@@ -955,7 +955,7 @@ class TestGetDbPath:
 
     def test_get_db_path_system_vs_local_difference(self):
         """system_db_path and db_path should differ when var_dir is not writable."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config(var_dir=Path("/nonexistent/path"))
         # system_db_path always returns var_dir / deployments.db
@@ -969,7 +969,7 @@ class TestCloseSSHCache:
 
     def test_close_ssh_cache_closes_all_clients(self):
         """Should call close() on every cached client."""
-        from ots_containers.config import _close_ssh_cache, _ssh_cache
+        from rots.config import _close_ssh_cache, _ssh_cache
 
         mock_client_a = MagicMock()
         mock_client_b = MagicMock()
@@ -984,7 +984,7 @@ class TestCloseSSHCache:
 
     def test_close_ssh_cache_clears_cache(self):
         """After running, the cache dict should be empty."""
-        from ots_containers.config import _close_ssh_cache, _ssh_cache
+        from rots.config import _close_ssh_cache, _ssh_cache
 
         _ssh_cache["host-c.example.com"] = MagicMock()
 
@@ -994,7 +994,7 @@ class TestCloseSSHCache:
 
     def test_close_ssh_cache_ignores_close_errors(self):
         """Should not raise if client.close() throws."""
-        from ots_containers.config import _close_ssh_cache, _ssh_cache
+        from rots.config import _close_ssh_cache, _ssh_cache
 
         mock_client = MagicMock()
         mock_client.close.side_effect = RuntimeError("already closed")
@@ -1006,7 +1006,7 @@ class TestCloseSSHCache:
 
     def test_close_ssh_cache_noop_when_empty(self):
         """Should not raise when the cache is already empty."""
-        from ots_containers.config import _close_ssh_cache, _ssh_cache
+        from rots.config import _close_ssh_cache, _ssh_cache
 
         _ssh_cache.clear()
 
@@ -1020,11 +1020,11 @@ class TestMetaHostFlagRouting:
 
     def test_meta_sets_host_var_when_host_provided(self, mocker):
         """_meta(host='myhost') should set context.host_var."""
-        from ots_containers import context
-        from ots_containers.cli import _meta
+        from rots import context
+        from rots.cli import _meta
 
-        mocker.patch("ots_containers.cli._configure_logging")
-        mocker.patch("ots_containers.cli.app")
+        mocker.patch("rots.cli._configure_logging")
+        mocker.patch("rots.cli.app")
 
         # Save state so we can restore after the test
         token = context.host_var.set(None)
@@ -1036,11 +1036,11 @@ class TestMetaHostFlagRouting:
 
     def test_meta_does_not_set_host_var_when_host_none(self, mocker):
         """_meta(host=None) should leave context.host_var at default (None)."""
-        from ots_containers import context
-        from ots_containers.cli import _meta
+        from rots import context
+        from rots.cli import _meta
 
-        mocker.patch("ots_containers.cli._configure_logging")
-        mocker.patch("ots_containers.cli.app")
+        mocker.patch("rots.cli._configure_logging")
+        mocker.patch("rots.cli.app")
 
         # Reset to known state
         token = context.host_var.set(None)
@@ -1057,7 +1057,7 @@ class TestMetaHostFlagRouting:
         # context (which may be modified by earlier tests in the same process).
         import contextvars
 
-        from ots_containers import context
+        from rots import context
 
         # Create a truly empty context and read the var there
         empty_ctx = contextvars.Context()
@@ -1070,7 +1070,7 @@ class TestGetExecutorSSHErrors:
 
     def _clear_cache(self, hostname: str):
         """Ensure hostname is not in the SSH cache so get_executor tries to connect."""
-        from ots_containers.config import _ssh_cache
+        from rots.config import _ssh_cache
 
         _ssh_cache.pop(hostname, None)
 
@@ -1078,7 +1078,7 @@ class TestGetExecutorSSHErrors:
         """AuthenticationException should produce a SystemExit mentioning 'Authentication'."""
         from paramiko.ssh_exception import AuthenticationException
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         hostname = "test-auth-failure.example.com"
         self._clear_cache(hostname)
@@ -1100,7 +1100,7 @@ class TestGetExecutorSSHErrors:
         """NoValidConnectionsError should produce a SystemExit with the host name."""
         from paramiko.ssh_exception import NoValidConnectionsError
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         hostname = "test-no-conn.example.com"
         self._clear_cache(hostname)
@@ -1120,7 +1120,7 @@ class TestGetExecutorSSHErrors:
 
     def test_socket_timeout_gives_friendly_message(self, mocker, monkeypatch):
         """socket.timeout should produce a SystemExit mentioning 'timed out'."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         hostname = "test-timeout.example.com"
         self._clear_cache(hostname)
@@ -1140,7 +1140,7 @@ class TestGetExecutorSSHErrors:
 
     def test_import_error_gives_install_hint(self, mocker, monkeypatch):
         """ImportError (no paramiko) should tell the user how to install it."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         hostname = "test-import.example.com"
         self._clear_cache(hostname)
@@ -1161,7 +1161,7 @@ class TestGetExecutorSSHErrors:
         """When resolve_host returns None, get_executor should return a LocalExecutor."""
         from ots_shared.ssh import LocalExecutor
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         mocker.patch("ots_shared.ssh.resolve_host", return_value=None)
 
@@ -1175,7 +1175,7 @@ class TestGetExecutorResolutionChain:
 
     def _clear_cache(self, hostname: str):
         """Remove hostname from SSH cache so get_executor attempts a new connection."""
-        from ots_containers.config import _ssh_cache
+        from rots.config import _ssh_cache
 
         _ssh_cache.pop(hostname, None)
 
@@ -1183,7 +1183,7 @@ class TestGetExecutorResolutionChain:
         """get_executor(host=None) with no OTS_HOST or .otsinfra.env returns LocalExecutor."""
         from ots_shared.ssh import LocalExecutor
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         mocker.patch("ots_shared.ssh.resolve_host", return_value=None)
 
@@ -1200,7 +1200,7 @@ class TestGetExecutorResolutionChain:
 
         from ots_shared.ssh import SSHExecutor
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         hostname = "test-host-flag.example.com"
         self._clear_cache(hostname)
@@ -1227,7 +1227,7 @@ class TestGetExecutorResolutionChain:
 
         from ots_shared.ssh import SSHExecutor
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         hostname = "test-env-host.example.com"
         self._clear_cache(hostname)
@@ -1253,7 +1253,7 @@ class TestGetExecutorResolutionChain:
 
         from ots_shared.ssh import SSHExecutor
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         hostname = "test-otsinfra.example.com"
         self._clear_cache(hostname)
@@ -1279,7 +1279,7 @@ class TestGetExecutorResolutionChain:
 
         from ots_shared.ssh import SSHExecutor
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         hostname = "test-cache.example.com"
         self._clear_cache(hostname)
@@ -1302,7 +1302,7 @@ class TestGetExecutorResolutionChain:
 
     def test_resolve_host_receives_host_flag(self, mocker):
         """get_executor should pass the host parameter to resolve_host."""
-        from ots_containers.config import Config
+        from rots.config import Config
 
         mock_resolve = mocker.patch("ots_shared.ssh.resolve_host", return_value=None)
 
@@ -1323,7 +1323,7 @@ class TestConfigValidateResourceLimits:
         monkeypatch.delenv("CPU_QUOTA", raising=False)
         monkeypatch.delenv("OTS_VALKEY_SERVICE", raising=False)
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         return Config(**overrides)
 
@@ -1409,7 +1409,7 @@ class TestConfigValidateValkeyService:
         monkeypatch.delenv("CPU_QUOTA", raising=False)
         monkeypatch.delenv("OTS_VALKEY_SERVICE", raising=False)
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         return Config(**overrides)
 
@@ -1458,13 +1458,13 @@ class TestConfigResolveImageTagWithOverride:
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("TAG", raising=False)
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         new_cfg = dataclasses.replace(cfg, image="custom/image", tag="v1.0.0")
 
         # Mock the db module so we can verify it's not called for concrete tags
-        mock_get_alias = mocker.patch("ots_containers.db.get_alias")
+        mock_get_alias = mocker.patch("rots.db.get_alias")
 
         image, tag = new_cfg.resolve_image_tag()
         assert image == "custom/image"
@@ -1478,7 +1478,7 @@ class TestConfigResolveImageTagWithOverride:
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("TAG", raising=False)
 
-        from ots_containers.config import DEFAULT_TAG, Config
+        from rots.config import DEFAULT_TAG, Config
 
         cfg = Config()
         assert cfg.tag == DEFAULT_TAG  # @current
@@ -1490,7 +1490,7 @@ class TestConfigResolveImageTagWithOverride:
         mock_alias = mocker.MagicMock()
         mock_alias.image = "custom/image"
         mock_alias.tag = "v0.23.0"
-        mocker.patch("ots_containers.db.get_alias", return_value=mock_alias)
+        mocker.patch("rots.db.get_alias", return_value=mock_alias)
 
         image, tag = new_cfg.resolve_image_tag()
         assert image == "custom/image"
@@ -1503,7 +1503,7 @@ class TestConfigResolveImageTagWithOverride:
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("TAG", raising=False)
 
-        from ots_containers.config import DEFAULT_IMAGE, DEFAULT_TAG, Config
+        from rots.config import DEFAULT_IMAGE, DEFAULT_TAG, Config
 
         cfg = Config()
         new_cfg = dataclasses.replace(cfg, image="new/image", tag="new-tag")
@@ -1520,7 +1520,7 @@ class TestConfigResolveImageTagWithOverride:
         monkeypatch.setenv("IMAGE", "env/image")
         monkeypatch.setenv("TAG", "env-tag")
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         assert cfg.image == "env/image"
@@ -1529,7 +1529,7 @@ class TestConfigResolveImageTagWithOverride:
         # Simulate positional override
         new_cfg = dataclasses.replace(cfg, image="pos/image", tag="pos-tag")
 
-        mock_get_alias = mocker.patch("ots_containers.db.get_alias")
+        mock_get_alias = mocker.patch("rots.db.get_alias")
         image, tag = new_cfg.resolve_image_tag()
         assert image == "pos/image"
         assert tag == "pos-tag"
@@ -1542,13 +1542,13 @@ class TestConfigResolveImageTagWithOverride:
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("TAG", raising=False)
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         new_cfg = dataclasses.replace(cfg, image="custom/image")
 
         # Alias lookup returns None (no alias set)
-        mocker.patch("ots_containers.db.get_alias", return_value=None)
+        mocker.patch("rots.db.get_alias", return_value=None)
 
         image, tag = new_cfg.resolve_image_tag()
         assert image == "custom/image"
@@ -1565,7 +1565,7 @@ class TestConfigDataclassesReplace:
         monkeypatch.delenv("TAG", raising=False)
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         with pytest.raises(ValueError, match="Invalid tag"):
@@ -1578,7 +1578,7 @@ class TestConfigDataclassesReplace:
         monkeypatch.delenv("TAG", raising=False)
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         with pytest.raises(ValueError, match="Invalid image"):
@@ -1591,7 +1591,7 @@ class TestConfigDataclassesReplace:
         monkeypatch.delenv("TAG", raising=False)
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         with pytest.raises(ValueError, match="Invalid OTS_REGISTRY"):
@@ -1604,7 +1604,7 @@ class TestConfigDataclassesReplace:
         monkeypatch.delenv("TAG", raising=False)
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
 
-        from ots_containers.config import Config
+        from rots.config import Config
 
         cfg = Config()
         new_cfg = dataclasses.replace(cfg, image="ghcr.io/other/image", tag="v2.0")

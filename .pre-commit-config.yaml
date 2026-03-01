@@ -106,7 +106,7 @@ repos:
     hooks:
       - id: pytest-cov
         name: pytest-cov
-        entry: .venv/bin/pytest tests/ -x -q --ff --cov=ots_containers --cov-report=term-missing --cov-fail-under=70
+        entry: .venv/bin/pytest tests/ -x -q --ff --cov=rots --cov-report=term-missing --cov-fail-under=70
         language: system
         pass_filenames: false
         files: ^(src/|tests/).*\.py$
