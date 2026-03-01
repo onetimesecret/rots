@@ -668,7 +668,7 @@ def redeploy(
     web: WebFlag = False,
     worker: WorkerFlag = False,
     scheduler: SchedulerFlag = False,
-    delay: Delay = 5,
+    delay: Delay = 30,
     force: Annotated[
         bool,
         cyclopts.Parameter(
@@ -2109,7 +2109,7 @@ def rollback(
     web: WebFlag = False,
     worker: WorkerFlag = False,
     scheduler: SchedulerFlag = False,
-    delay: Delay = 5,
+    delay: Delay = 30,
     dry_run: DryRun = False,
     yes: Yes = False,
     json_output: JsonOutput = False,

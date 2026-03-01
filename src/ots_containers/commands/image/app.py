@@ -427,9 +427,9 @@ def rollback(
         int,
         cyclopts.Parameter(
             name=["--delay", "-d"],
-            help="Seconds between instance redeployments when --apply is used (default: 5)",
+            help="Seconds between instance redeployments when --apply is used (default: 30)",
         ),
-    ] = 5,
+    ] = 30,
 ):
     """Roll back to the previous deployment.
 
