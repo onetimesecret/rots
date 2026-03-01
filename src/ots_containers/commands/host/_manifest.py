@@ -57,7 +57,7 @@ def default_manifest() -> list[ManifestEntry]:
 
     Maps CONFIG_FILES to /etc/onetimesecret/<name>,
     plus .env -> /etc/default/onetimesecret and
-    Caddyfile.template -> /etc/onetimesecret/Caddyfile.template.
+    valkey.conf -> /etc/valkey/valkey.conf.
     """
     entries: list[ManifestEntry] = []
     for fname in CONFIG_FILES:
@@ -67,8 +67,8 @@ def default_manifest() -> list[ManifestEntry]:
     entries.append(ManifestEntry(local_name=".env", remote_path=DEFAULT_ENV_FILE))
     entries.append(
         ManifestEntry(
-            local_name="Caddyfile.template",
-            remote_path=Path("/etc/onetimesecret/Caddyfile.template"),
+            local_name="valkey.conf",
+            remote_path=Path("/etc/valkey/valkey.conf"),
         )
     )
     return entries

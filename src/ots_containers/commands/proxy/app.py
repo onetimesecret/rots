@@ -100,6 +100,77 @@ def render(
 
 
 @app.command
+def push(
+    template_file: Annotated[
+        Path,
+        cyclopts.Parameter(
+            help="Local Caddyfile.template to push to the remote host",
+        ),
+    ],
+    output: Output = None,
+    dry_run: DryRun = False,
+) -> None:
+    """Push a local Caddyfile.template, render it, and reload Caddy.
+
+    Combines three steps into one:
+      1. Push local template to remote /etc/onetimesecret/Caddyfile.template
+      2. Render with envsubst using HOST environment
+      3. Reload Caddy to apply
+
+    Requires --host (pushing to localhost is not useful).
+
+    Examples:
+        ots --host eu-web-01 proxy push Caddyfile.template
+        ots --host eu-web-01 proxy push Caddyfile.template --dry-run
+    """
+    from ots_shared.ssh import is_remote
+
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+
+    if not is_remote(ex):
+        raise SystemExit("proxy push requires a remote host. Use --host to specify one.")
+
+    if not template_file.exists():
+        raise SystemExit(f"Local template not found: {template_file}")
+
+    tpl_dest = cfg.proxy_template
+    out = output or cfg.proxy_config
+
+    try:
+        content = template_file.read_text()
+
+        if dry_run:
+            print(f"Would push: {template_file} -> {tpl_dest}")
+            print(f"Would render: {tpl_dest} -> {out}")
+            print("Would reload Caddy")
+            return
+
+        # Step 1: Push template to remote
+        result = ex.run(["mkdir", "-p", str(tpl_dest.parent)], timeout=15)
+        result = ex.run(["tee", str(tpl_dest)], input=content, timeout=15)
+        if not result.ok:
+            raise ProxyError(f"Failed to write {tpl_dest}: {result.stderr}")
+        print(f"[ok] Pushed {template_file} -> {tpl_dest}")
+
+        # Step 2: Render template on remote
+        rendered = render_template(tpl_dest, executor=ex)
+        validate_caddy_config(rendered, executor=ex)
+        result = ex.run(["mkdir", "-p", str(out.parent)], timeout=15)
+        result = ex.run(["tee", str(out)], input=rendered, timeout=15)
+        if not result.ok:
+            raise ProxyError(f"Failed to write {out}: {result.stderr}")
+        print(f"[ok] Rendered {tpl_dest} -> {out}")
+
+        # Step 3: Reload Caddy
+        reload_caddy(executor=ex)
+        print("[ok] Caddy reloaded")
+
+    except ProxyError as e:
+        raise SystemExit(str(e)) from e
+
+
+@app.command
 def reload() -> None:
     """Reload the Caddy service.
 

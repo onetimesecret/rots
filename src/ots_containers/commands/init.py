@@ -101,7 +101,9 @@ def _copy_template(
 ) -> bool | None:
     """Copy template file if destination doesn't exist.
 
-    For remote targets, reads source locally and writes to remote via executor.
+    Both source and destination are resolved via the executor — when remote,
+    source is read from the remote filesystem and copied to dest on the same
+    host using ``cp -p``.
 
     Returns:
         True if copied, False if existed or source missing, None if permission denied.
@@ -113,17 +115,16 @@ def _copy_template(
             print(f"  [ok] {dest}")
         return False
 
-    if not src.exists():
+    if not _path_exists(src, executor):
         if not quiet:
             print(f"  [skip] {dest} (source {src} not found)")
         return False
 
     if is_remote(executor):
         assert executor is not None
-        content = src.read_text()
-        result = executor.run(["tee", str(dest)], input=content, sudo=True)
+        result = executor.run(["cp", "-p", str(src), str(dest)], sudo=True)
         if not result.ok:
-            print(f"  [denied] {dest} - remote write failed: {result.stderr.strip()}")
+            print(f"  [denied] {dest} - remote copy failed: {result.stderr.strip()}")
             return None
     else:
         try:

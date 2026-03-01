@@ -196,6 +196,160 @@ class TestCopyTemplate:
         assert "permission denied" in captured.out
 
 
+class TestCopyTemplateRemote:
+    """Test _copy_template remote path using cp -p."""
+
+    def test_remote_uses_cp_p_not_shutil(self, mocker, capsys):
+        """Remote execution should use 'cp -p src dest' via executor.run, not shutil.copy2."""
+        from ots_containers.commands.init import _copy_template
+
+        src = Path("/etc/onetimesecret/config.yaml.example")
+        dest = Path("/etc/onetimesecret/config.yaml")
+
+        mock_executor = mocker.MagicMock()
+        # cp -p succeeds
+        mock_executor.run.return_value = mocker.MagicMock(ok=True, stderr="")
+
+        # Mock is_remote to return True (used inside _copy_template)
+        mocker.patch("ots_shared.ssh.is_remote", return_value=True)
+
+        # Mock _path_exists: dest does not exist, src exists
+        mocker.patch(
+            "ots_containers.commands.init._path_exists",
+            side_effect=[False, True],
+        )
+        mock_copy2 = mocker.patch("shutil.copy2")
+
+        result = _copy_template(src, dest, quiet=True, executor=mock_executor)
+
+        assert result is True
+        mock_executor.run.assert_called_once_with(["cp", "-p", str(src), str(dest)], sudo=True)
+        mock_copy2.assert_not_called()
+
+    def test_remote_failure_returns_none(self, mocker, capsys):
+        """Remote copy failure (non-zero exit) should return None."""
+        from ots_containers.commands.init import _copy_template
+
+        src = Path("/etc/onetimesecret/config.yaml.example")
+        dest = Path("/etc/onetimesecret/config.yaml")
+
+        mock_executor = mocker.MagicMock()
+        mock_executor.run.return_value = mocker.MagicMock(ok=False, stderr="Permission denied")
+
+        mocker.patch("ots_shared.ssh.is_remote", return_value=True)
+        mocker.patch(
+            "ots_containers.commands.init._path_exists",
+            side_effect=[False, True],
+        )
+
+        result = _copy_template(src, dest, quiet=False, executor=mock_executor)
+
+        assert result is None
+        captured = capsys.readouterr()
+        assert "[denied]" in captured.out
+
+    def test_remote_prints_copied_on_success(self, mocker, capsys):
+        """Remote copy should print [copied] message when not quiet."""
+        from ots_containers.commands.init import _copy_template
+
+        src = Path("/etc/onetimesecret/config.yaml.example")
+        dest = Path("/etc/onetimesecret/config.yaml")
+
+        mock_executor = mocker.MagicMock()
+        mock_executor.run.return_value = mocker.MagicMock(ok=True, stderr="")
+
+        mocker.patch("ots_shared.ssh.is_remote", return_value=True)
+        mocker.patch(
+            "ots_containers.commands.init._path_exists",
+            side_effect=[False, True],
+        )
+
+        result = _copy_template(src, dest, quiet=False, executor=mock_executor)
+
+        assert result is True
+        captured = capsys.readouterr()
+        assert "[copied]" in captured.out
+
+    def test_remote_dest_exists_skips_copy(self, mocker):
+        """Remote copy should skip when dest already exists."""
+        from ots_containers.commands.init import _copy_template
+
+        src = Path("/etc/onetimesecret/config.yaml.example")
+        dest = Path("/etc/onetimesecret/config.yaml")
+
+        mock_executor = mocker.MagicMock()
+
+        mocker.patch(
+            "ots_containers.commands.init._path_exists",
+            side_effect=[True],  # dest exists
+        )
+
+        result = _copy_template(src, dest, quiet=True, executor=mock_executor)
+
+        assert result is False
+        mock_executor.run.assert_not_called()
+
+
+class TestPathExists:
+    """Test _path_exists helper function."""
+
+    def test_local_existing_file_returns_true(self, tmp_path):
+        """_path_exists should return True for an existing local file."""
+        from ots_containers.commands.init import _path_exists
+
+        existing = tmp_path / "exists.txt"
+        existing.touch()
+
+        result = _path_exists(existing, executor=LocalExecutor())
+        assert result is True
+
+    def test_local_missing_file_returns_false(self, tmp_path):
+        """_path_exists should return False for a non-existent local file."""
+        from ots_containers.commands.init import _path_exists
+
+        missing = tmp_path / "missing.txt"
+
+        result = _path_exists(missing, executor=LocalExecutor())
+        assert result is False
+
+    def test_local_existing_directory_returns_true(self, tmp_path):
+        """_path_exists should return True for an existing local directory."""
+        from ots_containers.commands.init import _path_exists
+
+        result = _path_exists(tmp_path, executor=LocalExecutor())
+        assert result is True
+
+    def test_remote_delegates_to_executor(self, mocker):
+        """_path_exists should call executor.run(['test', '-e', path]) for remote."""
+        from ots_containers.commands.init import _path_exists
+
+        mocker.patch("ots_shared.ssh.is_remote", return_value=True)
+
+        mock_executor = mocker.MagicMock()
+        mock_executor.run.return_value = mocker.MagicMock(ok=True)
+
+        path = Path("/etc/onetimesecret/config.yaml")
+        result = _path_exists(path, executor=mock_executor)
+
+        assert result is True
+        mock_executor.run.assert_called_once_with(["test", "-e", str(path)])
+
+    def test_remote_returns_false_when_test_fails(self, mocker):
+        """_path_exists should return False when remote 'test -e' fails."""
+        from ots_containers.commands.init import _path_exists
+
+        mocker.patch("ots_shared.ssh.is_remote", return_value=True)
+
+        mock_executor = mocker.MagicMock()
+        mock_executor.run.return_value = mocker.MagicMock(ok=False)
+
+        path = Path("/nonexistent/path")
+        result = _path_exists(path, executor=mock_executor)
+
+        assert result is False
+        mock_executor.run.assert_called_once_with(["test", "-e", str(path)])
+
+
 class TestInitCommand:
     """Test init command behavior."""
 

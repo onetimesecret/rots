@@ -66,11 +66,23 @@ class TestDefaultManifest:
         assert "auth.yaml" in names
         assert "logging.yaml" in names
         assert "billing.yaml" in names
+        assert "Caddyfile.template" in names
+        assert "puma.rb" in names
 
     def test_includes_env(self):
         entries = default_manifest()
         names = [e.local_name for e in entries]
         assert ".env" in names
+
+    def test_includes_valkey_conf(self):
+        entries = default_manifest()
+        names = [e.local_name for e in entries]
+        assert "valkey.conf" in names
+
+    def test_valkey_conf_maps_to_etc_valkey(self):
+        entries = default_manifest()
+        valkey_entry = next(e for e in entries if e.local_name == "valkey.conf")
+        assert str(valkey_entry.remote_path) == "/etc/valkey/valkey.conf"
 
     def test_includes_caddyfile_template(self):
         entries = default_manifest()
