@@ -17,6 +17,18 @@ if TYPE_CHECKING:
 TEMP_CONTAINER_NAME = "ots-asset-sync-tmp"
 
 
+def _get_error_stderr(e: Exception) -> str:
+    """Extract stderr from either CalledProcessError (local) or CommandError (remote)."""
+    stderr = getattr(e, "stderr", "") or ""
+    if hasattr(stderr, "strip"):
+        stderr = stderr.strip()
+    if not stderr:
+        result = getattr(e, "result", None)
+        if result is not None:
+            stderr = getattr(result, "stderr", "").strip()
+    return stderr or str(e)
+
+
 def update(cfg: Config, create_volume: bool = True, *, executor: Executor | None = None) -> None:
     require_podman(executor=executor)
 
@@ -28,13 +40,8 @@ def update(cfg: Config, create_volume: bool = True, *, executor: Executor | None
     try:
         result = p.volume.mount("static_assets", capture_output=True, text=True, check=True)
     except Exception as e:
-        # Local: CalledProcessError (e.stderr); Remote: CommandError (e.result.stderr)
-        stderr = getattr(e, "stderr", "") or ""
-        if hasattr(stderr, "strip"):
-            stderr = stderr.strip()
-        if not stderr and hasattr(e, "result"):
-            stderr = e.result.stderr.strip()  # type: ignore[union-attr]
-        raise SystemExit(f"Failed to mount volume 'static_assets': {stderr or e}")
+        stderr = _get_error_stderr(e)
+        raise SystemExit(f"Failed to mount volume 'static_assets': {stderr}")
     # Note: Path() is used for path joining below, not for local filesystem
     # operations. On remote hosts, these paths refer to the remote filesystem
     # and only str() or executor.run() should operate on them.
@@ -68,13 +75,8 @@ def update(cfg: Config, create_volume: bool = True, *, executor: Executor | None
             check=True,
         )
     except Exception as e:
-        # Local: CalledProcessError (e.stderr); Remote: CommandError (e.result.stderr)
-        stderr = getattr(e, "stderr", "") or ""
-        if hasattr(stderr, "strip"):
-            stderr = stderr.strip()
-        if not stderr and hasattr(e, "result"):
-            stderr = e.result.stderr.strip()  # type: ignore[union-attr]
-        raise SystemExit(f"Failed to create temporary container from '{image_ref}': {stderr or e}")
+        stderr = _get_error_stderr(e)
+        raise SystemExit(f"Failed to create temporary container from '{image_ref}': {stderr}")
     container_id = result.stdout.strip()
 
     try:

@@ -241,7 +241,10 @@ def restore(
                 timeout=30,
             )
 
-        # Dump local backup to SQL, execute on remote
+        # Dump local backup to SQL, execute on remote.
+        # NOTE: iterdump() loads the entire DB as SQL text in memory. Fine for
+        # deployment-metadata-sized databases; for large DBs, consider SFTP
+        # transfer of the file followed by a remote .backup instead.
         dump_conn = sqlite3.connect(src)
         sql_dump = "\n".join(dump_conn.iterdump())
         dump_conn.close()

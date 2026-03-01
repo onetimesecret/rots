@@ -478,16 +478,19 @@ class Config:
                 # paramiko.ssh_exception.NoValidConnectionsError is an OSError subclass.
                 raise SystemExit(f"SSH to {resolved} failed: {exc}")
             except Exception as exc:
-                # Catch paramiko.AuthenticationException, paramiko.SSHException,
-                # and any other paramiko errors without importing paramiko at
-                # module level — they all inherit from Exception.
-                exc_name = type(exc).__name__
-                if "Authentication" in exc_name:
+                # Catch paramiko-specific exceptions with isinstance() via
+                # lazy import, falling back to re-raise if paramiko isn't
+                # available (shouldn't happen since we just used it above).
+                try:
+                    from paramiko import AuthenticationException, SSHException
+                except ImportError:
+                    raise exc
+                if isinstance(exc, AuthenticationException):
                     raise SystemExit(
                         f"SSH to {resolved} failed: Authentication failed. "
                         "Check your SSH key and that the remote user is correct."
                     )
-                if "SSHException" in exc_name or "SSH" in exc_name:
+                if isinstance(exc, SSHException):
                     raise SystemExit(
                         f"SSH to {resolved} failed: {exc}. "
                         "Check your SSH configuration (~/.ssh/config) and known_hosts."

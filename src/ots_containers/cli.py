@@ -240,7 +240,8 @@ def doctor():
     )
 
     # 7. Env file has SECRET_VARIABLE_NAMES and they are processed
-    #    (secrets check is local-only — podman secret store is not queryable remotely)
+    #    Local: parse env file and verify each declared secret exists in podman
+    #    Remote: check for ots_* secrets via podman secret ls
     secrets_ok = False
     secrets_detail = "run: sudo ots env process"
     if env_file_ok and is_local:
