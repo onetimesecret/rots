@@ -3,11 +3,11 @@
 
 import pytest
 
-from ots_containers.cli import app
+from rots.cli import app
 
 
 class TestPackageVersion:
-    """Test __version__ fallback in src/ots_containers/__init__.py."""
+    """Test __version__ fallback in src/rots/__init__.py."""
 
     def test_version_fallback_when_package_not_installed(self, monkeypatch):
         """__version__ should be '0.0.0+dev' when package metadata is unavailable."""
@@ -24,8 +24,8 @@ class TestPackageVersion:
         )
 
         # Remove cached module so reload executes __init__ fresh
-        monkeypatch.delitem(sys.modules, "ots_containers", raising=False)
-        import ots_containers as pkg
+        monkeypatch.delitem(sys.modules, "rots", raising=False)
+        import rots as pkg
 
         assert pkg.__version__ == "0.0.0+dev"
 
@@ -64,7 +64,7 @@ class TestCLIStructure:
 
     def test_version_output(self, capsys):
         """--version should print version string."""
-        from ots_containers import __version__
+        from rots import __version__
 
         with pytest.raises(SystemExit):
             app(["--version"])
@@ -112,8 +112,8 @@ class TestAssetsSync:
     def test_assets_sync_proceeds_without_validation(self, mocker):
         """assets sync should proceed without config validation (config is optional)."""
         mock_config = mocker.MagicMock()
-        mocker.patch("ots_containers.commands.assets.Config", return_value=mock_config)
-        mock_update = mocker.patch("ots_containers.commands.assets.assets_module.update")
+        mocker.patch("rots.commands.assets.Config", return_value=mock_config)
+        mock_update = mocker.patch("rots.commands.assets.assets_module.update")
 
         with pytest.raises(SystemExit) as exc_info:
             app(["assets", "sync"])
@@ -129,7 +129,7 @@ class TestDefaultCommand:
 
     def test_no_args_shows_help(self, capsys):
         """Running with no subcommand should print help."""
-        from ots_containers.cli import _default
+        from rots.cli import _default
 
         _default()
         captured = capsys.readouterr()
@@ -152,7 +152,7 @@ class TestConfigureLogging:
         """_configure_logging(True) should suppress urllib3 logger."""
         import logging
 
-        from ots_containers.cli import _configure_logging
+        from rots.cli import _configure_logging
 
         _configure_logging(True)
         assert logging.getLogger("urllib3").level == logging.WARNING
@@ -163,7 +163,7 @@ class TestConfigureLogging:
         """_configure_logging(False) should not raise."""
         import logging
 
-        from ots_containers.cli import _configure_logging
+        from rots.cli import _configure_logging
 
         _configure_logging(False)
         assert logging.getLogger("urllib3").level == logging.WARNING
@@ -176,12 +176,12 @@ class TestPsCommand:
         """ps command should invoke Podman(executor=ex).ps with onetime filter."""
         from unittest.mock import MagicMock
 
-        from ots_containers.cli import ps
+        from rots.cli import ps
 
-        mocker.patch("ots_containers.config.Config.__init__", return_value=None)
-        mocker.patch("ots_containers.config.Config.get_executor", return_value=MagicMock())
+        mocker.patch("rots.config.Config.__init__", return_value=None)
+        mocker.patch("rots.config.Config.get_executor", return_value=MagicMock())
 
-        mock_podman_cls = mocker.patch("ots_containers.podman.Podman")
+        mock_podman_cls = mocker.patch("rots.podman.Podman")
         mock_p = MagicMock()
         mock_podman_cls.return_value = mock_p
 
@@ -206,8 +206,8 @@ class TestVersionCommand:
 
     def test_version_prints_package_version(self, capsys):
         """version command should print the package version."""
-        from ots_containers import __version__
-        from ots_containers.cli import version
+        from rots import __version__
+        from rots.cli import version
 
         version()
         captured = capsys.readouterr()
@@ -215,7 +215,7 @@ class TestVersionCommand:
 
     def test_version_with_git_commit(self, mocker, capsys):
         """version command includes git commit if git is available."""
-        from ots_containers.cli import version
+        from rots.cli import version
 
         mock_result = mocker.MagicMock()
         mock_result.returncode = 0
@@ -228,8 +228,8 @@ class TestVersionCommand:
 
     def test_version_without_git(self, mocker, capsys):
         """version command handles missing git gracefully."""
-        from ots_containers import __version__
-        from ots_containers.cli import version
+        from rots import __version__
+        from rots.cli import version
 
         mocker.patch("subprocess.run", side_effect=FileNotFoundError("git not found"))
         version()
@@ -238,8 +238,8 @@ class TestVersionCommand:
 
     def test_version_git_nonzero_returncode(self, mocker, capsys):
         """version command handles git failure (non-zero exit) gracefully."""
-        from ots_containers import __version__
-        from ots_containers.cli import version
+        from rots import __version__
+        from rots.cli import version
 
         mock_result = mocker.MagicMock()
         mock_result.returncode = 128
@@ -257,10 +257,10 @@ class TestDoctorCommand:
 
     doctor() imports Config, EnvFile, secret_exists, DEFAULT_ENV_FILE locally
     inside the function body. Patch at their source modules:
-      - ots_containers.config.Config
-      - ots_containers.quadlet.DEFAULT_ENV_FILE
-      - ots_containers.environment_file.EnvFile
-      - ots_containers.environment_file.secret_exists
+      - rots.config.Config
+      - rots.quadlet.DEFAULT_ENV_FILE
+      - rots.environment_file.EnvFile
+      - rots.environment_file.secret_exists
     """
 
     def _make_cfg_mock(self, mocker, tmp_path):
@@ -285,16 +285,16 @@ class TestDoctorCommand:
         mocker.patch("os.access", return_value=True)
 
         cfg_mock = self._make_cfg_mock(mocker, tmp_path)
-        mocker.patch("ots_containers.config.Config", return_value=cfg_mock)
+        mocker.patch("rots.config.Config", return_value=cfg_mock)
 
         env_file = tmp_path / "onetimesecret_env"
         env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc\n")
-        mocker.patch("ots_containers.quadlet.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
 
         parsed_mock = mocker.MagicMock()
         parsed_mock.secret_variable_names = ["HMAC_SECRET"]
-        mocker.patch("ots_containers.environment_file.EnvFile.parse", return_value=parsed_mock)
-        mocker.patch("ots_containers.environment_file.secret_exists", return_value=True)
+        mocker.patch("rots.environment_file.EnvFile.parse", return_value=parsed_mock)
+        mocker.patch("rots.environment_file.secret_exists", return_value=True)
 
         running_result = mocker.MagicMock()
         running_result.returncode = 0
@@ -306,7 +306,7 @@ class TestDoctorCommand:
         caddy_result.stderr = ""
         mocker.patch("subprocess.run", side_effect=[running_result, caddy_result])
 
-        from ots_containers.cli import doctor
+        from rots.cli import doctor
 
         doctor()
         captured = capsys.readouterr()
@@ -321,12 +321,12 @@ class TestDoctorCommand:
         cfg_mock.config_dir = tmp_path / "missing_config"
         cfg_mock.var_dir = tmp_path / "missing_var"
         cfg_mock.web_template_path = tmp_path / "missing.container"
-        mocker.patch("ots_containers.config.Config", return_value=cfg_mock)
+        mocker.patch("rots.config.Config", return_value=cfg_mock)
 
         no_env = tmp_path / "noenv"
-        mocker.patch("ots_containers.quadlet.DEFAULT_ENV_FILE", no_env)
+        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", no_env)
 
-        from ots_containers.cli import doctor
+        from rots.cli import doctor
 
         with pytest.raises(SystemExit) as exc_info:
             doctor()
@@ -343,10 +343,10 @@ class TestDoctorCommand:
         cfg_mock.config_dir = tmp_path / "missing"
         cfg_mock.var_dir = tmp_path / "missing_var"
         cfg_mock.web_template_path = tmp_path / "missing.container"
-        mocker.patch("ots_containers.config.Config", return_value=cfg_mock)
+        mocker.patch("rots.config.Config", return_value=cfg_mock)
 
         no_env = tmp_path / "noenv"
-        mocker.patch("ots_containers.quadlet.DEFAULT_ENV_FILE", no_env)
+        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", no_env)
 
         running_result = mocker.MagicMock()
         running_result.stdout = ""
@@ -354,7 +354,7 @@ class TestDoctorCommand:
         caddy_result.stdout = "inactive\n"
         mocker.patch("subprocess.run", side_effect=[running_result, caddy_result])
 
-        from ots_containers.cli import doctor
+        from rots.cli import doctor
 
         with pytest.raises(SystemExit) as exc_info:
             doctor()
@@ -368,15 +368,15 @@ class TestDoctorCommand:
         mocker.patch("os.access", return_value=True)
 
         cfg_mock = self._make_cfg_mock(mocker, tmp_path)
-        mocker.patch("ots_containers.config.Config", return_value=cfg_mock)
+        mocker.patch("rots.config.Config", return_value=cfg_mock)
 
         env_file = tmp_path / "env"
         env_file.touch()
-        mocker.patch("ots_containers.quadlet.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
 
         parsed_mock = mocker.MagicMock()
         parsed_mock.secret_variable_names = []  # no secrets declared
-        mocker.patch("ots_containers.environment_file.EnvFile.parse", return_value=parsed_mock)
+        mocker.patch("rots.environment_file.EnvFile.parse", return_value=parsed_mock)
 
         running_result = mocker.MagicMock()
         running_result.stdout = "onetime-web@7043.service active\n"
@@ -384,7 +384,7 @@ class TestDoctorCommand:
         caddy_result.stdout = "active\n"
         mocker.patch("subprocess.run", side_effect=[running_result, caddy_result])
 
-        from ots_containers.cli import doctor
+        from rots.cli import doctor
 
         with pytest.raises(SystemExit) as exc_info:
             doctor()
@@ -398,13 +398,13 @@ class TestDoctorCommand:
         mocker.patch("os.access", return_value=True)
 
         cfg_mock = self._make_cfg_mock(mocker, tmp_path)
-        mocker.patch("ots_containers.config.Config", return_value=cfg_mock)
+        mocker.patch("rots.config.Config", return_value=cfg_mock)
 
         env_file = tmp_path / "env"
         env_file.touch()
-        mocker.patch("ots_containers.quadlet.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
         mocker.patch(
-            "ots_containers.environment_file.EnvFile.parse",
+            "rots.environment_file.EnvFile.parse",
             side_effect=ValueError("bad format"),
         )
 
@@ -414,7 +414,7 @@ class TestDoctorCommand:
         caddy_result.stdout = "inactive\n"
         mocker.patch("subprocess.run", side_effect=[running_result, caddy_result])
 
-        from ots_containers.cli import doctor
+        from rots.cli import doctor
 
         with pytest.raises(SystemExit) as exc_info:
             doctor()
@@ -441,16 +441,16 @@ class TestDoctorCommand:
         mocker.patch("os.access", return_value=True)
 
         cfg_mock = self._make_cfg_mock(mocker, tmp_path)
-        mocker.patch("ots_containers.config.Config", return_value=cfg_mock)
+        mocker.patch("rots.config.Config", return_value=cfg_mock)
 
         env_file = tmp_path / "env"
         env_file.touch()
-        mocker.patch("ots_containers.quadlet.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
 
         parsed_mock = mocker.MagicMock()
         parsed_mock.secret_variable_names = ["SECRET"]
-        mocker.patch("ots_containers.environment_file.EnvFile.parse", return_value=parsed_mock)
-        mocker.patch("ots_containers.environment_file.secret_exists", return_value=True)
+        mocker.patch("rots.environment_file.EnvFile.parse", return_value=parsed_mock)
+        mocker.patch("rots.environment_file.secret_exists", return_value=True)
 
         # subprocess.TimeoutExpired is caught by LocalExecutor.run → Result(returncode=124)
         mocker.patch(
@@ -458,7 +458,7 @@ class TestDoctorCommand:
             side_effect=subprocess.TimeoutExpired(cmd="systemctl", timeout=10),
         )
 
-        from ots_containers.cli import doctor
+        from rots.cli import doctor
 
         with pytest.raises(SystemExit) as exc_info:
             doctor()
@@ -479,7 +479,7 @@ class TestConfigureLoggingLevels:
         """_configure_logging(True) should call basicConfig with level=DEBUG."""
         import logging
 
-        from ots_containers.cli import _configure_logging
+        from rots.cli import _configure_logging
 
         mock_basic = mocker.patch("logging.basicConfig")
         _configure_logging(True)
@@ -491,7 +491,7 @@ class TestConfigureLoggingLevels:
         """_configure_logging(False) should call basicConfig with level=WARNING."""
         import logging
 
-        from ots_containers.cli import _configure_logging
+        from rots.cli import _configure_logging
 
         mock_basic = mocker.patch("logging.basicConfig")
         _configure_logging(False)
@@ -503,7 +503,7 @@ class TestConfigureLoggingLevels:
         """_configure_logging(True) should keep urllib3 at WARNING even in verbose mode."""
         import logging
 
-        from ots_containers.cli import _configure_logging
+        from rots.cli import _configure_logging
 
         _configure_logging(True)
         assert logging.getLogger("urllib3").level == logging.WARNING
@@ -514,7 +514,7 @@ class TestConfigureLoggingLevels:
         """_configure_logging(False) should keep urllib3 at WARNING."""
         import logging
 
-        from ots_containers.cli import _configure_logging
+        from rots.cli import _configure_logging
 
         _configure_logging(False)
         assert logging.getLogger("urllib3").level == logging.WARNING
@@ -531,10 +531,10 @@ class TestAppMeta:
 
     def test_meta_verbose_true_calls_configure_logging_with_true(self, mocker):
         """_meta(*tokens, verbose=True) should call _configure_logging(True)."""
-        from ots_containers.cli import _meta
+        from rots.cli import _meta
 
-        mock_configure = mocker.patch("ots_containers.cli._configure_logging")
-        mocker.patch("ots_containers.cli.app")
+        mock_configure = mocker.patch("rots.cli._configure_logging")
+        mocker.patch("rots.cli.app")
 
         _meta("version", verbose=True)
 
@@ -542,10 +542,10 @@ class TestAppMeta:
 
     def test_meta_verbose_false_calls_configure_logging_with_false(self, mocker):
         """_meta(*tokens, verbose=False) should call _configure_logging(False)."""
-        from ots_containers.cli import _meta
+        from rots.cli import _meta
 
-        mock_configure = mocker.patch("ots_containers.cli._configure_logging")
-        mocker.patch("ots_containers.cli.app")
+        mock_configure = mocker.patch("rots.cli._configure_logging")
+        mocker.patch("rots.cli.app")
 
         _meta("version", verbose=False)
 
@@ -553,10 +553,10 @@ class TestAppMeta:
 
     def test_meta_routes_tokens_to_app(self, mocker):
         """_meta(*tokens) should pass tokens tuple to app()."""
-        from ots_containers.cli import _meta
+        from rots.cli import _meta
 
-        mocker.patch("ots_containers.cli._configure_logging")
-        mock_app = mocker.patch("ots_containers.cli.app")
+        mocker.patch("rots.cli._configure_logging")
+        mock_app = mocker.patch("rots.cli.app")
 
         _meta("version", verbose=False)
 
@@ -564,10 +564,10 @@ class TestAppMeta:
 
     def test_meta_default_verbose_is_false(self, mocker):
         """_meta() default: verbose=False, so _configure_logging(False) is used."""
-        from ots_containers.cli import _meta
+        from rots.cli import _meta
 
-        mock_configure = mocker.patch("ots_containers.cli._configure_logging")
-        mocker.patch("ots_containers.cli.app")
+        mock_configure = mocker.patch("rots.cli._configure_logging")
+        mocker.patch("rots.cli.app")
 
         _meta()  # No verbose arg - defaults to False
 
@@ -575,7 +575,7 @@ class TestAppMeta:
 
     def test_app_meta_with_no_args_shows_help(self, capsys):
         """app.meta with no args should show help output (may exit 0)."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         # app.meta() with empty tokens routes to _default which shows help
         try:

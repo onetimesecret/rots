@@ -3,7 +3,7 @@
 
 import yaml
 
-from ots_containers.commands.cloudinit.templates import (
+from rots.commands.cloudinit.templates import (
     DEFAULT_CADDY_PLUGINS,
     DEFAULT_CADDY_VERSION,
     generate_cloudinit_config,
@@ -206,7 +206,7 @@ class TestXcaddyCloudInit:
         assert "chown" in runcmd[1]
         assert "podman.socket" in runcmd[2]
         assert "pip3 install" in runcmd[3]
-        assert "ots-containers init" in runcmd[4]
+        assert "rots init" in runcmd[4]
 
         # GPG key import (xcaddy commands start at index 5)
         assert "gpg.key" in runcmd[5]
@@ -389,8 +389,8 @@ class TestOTSBaseConfig:
         assert "/etc/onetimesecret" in runcmd[0]
         assert "chown onetimesecret:onetimesecret" in runcmd[1]
         assert runcmd[2] == "systemctl enable --now podman.socket"
-        assert runcmd[3] == "pip3 install ots-containers"
-        assert runcmd[4] == "ots-containers init"
+        assert runcmd[3] == "pip3 install rots"
+        assert runcmd[4] == "rots init"
 
     def test_default_timezone_is_utc(self):
         """Default timezone should be UTC."""

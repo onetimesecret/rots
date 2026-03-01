@@ -24,7 +24,7 @@ def _mock_config(mocker, tmp_path, **overrides):
     mock.db_path = mock.var_dir / "deployments.db"
     mock.get_executor.return_value = LocalExecutor()
 
-    mocker.patch("ots_containers.commands.init.Config", return_value=mock)
+    mocker.patch("rots.commands.init.Config", return_value=mock)
     return mock
 
 
@@ -33,13 +33,13 @@ class TestInitCommandImports:
 
     def test_init_app_exists(self):
         """Init app should be importable."""
-        from ots_containers.commands import init
+        from rots.commands import init
 
         assert init.app is not None
 
     def test_init_function_exists(self):
         """init command should be defined."""
-        from ots_containers.commands import init
+        from rots.commands import init
 
         assert hasattr(init, "init")
         assert callable(init.init)
@@ -50,7 +50,7 @@ class TestCreateDirectory:
 
     def test_creates_directory_when_not_exists(self, tmp_path, mocker, capsys):
         """Should create directory and return True."""
-        from ots_containers.commands.init import _create_directory
+        from rots.commands.init import _create_directory
 
         mocker.patch("os.chown")
 
@@ -64,7 +64,7 @@ class TestCreateDirectory:
 
     def test_returns_false_when_exists(self, tmp_path, capsys):
         """Should return False and not recreate existing directory."""
-        from ots_containers.commands.init import _create_directory
+        from rots.commands.init import _create_directory
 
         existing_dir = tmp_path / "existing"
         existing_dir.mkdir()
@@ -77,7 +77,7 @@ class TestCreateDirectory:
 
     def test_returns_none_on_permission_error(self, tmp_path, mocker, capsys):
         """Should return None and print denied message on PermissionError."""
-        from ots_containers.commands.init import _create_directory
+        from rots.commands.init import _create_directory
 
         mocker.patch.object(Path, "mkdir", side_effect=PermissionError("denied"))
 
@@ -91,7 +91,7 @@ class TestCreateDirectory:
 
     def test_quiet_mode_suppresses_exists_output(self, tmp_path, capsys):
         """Should suppress output when quiet=True and dir exists."""
-        from ots_containers.commands.init import _create_directory
+        from rots.commands.init import _create_directory
 
         existing_dir = tmp_path / "existing"
         existing_dir.mkdir()
@@ -103,7 +103,7 @@ class TestCreateDirectory:
 
     def test_quiet_mode_suppresses_created_output(self, tmp_path, mocker, capsys):
         """Should suppress output when quiet=True and dir created."""
-        from ots_containers.commands.init import _create_directory
+        from rots.commands.init import _create_directory
 
         mocker.patch("os.chown")
 
@@ -115,7 +115,7 @@ class TestCreateDirectory:
 
     def test_permission_error_always_prints(self, tmp_path, mocker, capsys):
         """Permission errors should always print, even in quiet mode."""
-        from ots_containers.commands.init import _create_directory
+        from rots.commands.init import _create_directory
 
         mocker.patch.object(Path, "mkdir", side_effect=PermissionError("denied"))
 
@@ -131,7 +131,7 @@ class TestCopyTemplate:
 
     def test_copies_file_when_dest_not_exists(self, tmp_path, mocker, capsys):
         """Should copy file and return True."""
-        from ots_containers.commands.init import _copy_template
+        from rots.commands.init import _copy_template
 
         mocker.patch("os.chown")
 
@@ -149,7 +149,7 @@ class TestCopyTemplate:
 
     def test_returns_false_when_dest_exists(self, tmp_path, capsys):
         """Should return False when destination exists."""
-        from ots_containers.commands.init import _copy_template
+        from rots.commands.init import _copy_template
 
         src = tmp_path / "source.txt"
         src.write_text("new content")
@@ -165,7 +165,7 @@ class TestCopyTemplate:
 
     def test_returns_false_when_source_missing(self, tmp_path, capsys):
         """Should return False when source doesn't exist."""
-        from ots_containers.commands.init import _copy_template
+        from rots.commands.init import _copy_template
 
         src = tmp_path / "nonexistent.txt"
         dest = tmp_path / "dest.txt"
@@ -180,7 +180,7 @@ class TestCopyTemplate:
 
     def test_returns_none_on_permission_error(self, tmp_path, mocker, capsys):
         """Should return None on PermissionError."""
-        from ots_containers.commands.init import _copy_template
+        from rots.commands.init import _copy_template
 
         mocker.patch("shutil.copy2", side_effect=PermissionError("denied"))
 
@@ -201,7 +201,7 @@ class TestCopyTemplateRemote:
 
     def test_remote_uses_cp_p_not_shutil(self, mocker, capsys):
         """Remote execution should use 'cp -p src dest' via executor.run, not shutil.copy2."""
-        from ots_containers.commands.init import _copy_template
+        from rots.commands.init import _copy_template
 
         src = Path("/etc/onetimesecret/config.yaml.example")
         dest = Path("/etc/onetimesecret/config.yaml")
@@ -215,7 +215,7 @@ class TestCopyTemplateRemote:
 
         # Mock _path_exists: dest does not exist, src exists
         mocker.patch(
-            "ots_containers.commands.init._path_exists",
+            "rots.commands.init._path_exists",
             side_effect=[False, True],
         )
         mock_copy2 = mocker.patch("shutil.copy2")
@@ -228,7 +228,7 @@ class TestCopyTemplateRemote:
 
     def test_remote_failure_returns_none(self, mocker, capsys):
         """Remote copy failure (non-zero exit) should return None."""
-        from ots_containers.commands.init import _copy_template
+        from rots.commands.init import _copy_template
 
         src = Path("/etc/onetimesecret/config.yaml.example")
         dest = Path("/etc/onetimesecret/config.yaml")
@@ -238,7 +238,7 @@ class TestCopyTemplateRemote:
 
         mocker.patch("ots_shared.ssh.is_remote", return_value=True)
         mocker.patch(
-            "ots_containers.commands.init._path_exists",
+            "rots.commands.init._path_exists",
             side_effect=[False, True],
         )
 
@@ -250,7 +250,7 @@ class TestCopyTemplateRemote:
 
     def test_remote_prints_copied_on_success(self, mocker, capsys):
         """Remote copy should print [copied] message when not quiet."""
-        from ots_containers.commands.init import _copy_template
+        from rots.commands.init import _copy_template
 
         src = Path("/etc/onetimesecret/config.yaml.example")
         dest = Path("/etc/onetimesecret/config.yaml")
@@ -260,7 +260,7 @@ class TestCopyTemplateRemote:
 
         mocker.patch("ots_shared.ssh.is_remote", return_value=True)
         mocker.patch(
-            "ots_containers.commands.init._path_exists",
+            "rots.commands.init._path_exists",
             side_effect=[False, True],
         )
 
@@ -272,7 +272,7 @@ class TestCopyTemplateRemote:
 
     def test_remote_dest_exists_skips_copy(self, mocker):
         """Remote copy should skip when dest already exists."""
-        from ots_containers.commands.init import _copy_template
+        from rots.commands.init import _copy_template
 
         src = Path("/etc/onetimesecret/config.yaml.example")
         dest = Path("/etc/onetimesecret/config.yaml")
@@ -280,7 +280,7 @@ class TestCopyTemplateRemote:
         mock_executor = mocker.MagicMock()
 
         mocker.patch(
-            "ots_containers.commands.init._path_exists",
+            "rots.commands.init._path_exists",
             side_effect=[True],  # dest exists
         )
 
@@ -295,7 +295,7 @@ class TestPathExists:
 
     def test_local_existing_file_returns_true(self, tmp_path):
         """_path_exists should return True for an existing local file."""
-        from ots_containers.commands.init import _path_exists
+        from rots.commands.init import _path_exists
 
         existing = tmp_path / "exists.txt"
         existing.touch()
@@ -305,7 +305,7 @@ class TestPathExists:
 
     def test_local_missing_file_returns_false(self, tmp_path):
         """_path_exists should return False for a non-existent local file."""
-        from ots_containers.commands.init import _path_exists
+        from rots.commands.init import _path_exists
 
         missing = tmp_path / "missing.txt"
 
@@ -314,14 +314,14 @@ class TestPathExists:
 
     def test_local_existing_directory_returns_true(self, tmp_path):
         """_path_exists should return True for an existing local directory."""
-        from ots_containers.commands.init import _path_exists
+        from rots.commands.init import _path_exists
 
         result = _path_exists(tmp_path, executor=LocalExecutor())
         assert result is True
 
     def test_remote_delegates_to_executor(self, mocker):
         """_path_exists should call executor.run(['test', '-e', path]) for remote."""
-        from ots_containers.commands.init import _path_exists
+        from rots.commands.init import _path_exists
 
         mocker.patch("ots_shared.ssh.is_remote", return_value=True)
 
@@ -336,7 +336,7 @@ class TestPathExists:
 
     def test_remote_returns_false_when_test_fails(self, mocker):
         """_path_exists should return False when remote 'test -e' fails."""
-        from ots_containers.commands.init import _path_exists
+        from rots.commands.init import _path_exists
 
         mocker.patch("ots_shared.ssh.is_remote", return_value=True)
 
@@ -355,12 +355,12 @@ class TestInitCommand:
 
     def test_check_mode_reports_missing_directories(self, tmp_path, mocker, capsys):
         """Check mode should report missing directories without creating."""
-        from ots_containers.commands.init import init
+        from rots.commands.init import init
 
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
 
         _mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
 
@@ -375,7 +375,7 @@ class TestInitCommand:
 
     def test_check_mode_reports_ok_when_all_present(self, tmp_path, mocker, capsys):
         """Check mode should report OK when all components exist."""
-        from ots_containers.commands.init import init
+        from rots.commands.init import init
 
         # Create directory structure
         config_dir = tmp_path / "etc" / "onetimesecret"
@@ -400,7 +400,7 @@ class TestInitCommand:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
 
@@ -411,12 +411,12 @@ class TestInitCommand:
 
     def test_handles_permission_errors_gracefully(self, tmp_path, mocker, capsys):
         """Init should continue after permission errors and report failure."""
-        from ots_containers.commands.init import init
+        from rots.commands.init import init
 
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
 
         _mock_config(mocker, tmp_path)
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
 
         # Make mkdir always fail with PermissionError
         mocker.patch.object(Path, "mkdir", side_effect=PermissionError("denied"))
@@ -431,7 +431,7 @@ class TestInitCommand:
 
     def test_creates_directories_successfully(self, tmp_path, mocker, capsys):
         """Init should create all directories when permissions allow."""
-        from ots_containers.commands.init import init
+        from rots.commands.init import init
 
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
@@ -443,9 +443,9 @@ class TestInitCommand:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
-        mocker.patch("ots_containers.commands.init.db.init_db")
+        mocker.patch("rots.commands.init.db.init_db")
 
         result = init(quiet=False)
 
@@ -458,7 +458,7 @@ class TestInitCommand:
 
     def test_copies_templates_from_source(self, tmp_path, mocker, capsys):
         """Init should copy all CONFIG_FILES when --source provided."""
-        from ots_containers.commands.init import init
+        from rots.commands.init import init
 
         # Create source directory with all config file templates
         source_dir = tmp_path / "source"
@@ -477,9 +477,9 @@ class TestInitCommand:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
-        mocker.patch("ots_containers.commands.init.db.init_db")
+        mocker.patch("rots.commands.init.db.init_db")
 
         result = init(source_dir=source_dir, quiet=False)
 
@@ -496,7 +496,7 @@ class TestInitCommand:
 
     def test_check_reports_optional_for_missing_config_files(self, tmp_path, mocker, capsys):
         """Check mode should report [optional] for missing config files."""
-        from ots_containers.commands.init import init
+        from rots.commands.init import init
 
         # Create all directories and deploy db so only config files are missing
         config_dir = tmp_path / "etc" / "onetimesecret"
@@ -521,7 +521,7 @@ class TestInitCommand:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
 
@@ -537,7 +537,7 @@ class TestInitCommand:
 
     def test_database_permission_error_handled(self, tmp_path, mocker, capsys):
         """Database creation permission errors should be handled gracefully."""
-        from ots_containers.commands.init import init
+        from rots.commands.init import init
 
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
@@ -554,10 +554,10 @@ class TestInitCommand:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
         mocker.patch(
-            "ots_containers.commands.init.db.init_db",
+            "rots.commands.init.db.init_db",
             side_effect=PermissionError("cannot create db"),
         )
 
@@ -574,7 +574,7 @@ class TestInitEnvFileScaffold:
 
     def test_check_reports_missing_env_file(self, tmp_path, mocker, capsys):
         """init(check=True) reports [missing] for DEFAULT_ENV_FILE when it does not exist."""
-        from ots_containers.commands.init import init
+        from rots.commands.init import init
 
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
@@ -594,7 +594,7 @@ class TestInitEnvFileScaffold:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
 
@@ -605,7 +605,7 @@ class TestInitEnvFileScaffold:
 
     def test_check_reports_ok_for_existing_env_file(self, tmp_path, mocker, capsys):
         """init(check=True) reports [ok] for DEFAULT_ENV_FILE when it exists."""
-        from ots_containers.commands.init import init
+        from rots.commands.init import init
 
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
@@ -626,7 +626,7 @@ class TestInitEnvFileScaffold:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
 
         result = init(check=True)
 
@@ -637,8 +637,8 @@ class TestInitEnvFileScaffold:
 
     def test_creates_env_file_with_template_content(self, tmp_path, mocker, capsys):
         """init() creates DEFAULT_ENV_FILE with ENV_FILE_TEMPLATE content when it does not exist."""
-        from ots_containers.commands.init import init
-        from ots_containers.environment_file import ENV_FILE_TEMPLATE
+        from rots.commands.init import init
+        from rots.environment_file import ENV_FILE_TEMPLATE
 
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
@@ -649,9 +649,9 @@ class TestInitEnvFileScaffold:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
-        mocker.patch("ots_containers.commands.init.db.init_db")
+        mocker.patch("rots.commands.init.db.init_db")
 
         result = init(quiet=False)
 
@@ -664,7 +664,7 @@ class TestInitEnvFileScaffold:
 
     def test_skips_env_file_creation_when_already_exists(self, tmp_path, mocker, capsys):
         """init() reports [ok] and skips creation when DEFAULT_ENV_FILE already exists."""
-        from ots_containers.commands.init import init
+        from rots.commands.init import init
 
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
@@ -676,9 +676,9 @@ class TestInitEnvFileScaffold:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
-        mocker.patch("ots_containers.commands.init.db.init_db")
+        mocker.patch("rots.commands.init.db.init_db")
 
         init(quiet=False)
 
@@ -690,7 +690,7 @@ class TestInitEnvFileScaffold:
 
     def test_env_file_permission_error_sets_failure(self, tmp_path, mocker, capsys):
         """init() reports [denied] and sets all_ok=False on PermissionError for DEFAULT_ENV_FILE."""
-        from ots_containers.commands.init import init
+        from rots.commands.init import init
 
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
@@ -701,9 +701,9 @@ class TestInitEnvFileScaffold:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("ots_containers.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
-        mocker.patch("ots_containers.commands.init.db.init_db")
+        mocker.patch("rots.commands.init.db.init_db")
 
         # Make mkdir for parent of env_file raise PermissionError
         original_mkdir = Path.mkdir
@@ -728,7 +728,7 @@ class TestInitHelp:
 
     def test_init_help(self, capsys):
         """init --help should work."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         with pytest.raises(SystemExit) as exc_info:
             app(["init", "--help"])
@@ -738,7 +738,7 @@ class TestInitHelp:
 
     def test_init_check_help(self, capsys):
         """init --check flag should be documented."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         with pytest.raises(SystemExit) as exc_info:
             app(["init", "--help"])

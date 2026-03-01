@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ots_containers.commands.service._helpers import (
+from rots.commands.service._helpers import (
     add_secrets_include,
     copy_default_config,
     create_secrets_file,
@@ -18,7 +18,7 @@ from ots_containers.commands.service._helpers import (
     systemctl_json,
     update_config_value,
 )
-from ots_containers.commands.service.packages import ServicePackage
+from rots.commands.service.packages import ServicePackage
 
 
 class TestEnsureInstancesDir:
@@ -178,7 +178,7 @@ class TestCreateSecretsFile:
 
     def test_creates_secrets_file(self, tmp_path):
         """Test creates secrets file with correct permissions."""
-        from ots_containers.commands.service.packages import SecretConfig
+        from rots.commands.service.packages import SecretConfig
 
         pkg = ServicePackage(
             name="test",
@@ -218,7 +218,7 @@ class TestAddSecretsInclude:
 
     def test_adds_include_directive(self, tmp_path):
         """Test adds include directive to config file."""
-        from ots_containers.commands.service.packages import SecretConfig
+        from rots.commands.service.packages import SecretConfig
 
         config_file = tmp_path / "test.conf"
         config_file.write_text("port 6379\n")
@@ -239,7 +239,7 @@ class TestAddSecretsInclude:
 
     def test_skips_if_already_present(self, tmp_path):
         """Test skips if include already present."""
-        from ots_containers.commands.service.packages import SecretConfig
+        from rots.commands.service.packages import SecretConfig
 
         secrets_file = tmp_path / "test.secrets"
         config_file = tmp_path / "test.conf"
@@ -335,7 +335,7 @@ class TestSystemctlJson:
 class TestIsServiceActive:
     """Tests for is_service_active function."""
 
-    @patch("ots_containers.commands.service._helpers.systemctl")
+    @patch("rots.commands.service._helpers.systemctl")
     def test_returns_true_when_active(self, mock_systemctl):
         """Test returns True when service is active."""
         mock_systemctl.return_value = MagicMock(returncode=0)
@@ -344,7 +344,7 @@ class TestIsServiceActive:
 
         assert result is True
 
-    @patch("ots_containers.commands.service._helpers.systemctl")
+    @patch("rots.commands.service._helpers.systemctl")
     def test_returns_false_when_inactive(self, mock_systemctl):
         """Test returns False when service is inactive."""
         mock_systemctl.return_value = MagicMock(returncode=3)
@@ -357,7 +357,7 @@ class TestIsServiceActive:
 class TestIsServiceEnabled:
     """Tests for is_service_enabled function."""
 
-    @patch("ots_containers.commands.service._helpers.systemctl")
+    @patch("rots.commands.service._helpers.systemctl")
     def test_returns_true_when_enabled(self, mock_systemctl):
         """Test returns True when service is enabled."""
         mock_systemctl.return_value = MagicMock(returncode=0)
@@ -366,7 +366,7 @@ class TestIsServiceEnabled:
 
         assert result is True
 
-    @patch("ots_containers.commands.service._helpers.systemctl")
+    @patch("rots.commands.service._helpers.systemctl")
     def test_returns_false_when_disabled(self, mock_systemctl):
         """Test returns False when service is disabled."""
         mock_systemctl.return_value = MagicMock(returncode=1)

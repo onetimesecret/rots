@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ots_containers.commands.instance._helpers import (
+from rots.commands.instance._helpers import (
     _remote_lock_acquire,
     _remote_lock_release,
     _resolve_lock_path,
@@ -17,7 +17,7 @@ from ots_containers.commands.instance._helpers import (
     format_journalctl_hint,
     resolve_identifiers,
 )
-from ots_containers.commands.instance.annotations import InstanceType
+from rots.commands.instance.annotations import InstanceType
 
 
 class TestDeployLock:
@@ -235,14 +235,14 @@ class TestRemoteDeployLock:
     def test_deploy_lock_uses_remote_path_for_ssh_executor(self, mocker):
         """deploy_lock with remote executor should use remote acquire/release."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers._is_remote",
+            "rots.commands.instance._helpers._is_remote",
             return_value=True,
         )
         mock_acquire = mocker.patch(
-            "ots_containers.commands.instance._helpers._remote_lock_acquire",
+            "rots.commands.instance._helpers._remote_lock_acquire",
         )
         mock_release = mocker.patch(
-            "ots_containers.commands.instance._helpers._remote_lock_release",
+            "rots.commands.instance._helpers._remote_lock_release",
         )
         executor = MagicMock()
         reached = []
@@ -255,14 +255,14 @@ class TestRemoteDeployLock:
     def test_deploy_lock_releases_on_exception(self, mocker):
         """Remote lock must be released even when the body raises."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers._is_remote",
+            "rots.commands.instance._helpers._is_remote",
             return_value=True,
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers._remote_lock_acquire",
+            "rots.commands.instance._helpers._remote_lock_acquire",
         )
         mock_release = mocker.patch(
-            "ots_containers.commands.instance._helpers._remote_lock_release",
+            "rots.commands.instance._helpers._remote_lock_release",
         )
         executor = MagicMock()
         with pytest.raises(RuntimeError):
@@ -391,7 +391,7 @@ class TestResolveIdentifiers:
     def test_auto_discover_web_only(self, mocker):
         """Should discover only web instances when type is WEB."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043, 7044],
         )
         result = resolve_identifiers((), instance_type=InstanceType.WEB)
@@ -400,7 +400,7 @@ class TestResolveIdentifiers:
     def test_auto_discover_worker_only(self, mocker):
         """Should discover only worker instances when type is WORKER."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=["1", "billing"],
         )
         result = resolve_identifiers((), instance_type=InstanceType.WORKER)
@@ -409,7 +409,7 @@ class TestResolveIdentifiers:
     def test_auto_discover_scheduler_only(self, mocker):
         """Should discover only scheduler instances when type is SCHEDULER."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=["main"],
         )
         result = resolve_identifiers((), instance_type=InstanceType.SCHEDULER)
@@ -418,15 +418,15 @@ class TestResolveIdentifiers:
     def test_auto_discover_all_types(self, mocker):
         """Should discover all types when no type specified."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=["1"],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=["main"],
         )
         result = resolve_identifiers((), instance_type=None)
@@ -439,15 +439,15 @@ class TestResolveIdentifiers:
     def test_auto_discover_empty_results_omitted(self, mocker):
         """Should omit types with no discovered instances."""
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[7043],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
         result = resolve_identifiers((), instance_type=None)
@@ -458,15 +458,15 @@ class TestResolveIdentifiers:
     def test_running_only_flag_passed(self, mocker):
         """Should pass running_only flag to discovery functions."""
         mock_web = mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_web_instances",
+            "rots.commands.instance._helpers.systemd.discover_web_instances",
             return_value=[],
         )
         mock_worker = mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_worker_instances",
+            "rots.commands.instance._helpers.systemd.discover_worker_instances",
             return_value=[],
         )
         mock_scheduler = mocker.patch(
-            "ots_containers.commands.instance._helpers.systemd.discover_scheduler_instances",
+            "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
         resolve_identifiers((), instance_type=None, running_only=True)
@@ -533,7 +533,7 @@ class TestForEachInstance:
 
     def test_delay_between_instances(self, mocker, capsys):
         """Should wait between instances when delay > 0."""
-        mock_sleep = mocker.patch("ots_containers.commands.instance._helpers.time.sleep")
+        mock_sleep = mocker.patch("rots.commands.instance._helpers.time.sleep")
         instances = {InstanceType.WEB: ["7043", "7044", "7045"]}
         for_each_instance(instances, delay=5, action=lambda t, i: None, verb="Restarting")
         # Should sleep twice (between 1-2 and 2-3, but not after last)
@@ -544,7 +544,7 @@ class TestForEachInstance:
 
     def test_no_delay_when_zero(self, mocker):
         """Should not sleep when delay is 0."""
-        mock_sleep = mocker.patch("ots_containers.commands.instance._helpers.time.sleep")
+        mock_sleep = mocker.patch("rots.commands.instance._helpers.time.sleep")
         instances = {InstanceType.WEB: ["7043", "7044"]}
         for_each_instance(instances, delay=0, action=lambda t, i: None, verb="Testing")
         mock_sleep.assert_not_called()
@@ -555,7 +555,7 @@ class TestRunHook:
 
     def test_successful_hook_does_not_raise(self, mocker):
         """A hook exiting 0 should complete without raising."""
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mocker.patch(
             "subprocess.run",
@@ -569,7 +569,7 @@ class TestRunHook:
         """A hook exiting non-zero should raise SystemExit(1)."""
         import pytest
 
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mocker.patch(
             "subprocess.run",
@@ -585,7 +585,7 @@ class TestRunHook:
         """Error output should identify both the stage and command."""
         import pytest
 
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mocker.patch(
             "subprocess.run",
@@ -601,7 +601,7 @@ class TestRunHook:
 
     def test_hook_is_run_via_shell(self, mocker):
         """Hook commands must be run through the shell (shell=True)."""
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mock_run = mocker.patch(
             "subprocess.run",
@@ -615,7 +615,7 @@ class TestRunHook:
 
     def test_quiet_mode_suppresses_output(self, mocker, capsys):
         """quiet=True should not print hook stage messages."""
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mocker.patch(
             "subprocess.run",
@@ -629,7 +629,7 @@ class TestRunHook:
 
     def test_hook_receives_correct_command_string(self, mocker):
         """subprocess.run should receive the exact command string provided."""
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mock_run = mocker.patch(
             "subprocess.run",
@@ -643,7 +643,7 @@ class TestRunHook:
 
     def test_verbose_mode_prints_progress_messages(self, mocker, capsys):
         """quiet=False (default) should print stage name and pass confirmation."""
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mocker.patch(
             "subprocess.run",
@@ -658,7 +658,7 @@ class TestRunHook:
 
     def test_failed_hook_error_message_includes_exit_code(self, mocker, capsys):
         """Error output should include the non-zero exit code."""
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mocker.patch(
             "subprocess.run",
@@ -673,7 +673,7 @@ class TestRunHook:
 
     def test_successful_hook_returns_none(self, mocker):
         """run_hook should return None when the hook exits 0."""
-        from ots_containers.commands.instance._helpers import run_hook
+        from rots.commands.instance._helpers import run_hook
 
         mocker.patch(
             "subprocess.run",

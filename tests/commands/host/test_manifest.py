@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ots_containers.commands.host._manifest import (
+from rots.commands.host._manifest import (
     ManifestEntry,
     default_manifest,
     parse_manifest,

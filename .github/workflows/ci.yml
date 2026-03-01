@@ -33,7 +33,7 @@ jobs:
         run: |
           uv run pytest tests/ \
             --ignore=tests/integration \
-            --cov=ots_containers \
+            --cov=rots \
             --cov-report=term-missing \
             --cov-report=xml \
             --cov-fail-under=70
@@ -42,11 +42,11 @@ jobs:
         run: |
           # cli.py: baseline 26% (target: 80% — add tests for subcommand registration)
           uv run python -m coverage report \
-            --include="*/ots_containers/cli.py" \
+            --include="*/rots/cli.py" \
             --fail-under=26
           # commands/db.py: baseline 29% (target: 70% — add tests for deploy history queries)
           uv run python -m coverage report \
-            --include="*/ots_containers/commands/db.py" \
+            --include="*/rots/commands/db.py" \
             --fail-under=29
 
       - name: Upload coverage to Codecov

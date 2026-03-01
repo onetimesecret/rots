@@ -7,8 +7,8 @@ env var precedence through the run command.
 
 from unittest.mock import Mock
 
-from ots_containers.commands import instance
-from ots_containers.config import Config
+from rots.commands import instance
+from rots.config import Config
 
 
 def _setup_run_mocks(mocker, tmp_path, **config_overrides):
@@ -30,11 +30,11 @@ def _setup_run_mocks(mocker, tmp_path, **config_overrides):
     cfg.get_executor = Mock(return_value=mock_executor)
 
     mocker.patch(
-        "ots_containers.commands.instance.app.Config",
+        "rots.commands.instance.app.Config",
         lambda: cfg,
     )
     mocker.patch(
-        "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+        "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
         tmp_path / "nonexistent",
     )
 
@@ -49,7 +49,7 @@ def _setup_run_mocks(mocker, tmp_path, **config_overrides):
         return obj
 
     mocker.patch(
-        "ots_containers.commands.instance.app.dataclasses.replace",
+        "rots.commands.instance.app.dataclasses.replace",
         side_effect=tracking_replace,
     )
 

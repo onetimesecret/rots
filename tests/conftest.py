@@ -21,6 +21,6 @@ def _mock_secret_exists(mocker):
     or a side_effect — those override this autouse fixture.
     """
     return mocker.patch(
-        "ots_containers.quadlet.secret_exists",
+        "rots.quadlet.secret_exists",
         return_value=False,
     )

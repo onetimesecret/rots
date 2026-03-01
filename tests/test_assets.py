@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ots_containers import assets
-from ots_containers.assets import TEMP_CONTAINER_NAME
-from ots_containers.config import Config
+from rots import assets
+from rots.assets import TEMP_CONTAINER_NAME
+from rots.config import Config
 
 
 def _ok(args, **extra):
@@ -23,7 +23,7 @@ class TestAssetsUpdate:
         """Volume mount failure should raise SystemExit with helpful message.
 
         Reproduces:
-            $ ots-containers assets sync
+            $ rots assets sync
             # Should show: "Failed to mount volume 'static_assets': <reason>"
             # Not a raw Python traceback
         """
@@ -352,7 +352,7 @@ def _make_ssh_executor(mocker):
     """Create a mock SSHExecutor that _is_remote() recognises as remote."""
     mock_ex = mocker.MagicMock()
     mocker.patch(
-        "ots_containers.assets._is_remote",
+        "rots.assets._is_remote",
         side_effect=lambda ex: ex is mock_ex,
     )
     return mock_ex
@@ -373,8 +373,8 @@ class TestAssetsUpdateRemote:
     def test_creates_podman_with_executor(self, mocker):
         """Should construct Podman(executor=ex) for remote operations."""
         mock_ex = _make_ssh_executor(mocker)
-        mock_podman_cls = mocker.patch("ots_containers.assets.Podman")
-        mock_require = mocker.patch("ots_containers.assets.require_podman")
+        mock_podman_cls = mocker.patch("rots.assets.Podman")
+        mock_require = mocker.patch("rots.assets.require_podman")
 
         mock_p = MagicMock()
         mock_podman_cls.return_value = mock_p

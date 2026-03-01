@@ -70,7 +70,7 @@ class ScriptedResponse:
     exit_code: int = 0
 
 
-# Default responses for common commands used by ots-containers
+# Default responses for common commands used by rots
 DEFAULT_RESPONSES: dict[str, ScriptedResponse] = {
     "systemctl is-active": ScriptedResponse(stdout="active\n"),
     "systemctl start": ScriptedResponse(),

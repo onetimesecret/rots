@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from ots_containers import db as db_module
+from rots import db as db_module
 
 
 def _mock_config(mocker, db_path):
@@ -14,7 +14,7 @@ def _mock_config(mocker, db_path):
     mock_cfg.db_path = db_path
     mock_cfg.get_executor.return_value = None  # Local executor
     mock_cfg.get_db_path.return_value = db_path
-    mocker.patch("ots_containers.commands.db.Config", return_value=mock_cfg)
+    mocker.patch("rots.commands.db.Config", return_value=mock_cfg)
     return mock_cfg
 
 
@@ -23,7 +23,7 @@ class TestDeploymentsCommand:
 
     def test_deployments_exits_when_db_missing(self, tmp_path, mocker, capsys):
         """Should exit with code 1 when database does not exist."""
-        from ots_containers.commands.db import deployments
+        from rots.commands.db import deployments
 
         _mock_config(mocker, tmp_path / "missing.db")
 
@@ -36,7 +36,7 @@ class TestDeploymentsCommand:
 
     def test_deployments_exits_when_db_missing_json(self, tmp_path, mocker, capsys):
         """Should output JSON error when db is missing and --json is requested."""
-        from ots_containers.commands.db import deployments
+        from rots.commands.db import deployments
 
         _mock_config(mocker, tmp_path / "missing.db")
 
@@ -51,7 +51,7 @@ class TestDeploymentsCommand:
 
     def test_deployments_empty_db_prints_no_history(self, tmp_path, mocker, capsys):
         """Should print a 'no history' message when deployments table is empty."""
-        from ots_containers.commands.db import deployments
+        from rots.commands.db import deployments
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -64,7 +64,7 @@ class TestDeploymentsCommand:
 
     def test_deployments_empty_db_with_web_filter(self, tmp_path, mocker, capsys):
         """Should mention the port when filtering by web and no records exist."""
-        from ots_containers.commands.db import deployments
+        from rots.commands.db import deployments
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -77,7 +77,7 @@ class TestDeploymentsCommand:
 
     def test_deployments_shows_records(self, tmp_path, mocker, capsys):
         """Should display deployment records in tabular form."""
-        from ots_containers.commands.db import deployments
+        from rots.commands.db import deployments
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -100,7 +100,7 @@ class TestDeploymentsCommand:
 
     def test_deployments_json_output(self, tmp_path, mocker, capsys):
         """Should output valid JSON list when --json is specified."""
-        from ots_containers.commands.db import deployments
+        from rots.commands.db import deployments
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -127,7 +127,7 @@ class TestDeploymentsCommand:
 
     def test_deployments_filters_by_web_port(self, tmp_path, mocker, capsys):
         """Should only show records for the specified port when --web is given."""
-        from ots_containers.commands.db import deployments
+        from rots.commands.db import deployments
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -157,7 +157,7 @@ class TestDeploymentsCommand:
 
     def test_deployments_respects_limit(self, tmp_path, mocker, capsys):
         """Should respect the --limit parameter."""
-        from ots_containers.commands.db import deployments
+        from rots.commands.db import deployments
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -179,7 +179,7 @@ class TestDeploymentsCommand:
 
     def test_deployments_failed_shows_no(self, tmp_path, mocker, capsys):
         """Should show 'NO' for failed deployments in tabular output."""
-        from ots_containers.commands.db import deployments
+        from rots.commands.db import deployments
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -204,7 +204,7 @@ class TestBackupCommand:
 
     def test_backup_exits_when_db_missing(self, tmp_path, mocker, capsys):
         """Should exit with code 1 when source db does not exist."""
-        from ots_containers.commands.db import backup
+        from rots.commands.db import backup
 
         _mock_config(mocker, tmp_path / "missing.db")
 
@@ -217,7 +217,7 @@ class TestBackupCommand:
 
     def test_backup_exits_when_db_missing_json(self, tmp_path, mocker, capsys):
         """Should emit JSON error when db is missing and --json is requested."""
-        from ots_containers.commands.db import backup
+        from rots.commands.db import backup
 
         _mock_config(mocker, tmp_path / "missing.db")
 
@@ -231,7 +231,7 @@ class TestBackupCommand:
 
     def test_backup_creates_file_at_default_location(self, tmp_path, mocker, capsys):
         """Should create a timestamped backup next to the source db."""
-        from ots_containers.commands.db import backup
+        from rots.commands.db import backup
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -247,7 +247,7 @@ class TestBackupCommand:
 
     def test_backup_creates_file_at_explicit_dest(self, tmp_path, mocker, capsys):
         """Should create the backup at the path specified by dest."""
-        from ots_containers.commands.db import backup
+        from rots.commands.db import backup
 
         db_path = tmp_path / "deploy.db"
         dest_path = tmp_path / "my_backup.db"
@@ -262,7 +262,7 @@ class TestBackupCommand:
 
     def test_backup_json_output(self, tmp_path, mocker, capsys):
         """Should emit valid JSON result when --json is specified."""
-        from ots_containers.commands.db import backup
+        from rots.commands.db import backup
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -278,7 +278,7 @@ class TestBackupCommand:
 
     def test_backup_creates_parent_dirs(self, tmp_path, mocker, capsys):
         """Should create parent directories for the destination if they don't exist."""
-        from ots_containers.commands.db import backup
+        from rots.commands.db import backup
 
         db_path = tmp_path / "deploy.db"
         dest_path = tmp_path / "subdir" / "nested" / "backup.db"
@@ -293,7 +293,7 @@ class TestBackupCommand:
         """Should exit with code 1 if the SQLite backup API raises an error."""
         import sqlite3
 
-        from ots_containers.commands.db import backup
+        from rots.commands.db import backup
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -314,7 +314,7 @@ class TestBackupCommand:
         """Should emit JSON error when SQLite backup fails and --json is set."""
         import sqlite3
 
-        from ots_containers.commands.db import backup
+        from rots.commands.db import backup
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -344,7 +344,7 @@ class TestRestoreCommand:
 
     def test_restore_exits_when_src_missing(self, tmp_path, mocker, capsys):
         """Should exit with code 1 when the backup file does not exist."""
-        from ots_containers.commands.db import restore
+        from rots.commands.db import restore
 
         src = tmp_path / "missing_backup.db"
         _mock_config(mocker, tmp_path / "live.db")
@@ -358,7 +358,7 @@ class TestRestoreCommand:
 
     def test_restore_exits_when_src_missing_json(self, tmp_path, mocker, capsys):
         """Should emit JSON error when backup file is missing with --json."""
-        from ots_containers.commands.db import restore
+        from rots.commands.db import restore
 
         src = tmp_path / "missing_backup.db"
         _mock_config(mocker, tmp_path / "live.db")
@@ -375,7 +375,7 @@ class TestRestoreCommand:
         """Should exit with code 1 if backup lacks required tables."""
         import sqlite3
 
-        from ots_containers.commands.db import restore
+        from rots.commands.db import restore
 
         # Create a valid SQLite file but without the required tables
         src = tmp_path / "bad_backup.db"
@@ -396,7 +396,7 @@ class TestRestoreCommand:
         """Should emit JSON error when backup is missing tables and --json is set."""
         import sqlite3
 
-        from ots_containers.commands.db import restore
+        from rots.commands.db import restore
 
         src = tmp_path / "bad_backup.db"
         conn = sqlite3.connect(src)
@@ -416,7 +416,7 @@ class TestRestoreCommand:
 
     def test_restore_succeeds_with_yes_flag(self, tmp_path, mocker, capsys):
         """Should restore when --yes is given and skip confirmation."""
-        from ots_containers.commands.db import restore
+        from rots.commands.db import restore
 
         src = tmp_path / "backup.db"
         live_db = tmp_path / "live.db"
@@ -431,7 +431,7 @@ class TestRestoreCommand:
 
     def test_restore_json_output_on_success(self, tmp_path, mocker, capsys):
         """Should emit JSON result on success when --json is specified."""
-        from ots_containers.commands.db import restore
+        from rots.commands.db import restore
 
         src = tmp_path / "backup.db"
         live_db = tmp_path / "live.db"
@@ -447,7 +447,7 @@ class TestRestoreCommand:
 
     def test_restore_aborts_on_no_confirmation(self, tmp_path, mocker, capsys):
         """Should print Aborted and return if user declines confirmation."""
-        from ots_containers.commands.db import restore
+        from rots.commands.db import restore
 
         src = tmp_path / "backup.db"
         live_db = tmp_path / "live.db"
@@ -463,7 +463,7 @@ class TestRestoreCommand:
 
     def test_restore_accepts_y_confirmation(self, tmp_path, mocker, capsys):
         """Should proceed when user types 'y' at confirmation prompt."""
-        from ots_containers.commands.db import restore
+        from rots.commands.db import restore
 
         src = tmp_path / "backup.db"
         live_db = tmp_path / "live.db"
@@ -479,7 +479,7 @@ class TestRestoreCommand:
 
     def test_restore_creates_pre_restore_backup(self, tmp_path, mocker, capsys):
         """Should create a pre-restore backup of the live DB before replacing it."""
-        from ots_containers.commands.db import restore
+        from rots.commands.db import restore
 
         src = tmp_path / "backup.db"
         live_db = tmp_path / "live.db"
@@ -498,7 +498,7 @@ class TestRestoreCommand:
 
     def test_restore_json_includes_pre_restore_backup(self, tmp_path, mocker, capsys):
         """JSON output should include pre_restore_backup path when a live db existed."""
-        from ots_containers.commands.db import restore
+        from rots.commands.db import restore
 
         src = tmp_path / "backup.db"
         live_db = tmp_path / "live.db"
@@ -515,7 +515,7 @@ class TestRestoreCommand:
 
     def test_restore_json_pre_restore_null_when_no_live_db(self, tmp_path, mocker, capsys):
         """JSON pre_restore_backup should be null when no live db existed."""
-        from ots_containers.commands.db import restore
+        from rots.commands.db import restore
 
         src = tmp_path / "backup.db"
         live_db = tmp_path / "nonexistent_live.db"
@@ -535,7 +535,7 @@ class TestInfoCommand:
 
     def test_info_db_not_found(self, tmp_path, mocker, capsys):
         """Should show 'not found' when database does not exist."""
-        from ots_containers.commands.db import info
+        from rots.commands.db import info
 
         _mock_config(mocker, tmp_path / "missing.db")
 
@@ -546,7 +546,7 @@ class TestInfoCommand:
 
     def test_info_db_not_found_json(self, tmp_path, mocker, capsys):
         """Should emit JSON with exists=False when database does not exist."""
-        from ots_containers.commands.db import info
+        from rots.commands.db import info
 
         _mock_config(mocker, tmp_path / "missing.db")
 
@@ -558,7 +558,7 @@ class TestInfoCommand:
 
     def test_info_shows_stats(self, tmp_path, mocker, capsys):
         """Should show size and deployment count for existing database."""
-        from ots_containers.commands.db import info
+        from rots.commands.db import info
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)
@@ -572,7 +572,7 @@ class TestInfoCommand:
 
     def test_info_json_output(self, tmp_path, mocker, capsys):
         """Should emit valid JSON with stats for existing database."""
-        from ots_containers.commands.db import info
+        from rots.commands.db import info
 
         db_path = tmp_path / "deploy.db"
         db_module.init_db(db_path)

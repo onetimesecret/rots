@@ -7,7 +7,7 @@ digest references, and edge cases correctly.
 
 import pytest
 
-from ots_containers.config import parse_image_reference
+from rots.config import parse_image_reference
 
 
 class TestBasicImageTag:

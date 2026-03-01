@@ -8,7 +8,7 @@ regex patterns in config.py.
 
 import pytest
 
-from ots_containers.config import (
+from rots.config import (
     CPU_QUOTA_RE,
     IMAGE_RE,
     MEMORY_MAX_RE,

@@ -10,7 +10,7 @@ import subprocess
 import pytest
 from ots_shared.ssh import LocalExecutor
 
-from ots_containers.commands import instance
+from rots.commands import instance
 
 
 class TestConfigTransformCommand:
@@ -23,7 +23,7 @@ class TestConfigTransformCommand:
 
     def test_config_transform_passes_host_to_get_executor(self, mocker, tmp_path):
         """config_transform should pass host from context to get_executor."""
-        from ots_containers import context
+        from rots import context
 
         mock_config = mocker.MagicMock()
         mock_config.get_executor.return_value = LocalExecutor()
@@ -36,11 +36,11 @@ class TestConfigTransformCommand:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -74,7 +74,7 @@ class TestConfigTransformCommand:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         mock_config.get_executor.return_value = LocalExecutor()
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         with pytest.raises(SystemExit) as exc_info:
             instance.config_transform(command="echo test", file="../etc/passwd")
@@ -87,7 +87,7 @@ class TestConfigTransformCommand:
         mock_config.get_executor.return_value = LocalExecutor()
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         with pytest.raises(SystemExit) as exc_info:
             instance.config_transform(command="echo test", file="/etc/passwd")
@@ -100,7 +100,7 @@ class TestConfigTransformCommand:
         mock_config.get_executor.return_value = LocalExecutor()
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         with pytest.raises(SystemExit) as exc_info:
             instance.config_transform(command="echo test", file="nonexistent.yaml")
@@ -120,11 +120,11 @@ class TestConfigTransformCommand:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -160,11 +160,11 @@ class TestConfigTransformCommand:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -204,11 +204,11 @@ class TestConfigTransformCommand:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -253,11 +253,11 @@ class TestConfigTransformCommand:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: old_value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -301,11 +301,11 @@ class TestConfigTransformCommand:
         mock_config.config_dir.mkdir()
         config_file = mock_config.config_dir / "config.yaml"
         config_file.write_text("key: old_value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -344,11 +344,11 @@ class TestConfigTransformCommand:
         mock_config.config_dir.mkdir()
         config_file = mock_config.config_dir / "config.yaml"
         config_file.write_text("key: old_value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -385,11 +385,11 @@ class TestConfigTransformCommand:
         mock_config.config_dir.mkdir()
         config_file = mock_config.config_dir / "config.yaml"
         config_file.write_text("key: value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -427,11 +427,11 @@ class TestConfigTransformCommand:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -469,11 +469,11 @@ class TestConfigTransformCommand:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -513,11 +513,11 @@ class TestConfigTransformCommand:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "auth.yaml").write_text("auth: config\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -544,7 +544,7 @@ class TestConfigTransformCommand:
 
     def test_config_transform_includes_secrets(self, mocker, tmp_path):
         """config_transform should include secrets from env file."""
-        from ots_containers.environment_file import SecretSpec
+        from rots.environment_file import SecretSpec
 
         # Mock Config
         mock_config = mocker.MagicMock()
@@ -558,13 +558,13 @@ class TestConfigTransformCommand:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Create env file with secrets
         env_file = tmp_path / "onetimesecret"
         env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET\n")
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             env_file,
         )
 
@@ -573,7 +573,7 @@ class TestConfigTransformCommand:
             SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
         ]
         mocker.patch(
-            "ots_containers.commands.instance._helpers.get_secrets_from_env_file",
+            "rots.commands.instance._helpers.get_secrets_from_env_file",
             return_value=mock_secrets,
         )
 
@@ -617,11 +617,11 @@ class TestConfigTransformCommand:
         config_file = mock_config.config_dir / "config.yaml"
         config_file.write_text("key: old_value\n")
 
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Mock env file not existing
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -658,7 +658,7 @@ class TestConfigTransformHelp:
 
     def test_config_transform_help(self, capsys):
         """instance config-transform --help should work."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         with pytest.raises(SystemExit) as exc_info:
             app(["instance", "config-transform", "--help"])
@@ -702,7 +702,7 @@ class TestConfigTransformRemote:
         )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
         # Simulate file not found on remote
         test_result = MagicMock()
@@ -731,9 +731,9 @@ class TestConfigTransformRemote:
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/img", "current")
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -797,9 +797,9 @@ class TestConfigTransformRemote:
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/img", "current")
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -850,9 +850,9 @@ class TestConfigTransformPositionalReference:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -869,7 +869,7 @@ class TestConfigTransformPositionalReference:
             return obj
 
         mocker.patch(
-            "ots_containers.commands.instance.app.dataclasses.replace",
+            "rots.commands.instance.app.dataclasses.replace",
             side_effect=tracking_replace,
         )
 
@@ -901,9 +901,9 @@ class TestConfigTransformPositionalReference:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -919,7 +919,7 @@ class TestConfigTransformPositionalReference:
             return obj
 
         mocker.patch(
-            "ots_containers.commands.instance.app.dataclasses.replace",
+            "rots.commands.instance.app.dataclasses.replace",
             side_effect=tracking_replace,
         )
 
@@ -956,9 +956,9 @@ class TestConfigTransformPositionalReference:
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
-        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
         mocker.patch(
-            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             tmp_path / "nonexistent",
         )
 
@@ -971,7 +971,7 @@ class TestConfigTransformPositionalReference:
             return obj
 
         mocker.patch(
-            "ots_containers.commands.instance.app.dataclasses.replace",
+            "rots.commands.instance.app.dataclasses.replace",
             side_effect=tracking_replace,
         )
 
@@ -997,7 +997,7 @@ class TestConfigTransformCLI:
 
     def test_config_transform_requires_command(self, capsys):
         """config-transform should require --command argument."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         with pytest.raises(SystemExit) as exc_info:
             app(["instance", "config-transform"])

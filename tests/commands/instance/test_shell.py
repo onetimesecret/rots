@@ -7,8 +7,8 @@ for ephemeral and persistent migration shells.
 
 import pytest
 
-from ots_containers.commands import instance
-from ots_containers.config import DEFAULT_IMAGE, Config
+from rots.commands import instance
+from rots.config import DEFAULT_IMAGE, Config
 
 
 def _setup_shell_mocks(mocker, tmp_path, **config_overrides):
@@ -34,12 +34,12 @@ def _setup_shell_mocks(mocker, tmp_path, **config_overrides):
         return_value=config_overrides.get("resolve_image_tag", default_resolve)
     )
 
-    mocker.patch("ots_containers.commands.instance.app.Config", lambda: cfg)
+    mocker.patch("rots.commands.instance.app.Config", lambda: cfg)
 
     # Mock env file not existing by default
     env_file = config_overrides.get("env_file", tmp_path / "nonexistent")
     mocker.patch(
-        "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+        "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
         env_file,
     )
 
@@ -71,7 +71,7 @@ def _setup_shell_mocks(mocker, tmp_path, **config_overrides):
         return obj
 
     mocker.patch(
-        "ots_containers.commands.instance.app.dataclasses.replace",
+        "rots.commands.instance.app.dataclasses.replace",
         side_effect=tracking_replace,
     )
 
@@ -127,7 +127,7 @@ class TestShellCommand:
 
     def test_shell_includes_secrets_from_env_file(self, mocker, tmp_path):
         """shell should include secrets when env file exists."""
-        from ots_containers.environment_file import SecretSpec
+        from rots.environment_file import SecretSpec
 
         env_file = tmp_path / "onetimesecret"
         env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\n")
@@ -139,7 +139,7 @@ class TestShellCommand:
             SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
         ]
         mocker.patch(
-            "ots_containers.commands.instance._helpers.get_secrets_from_env_file",
+            "rots.commands.instance._helpers.get_secrets_from_env_file",
             return_value=mock_secrets,
         )
 
@@ -218,7 +218,7 @@ class TestShellCommand:
 
     def test_shell_uses_config_image_by_default(self, mocker, tmp_path):
         """shell should use cfg.image (from IMAGE env or DEFAULT_IMAGE)."""
-        from ots_containers.config import DEFAULT_IMAGE
+        from rots.config import DEFAULT_IMAGE
 
         _mock_config, mock_executor = _setup_shell_mocks(
             mocker,
@@ -249,7 +249,7 @@ class TestShellCommand:
 
     def test_shell_uses_specified_tag(self, mocker, tmp_path):
         """shell --tag should override default tag."""
-        from ots_containers.config import DEFAULT_IMAGE
+        from rots.config import DEFAULT_IMAGE
 
         _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
 
@@ -407,7 +407,7 @@ class TestShellHelp:
 
     def test_shell_help(self, capsys):
         """instance shell --help should work."""
-        from ots_containers.cli import app
+        from rots.cli import app
 
         with pytest.raises(SystemExit) as exc_info:
             app(["instance", "shell", "--help"])
@@ -422,7 +422,7 @@ class TestBuildSecretArgs:
 
     def test_build_secret_args_returns_empty_for_missing_file(self, tmp_path):
         """build_secret_args should return empty list for missing file."""
-        from ots_containers.commands.instance._helpers import build_secret_args
+        from rots.commands.instance._helpers import build_secret_args
 
         missing_file = tmp_path / "nonexistent"
         result = build_secret_args(missing_file)
@@ -430,8 +430,8 @@ class TestBuildSecretArgs:
 
     def test_build_secret_args_returns_secret_flags(self, mocker, tmp_path):
         """build_secret_args should return --secret flags."""
-        from ots_containers.commands.instance._helpers import build_secret_args
-        from ots_containers.environment_file import SecretSpec
+        from rots.commands.instance._helpers import build_secret_args
+        from rots.environment_file import SecretSpec
 
         env_file = tmp_path / "env"
         env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET\n")
@@ -440,7 +440,7 @@ class TestBuildSecretArgs:
             SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
         ]
         mocker.patch(
-            "ots_containers.commands.instance._helpers.get_secrets_from_env_file",
+            "rots.commands.instance._helpers.get_secrets_from_env_file",
             return_value=mock_secrets,
         )
 
@@ -452,8 +452,8 @@ class TestBuildSecretArgs:
 
     def test_build_secret_args_handles_multiple_secrets(self, mocker, tmp_path):
         """build_secret_args should handle multiple secrets."""
-        from ots_containers.commands.instance._helpers import build_secret_args
-        from ots_containers.environment_file import SecretSpec
+        from rots.commands.instance._helpers import build_secret_args
+        from rots.environment_file import SecretSpec
 
         env_file = tmp_path / "env"
         env_file.write_text("SECRET_VARIABLE_NAMES=A,B,C\n")
@@ -464,7 +464,7 @@ class TestBuildSecretArgs:
             SecretSpec(env_var_name="C", secret_name="ots_c"),
         ]
         mocker.patch(
-            "ots_containers.commands.instance._helpers.get_secrets_from_env_file",
+            "rots.commands.instance._helpers.get_secrets_from_env_file",
             return_value=mock_secrets,
         )
 

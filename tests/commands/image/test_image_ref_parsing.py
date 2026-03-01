@@ -10,7 +10,7 @@ Verifies pull uses parse_image_reference() correctly for:
 
 import pytest
 
-from ots_containers.commands.image.app import pull
+from rots.commands.image.app import pull
 
 
 def _setup_pull_mocks(
@@ -29,12 +29,12 @@ def _setup_pull_mocks(
     mock_config.registry_auth_file = tmp_path / "auth.json"
     mock_config.get_executor.return_value = None
 
-    mocker.patch("ots_containers.commands.image.app.Config", return_value=mock_config)
+    mocker.patch("rots.commands.image.app.Config", return_value=mock_config)
 
     mock_podman = mocker.MagicMock()
-    mocker.patch("ots_containers.commands.image.app.Podman", return_value=mock_podman)
-    mocker.patch("ots_containers.commands.image.app.db.record_deployment")
-    mocker.patch("ots_containers.commands.image.app.db.set_alias")
+    mocker.patch("rots.commands.image.app.Podman", return_value=mock_podman)
+    mocker.patch("rots.commands.image.app.db.record_deployment")
+    mocker.patch("rots.commands.image.app.db.set_alias")
 
     return mock_config, mock_podman
 
@@ -117,7 +117,7 @@ class TestPullSentinelRejection:
     def test_pull_rejects_current_sentinel(self, mocker, tmp_path, capsys):
         """pull with @current tag (from env default) should fail."""
         _mock_config, mock_podman = _setup_pull_mocks(mocker, tmp_path, tag="@current")
-        mocker.patch("ots_containers.commands.image.app.db.get_alias", return_value=None)
+        mocker.patch("rots.commands.image.app.db.get_alias", return_value=None)
 
         with pytest.raises(SystemExit) as exc_info:
             pull(quiet=True)
@@ -128,7 +128,7 @@ class TestPullSentinelRejection:
     def test_pull_rejects_rollback_as_positional(self, mocker, tmp_path, capsys):
         """pull with rollback tag should fail."""
         _mock_config, mock_podman = _setup_pull_mocks(mocker, tmp_path, tag="v1.0")
-        mocker.patch("ots_containers.commands.image.app.db.get_alias", return_value=None)
+        mocker.patch("rots.commands.image.app.db.get_alias", return_value=None)
 
         with pytest.raises(SystemExit) as exc_info:
             pull(tag="@rollback", quiet=True)
@@ -143,7 +143,7 @@ class TestPullSentinelRejection:
         alias_mock = mocker.MagicMock()
         alias_mock.image = "ghcr.io/org/app"
         alias_mock.tag = "v0.23.0"
-        mocker.patch("ots_containers.commands.image.app.db.get_alias", return_value=alias_mock)
+        mocker.patch("rots.commands.image.app.db.get_alias", return_value=alias_mock)
 
         with pytest.raises(SystemExit):
             pull(quiet=False)

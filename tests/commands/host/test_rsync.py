@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from ots_containers.commands.host._rsync import (
+from rots.commands.host._rsync import (
     RsyncInfo,
     build_rsync_file_cmd,
     detect_rsync,

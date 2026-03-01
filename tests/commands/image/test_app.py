@@ -9,25 +9,25 @@ class TestImageAppImports:
 
     def test_image_app_exists(self):
         """Test image app is defined."""
-        from ots_containers.commands.image.app import app
+        from rots.commands.image.app import app
 
         assert app is not None
 
     def test_rm_function_exists(self):
         """Test rm function is defined."""
-        from ots_containers.commands.image.app import rm
+        from rots.commands.image.app import rm
 
         assert rm is not None
 
     def test_prune_function_exists(self):
         """Test prune function is defined."""
-        from ots_containers.commands.image.app import prune
+        from rots.commands.image.app import prune
 
         assert prune is not None
 
     def test_ls_function_exists(self):
         """Test ls (list) function is defined."""
-        from ots_containers.commands.image.app import ls
+        from rots.commands.image.app import ls
 
         assert ls is not None
 
@@ -37,7 +37,7 @@ class TestRmCommand:
 
     def test_rm_no_tags_exits(self):
         """Should exit if no tags provided."""
-        from ots_containers.commands.image.app import rm
+        from rots.commands.image.app import rm
 
         with pytest.raises(SystemExit) as exc_info:
             rm(tags=(), yes=True)
@@ -46,7 +46,7 @@ class TestRmCommand:
 
     def test_rm_aborts_without_confirmation(self, mocker, capsys):
         """Should abort if user doesn't confirm."""
-        from ots_containers.commands.image.app import rm
+        from rots.commands.image.app import rm
 
         mocker.patch("builtins.input", return_value="n")
 
@@ -57,15 +57,15 @@ class TestRmCommand:
 
     def test_rm_removes_image_with_yes(self, mocker, capsys, tmp_path):
         """Should remove image when --yes is provided."""
-        from ots_containers.commands.image.app import rm
+        from rots.commands.image.app import rm
 
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(returncode=0, stdout="", stderr=""),
         )
 
@@ -77,10 +77,10 @@ class TestRmCommand:
 
     def test_rm_tries_multiple_patterns(self, mocker, capsys, tmp_path):
         """Should try multiple image patterns."""
-        from ots_containers.commands.image.app import rm
+        from rots.commands.image.app import rm
 
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -95,7 +95,7 @@ class TestRmCommand:
             return mocker.MagicMock(returncode=0, stdout="", stderr="")
 
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             side_effect=mock_subprocess_run,
         )
 
@@ -107,15 +107,15 @@ class TestRmCommand:
 
     def test_rm_reports_not_found(self, mocker, capsys, tmp_path):
         """Should report when image not found."""
-        from ots_containers.commands.image.app import rm
+        from rots.commands.image.app import rm
 
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(returncode=1, stdout="", stderr="not found"),
         )
 
@@ -126,15 +126,15 @@ class TestRmCommand:
 
     def test_rm_with_force(self, mocker, tmp_path):
         """Should pass force flag to podman."""
-        from ots_containers.commands.image.app import rm
+        from rots.commands.image.app import rm
 
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(returncode=0, stdout="", stderr=""),
         )
 
@@ -150,7 +150,7 @@ class TestPruneCommand:
 
     def test_prune_aborts_without_confirmation(self, mocker, capsys):
         """Should abort if user doesn't confirm."""
-        from ots_containers.commands.image.app import prune
+        from rots.commands.image.app import prune
 
         mocker.patch("builtins.input", return_value="n")
 
@@ -161,11 +161,11 @@ class TestPruneCommand:
 
     def test_prune_calls_podman(self, mocker, capsys):
         """Should call podman image prune."""
-        from ots_containers.commands.image.app import prune
+        from rots.commands.image.app import prune
 
         # Mock subprocess.run since the podman wrapper calls it
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="removed images", returncode=0),
         )
 
@@ -182,11 +182,11 @@ class TestPruneCommand:
 
     def test_prune_with_all_flag(self, mocker, capsys):
         """Should pass all flag to podman."""
-        from ots_containers.commands.image.app import prune
+        from rots.commands.image.app import prune
 
         # Mock subprocess.run since the podman wrapper calls it
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="removed images", returncode=0),
         )
 
@@ -201,10 +201,10 @@ class TestPruneCommand:
 
     def test_prune_failure_exits(self, mocker):
         """Should exit on prune failure."""
-        from ots_containers.commands.image.app import prune
+        from rots.commands.image.app import prune
 
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             side_effect=Exception("prune failed"),
         )
 
@@ -215,7 +215,7 @@ class TestPruneCommand:
 
     def test_prune_prompts_different_for_all(self, mocker, capsys):
         """Should show different prompt for --all."""
-        from ots_containers.commands.image.app import prune
+        from rots.commands.image.app import prune
 
         mocker.patch("builtins.input", return_value="n")
 
@@ -235,10 +235,10 @@ class TestLsCommand:
 
     def test_ls_calls_podman(self, mocker, capsys):
         """Should call podman image list."""
-        from ots_containers.commands.image.app import ls
+        from rots.commands.image.app import ls
 
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(
                 stdout="REPOSITORY:TAG  ID  SIZE  CREATED\nonetimesecret:v1  abc  100MB  1 day"
             ),
@@ -251,10 +251,10 @@ class TestLsCommand:
 
     def test_ls_with_json_output(self, mocker, capsys):
         """Should output JSON when --json flag is used."""
-        from ots_containers.commands.image.app import ls
+        from rots.commands.image.app import ls
 
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout='[{"Names": ["onetimesecret:v1"], "Id": "abc"}]'),
         )
 
@@ -265,10 +265,10 @@ class TestLsCommand:
 
     def test_ls_with_all_tags(self, mocker, capsys):
         """Should show all images when --all flag is used."""
-        from ots_containers.commands.image.app import ls
+        from rots.commands.image.app import ls
 
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(
                 stdout="REPOSITORY:TAG  ID  SIZE  CREATED\nother:v1  def  50MB  1 day"
             ),
@@ -283,7 +283,7 @@ class TestLsCommand:
         """ls --json with custom IMAGE should filter by image basename, not hardcoded name."""
         import json
 
-        from ots_containers.commands.image.app import ls
+        from rots.commands.image.app import ls
 
         monkeypatch.setenv("IMAGE", "custom.registry.io/myapp")
 
@@ -297,7 +297,7 @@ class TestLsCommand:
             ]
         )
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout=podman_output),
         )
 
@@ -336,19 +336,19 @@ class TestPullEnvVarResolution:
         touch the real filesystem.
         """
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
-        mock_record = mocker.patch("ots_containers.commands.image.app.db.record_deployment")
-        mock_set_current = mocker.patch("ots_containers.commands.image.app.db.set_current")
+        mock_record = mocker.patch("rots.commands.image.app.db.record_deployment")
+        mock_set_current = mocker.patch("rots.commands.image.app.db.set_current")
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=None,
         )
 
         # Point db_path to tmp_path so the real filesystem is never consulted
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -357,7 +357,7 @@ class TestPullEnvVarResolution:
 
     def test_pull_uses_image_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario 1: IMAGE env var should be passed through to podman.pull."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("IMAGE", "custom.registry.io/myorg/myapp")
         monkeypatch.setenv("TAG", "v1.0.0")
@@ -373,7 +373,7 @@ class TestPullEnvVarResolution:
 
     def test_pull_uses_tag_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario 2: TAG env var (no --tag flag) should be used for the pull."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("TAG", "v2.5.0")
 
@@ -388,7 +388,7 @@ class TestPullEnvVarResolution:
 
     def test_pull_uses_both_image_and_tag_env_vars(self, mocker, monkeypatch, tmp_path):
         """Scenario 3: Both IMAGE and TAG env vars produce the correct full reference."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("IMAGE", "docker.io/onetimesecret/onetimesecret")
         monkeypatch.setenv("TAG", "v0.23.0-rc1")
@@ -409,7 +409,7 @@ class TestPullEnvVarResolution:
 
     def test_pull_cli_image_overrides_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario 4: --image CLI flag takes precedence over IMAGE env var."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("IMAGE", "env-var-image/should-not-be-used")
         monkeypatch.setenv("TAG", "v1.0.0")
@@ -425,7 +425,7 @@ class TestPullEnvVarResolution:
 
     def test_pull_cli_tag_overrides_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario 5: --tag CLI flag takes precedence over TAG env var."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("TAG", "env-tag-should-not-be-used")
 
@@ -455,28 +455,28 @@ class TestSetCurrentEnvVarResolution:
     def _mock_externals(self, mocker, tmp_path):
         """Mock db calls, db_path, and podman subprocess. Return set_current mock."""
         mock_set_current = mocker.patch(
-            "ots_containers.commands.image.app.db.set_current",
+            "rots.commands.image.app.db.set_current",
             return_value=None,
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=None,
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         # Mock podman subprocess for image inspect and tag calls
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
         return mock_set_current
 
     def test_set_current_uses_image_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario 6: IMAGE env var flows through to db.set_current."""
-        from ots_containers.commands.image.app import set_current
+        from rots.commands.image.app import set_current
 
         monkeypatch.setenv("IMAGE", "custom.registry.io/myorg/myapp")
 
@@ -492,7 +492,7 @@ class TestSetCurrentEnvVarResolution:
 
     def test_set_current_cli_image_overrides_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario 7: --image CLI flag takes precedence over IMAGE env var."""
-        from ots_containers.commands.image.app import set_current
+        from rots.commands.image.app import set_current
 
         monkeypatch.setenv("IMAGE", "env-var-image/should-not-be-used")
 
@@ -530,27 +530,27 @@ class TestSetCurrentPodmanTag:
         Returns the subprocess.run mock for asserting podman commands.
         """
         mocker.patch(
-            "ots_containers.commands.image.app.db.set_current",
+            "rots.commands.image.app.db.set_current",
             return_value=current_image[1] if current_image else None,
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=current_image,
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
         return mock_run
 
     def test_set_current_tags_image_as_current(self, mocker, tmp_path, capsys):
         """set-current should tag the image as :current in podman."""
-        from ots_containers.commands.image.app import set_current
+        from rots.commands.image.app import set_current
 
         mock_run = self._mock_externals(mocker, tmp_path)
 
@@ -572,7 +572,7 @@ class TestSetCurrentPodmanTag:
 
     def test_set_current_tags_previous_as_rollback(self, mocker, tmp_path, capsys):
         """set-current should tag the previous CURRENT as :rollback."""
-        from ots_containers.commands.image.app import set_current
+        from rots.commands.image.app import set_current
 
         prev = ("ghcr.io/onetimesecret/onetimesecret", "v0.22.0")
         mock_run = self._mock_externals(mocker, tmp_path, current_image=prev)
@@ -594,24 +594,24 @@ class TestSetCurrentPodmanTag:
         """set-current should exit with error if image not found locally."""
         import subprocess
 
-        from ots_containers.commands.image.app import set_current
+        from rots.commands.image.app import set_current
 
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=None,
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         # Make podman image inspect fail (image not found)
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             side_effect=subprocess.CalledProcessError(125, "podman"),
         )
         mock_set_current = mocker.patch(
-            "ots_containers.commands.image.app.db.set_current",
+            "rots.commands.image.app.db.set_current",
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -628,19 +628,19 @@ class TestSetCurrentPodmanTag:
         """set-current should exit if podman tag fails (DB unchanged)."""
         import subprocess
 
-        from ots_containers.commands.image.app import set_current
+        from rots.commands.image.app import set_current
 
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=None,
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         mock_set_current = mocker.patch(
-            "ots_containers.commands.image.app.db.set_current",
+            "rots.commands.image.app.db.set_current",
         )
 
         call_count = 0
@@ -655,7 +655,7 @@ class TestSetCurrentPodmanTag:
             raise subprocess.CalledProcessError(125, "podman")
 
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             side_effect=inspect_succeeds_tag_fails,
         )
 
@@ -679,31 +679,31 @@ class TestRollbackPodmanTag:
 
     def test_rollback_tags_in_podman(self, mocker, tmp_path, capsys):
         """rollback should tag the new current and old current in podman."""
-        from ots_containers.commands.image.app import rollback
+        from rots.commands.image.app import rollback
 
         image = "ghcr.io/onetimesecret/onetimesecret"
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=(image, "v0.23.3"),
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_previous_tags",
+            "rots.commands.image.app.db.get_previous_tags",
             return_value=[
                 (image, "v0.23.3", "2025-01-01"),
                 (image, "v0.22.0", "2024-12-01"),
             ],
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.rollback",
+            "rots.commands.image.app.db.rollback",
             return_value=(image, "v0.22.0"),
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
 
@@ -727,31 +727,31 @@ class TestRollbackPodmanTag:
 
     def test_rollback_warns_on_podman_tag_failure(self, mocker, tmp_path, capsys):
         """rollback should warn but not abort if podman tag fails."""
-        from ots_containers.commands.image.app import rollback
+        from rots.commands.image.app import rollback
 
         image = "ghcr.io/onetimesecret/onetimesecret"
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=(image, "v0.23.3"),
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_previous_tags",
+            "rots.commands.image.app.db.get_previous_tags",
             return_value=[
                 (image, "v0.23.3", "2025-01-01"),
                 (image, "v0.22.0", "2024-12-01"),
             ],
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.rollback",
+            "rots.commands.image.app.db.rollback",
             return_value=(image, "v0.22.0"),
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             side_effect=Exception("podman tag failed"),
         )
 
@@ -764,31 +764,31 @@ class TestRollbackPodmanTag:
 
     def test_rollback_without_apply_prints_hint(self, mocker, tmp_path, capsys):
         """rollback without --apply should print 'To apply: ots instance redeploy'."""
-        from ots_containers.commands.image.app import rollback
+        from rots.commands.image.app import rollback
 
         image = "ghcr.io/onetimesecret/onetimesecret"
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=(image, "v0.23.3"),
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_previous_tags",
+            "rots.commands.image.app.db.get_previous_tags",
             return_value=[
                 (image, "v0.23.3", "2025-01-01"),
                 (image, "v0.22.0", "2024-12-01"),
             ],
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.rollback",
+            "rots.commands.image.app.db.rollback",
             return_value=(image, "v0.22.0"),
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
 
@@ -800,35 +800,35 @@ class TestRollbackPodmanTag:
     def test_rollback_with_apply_calls_redeploy(self, mocker, tmp_path, capsys):
         """rollback --apply should call redeploy after updating aliases."""
 
-        from ots_containers.commands.image.app import rollback
+        from rots.commands.image.app import rollback
 
         image = "ghcr.io/onetimesecret/onetimesecret"
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=(image, "v0.23.3"),
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_previous_tags",
+            "rots.commands.image.app.db.get_previous_tags",
             return_value=[
                 (image, "v0.23.3", "2025-01-01"),
                 (image, "v0.22.0", "2024-12-01"),
             ],
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.rollback",
+            "rots.commands.image.app.db.rollback",
             return_value=(image, "v0.22.0"),
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
         mock_redeploy = mocker.patch(
-            "ots_containers.commands.instance.app.redeploy",
+            "rots.commands.instance.app.redeploy",
         )
 
         rollback(apply=True, delay=0)
@@ -841,34 +841,34 @@ class TestRollbackPodmanTag:
 
     def test_rollback_with_apply_does_not_print_hint(self, mocker, tmp_path, capsys):
         """rollback --apply should not print the manual 'To apply:' hint."""
-        from ots_containers.commands.image.app import rollback
+        from rots.commands.image.app import rollback
 
         image = "ghcr.io/onetimesecret/onetimesecret"
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=(image, "v0.23.3"),
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_previous_tags",
+            "rots.commands.image.app.db.get_previous_tags",
             return_value=[
                 (image, "v0.23.3", "2025-01-01"),
                 (image, "v0.22.0", "2024-12-01"),
             ],
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.rollback",
+            "rots.commands.image.app.db.rollback",
             return_value=(image, "v0.22.0"),
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
         mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
-        mocker.patch("ots_containers.commands.instance.app.redeploy")
+        mocker.patch("rots.commands.instance.app.redeploy")
 
         rollback(apply=True, delay=0)
 
@@ -890,17 +890,17 @@ class TestPullPositionalReference:
 
     def _mock_externals(self, mocker, tmp_path):
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
-        mocker.patch("ots_containers.commands.image.app.db.set_current")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.set_current")
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=None,
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -908,7 +908,7 @@ class TestPullPositionalReference:
 
     def test_pull_full_reference(self, mocker, tmp_path):
         """Full reference like registry.io/org/image:tag should work."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         mock_run = self._mock_externals(mocker, tmp_path)
 
@@ -920,7 +920,7 @@ class TestPullPositionalReference:
 
     def test_pull_reference_without_tag_falls_back_to_tag_flag(self, mocker, tmp_path):
         """Reference without colon should use --tag for the tag portion."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         mock_run = self._mock_externals(mocker, tmp_path)
 
@@ -932,7 +932,7 @@ class TestPullPositionalReference:
 
     def test_pull_reference_without_tag_falls_back_to_env(self, mocker, monkeypatch, tmp_path):
         """Reference without tag and no --tag flag falls back to TAG env var."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("TAG", "env-tag")
         mock_run = self._mock_externals(mocker, tmp_path)
@@ -945,7 +945,7 @@ class TestPullPositionalReference:
 
     def test_pull_tag_flag_overrides_reference_tag(self, mocker, tmp_path):
         """--tag flag should override the tag parsed from the reference."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         mock_run = self._mock_externals(mocker, tmp_path)
 
@@ -958,7 +958,7 @@ class TestPullPositionalReference:
 
     def test_pull_image_flag_overrides_reference_image(self, mocker, tmp_path):
         """--image flag should override the image parsed from the reference."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         mock_run = self._mock_externals(mocker, tmp_path)
 
@@ -971,7 +971,7 @@ class TestPullPositionalReference:
 
     def test_pull_both_flags_override_reference(self, mocker, tmp_path):
         """Both --image and --tag flags should fully override the reference."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         mock_run = self._mock_externals(mocker, tmp_path)
 
@@ -987,11 +987,11 @@ class TestPullPositionalReference:
 
     def test_pull_reference_with_current_flag(self, mocker, tmp_path, capsys):
         """Full reference with --current should set the alias."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         mock_run = self._mock_externals(mocker, tmp_path)
         mock_set_current = mocker.patch(
-            "ots_containers.commands.image.app.db.set_current",
+            "rots.commands.image.app.db.set_current",
             return_value=None,
         )
 
@@ -1004,7 +1004,7 @@ class TestPullPositionalReference:
     def test_pull_no_reference_no_tag_rejects_sentinel(self, mocker, monkeypatch, tmp_path, capsys):
         """No reference, no --tag, empty TAG env var falls back to
         @current sentinel which pull rejects."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("TAG", "")
         self._mock_externals(mocker, tmp_path)
@@ -1018,7 +1018,7 @@ class TestPullPositionalReference:
 
     def test_pull_reference_with_trailing_colon(self, mocker, monkeypatch, tmp_path):
         """Reference ending with colon should treat it as image-only (no tag)."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("TAG", "fallback")
         mock_run = self._mock_externals(mocker, tmp_path)
@@ -1041,25 +1041,25 @@ class TestPullCurrentPodmanTag:
 
     def test_pull_current_tags_in_podman(self, mocker, monkeypatch, tmp_path, capsys):
         """pull --current should tag the pulled image as :current."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("TAG", "v0.23.3")
 
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
         mocker.patch(
-            "ots_containers.commands.image.app.db.set_current",
+            "rots.commands.image.app.db.set_current",
             return_value=None,
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=None,
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1089,26 +1089,26 @@ class TestPullCurrentPodmanTag:
         capsys,
     ):
         """pull --current with existing CURRENT should also tag :rollback."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("TAG", "v0.23.3")
         image = "ghcr.io/onetimesecret/onetimesecret"
 
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
         mocker.patch(
-            "ots_containers.commands.image.app.db.set_current",
+            "rots.commands.image.app.db.set_current",
             return_value="v0.22.0",
         )
         mocker.patch(
-            "ots_containers.commands.image.app.db.get_current_image",
+            "rots.commands.image.app.db.get_current_image",
             return_value=(image, "v0.22.0"),
         )
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1144,14 +1144,14 @@ class TestPullPrivateRegistry:
     def _mock_externals(self, mocker, tmp_path):
         """Mock podman subprocess and db calls, return the mocks."""
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
-        mock_record = mocker.patch("ots_containers.commands.image.app.db.record_deployment")
-        mocker.patch("ots_containers.commands.image.app.db.set_current")
+        mock_record = mocker.patch("rots.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.set_current")
 
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1160,7 +1160,7 @@ class TestPullPrivateRegistry:
 
     def test_pull_private_uses_registry_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario 16: pull --private with OTS_REGISTRY should use private image path."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
         monkeypatch.setenv("TAG", "v1.0.0")
@@ -1176,7 +1176,7 @@ class TestPullPrivateRegistry:
 
     def test_pull_private_without_registry_exits(self, mocker, monkeypatch, tmp_path, capsys):
         """Scenario 17: pull --private without OTS_REGISTRY should exit with error."""
-        from ots_containers.commands.image.app import pull
+        from rots.commands.image.app import pull
 
         monkeypatch.setenv("TAG", "v1.0.0")
         # OTS_REGISTRY is NOT set
@@ -1209,12 +1209,12 @@ class TestRegistryEnvVarResolution:
 
     def test_login_uses_registry_env_var(self, mocker, monkeypatch, tmp_path, capsys):
         """Scenario 20: login with OTS_REGISTRY env var should resolve registry."""
-        from ots_containers.commands.image.app import login
+        from rots.commands.image.app import login
 
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
 
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1225,7 +1225,7 @@ class TestRegistryEnvVarResolution:
 
         # Mock podman.login via subprocess
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="Login Succeeded", returncode=0),
         )
 
@@ -1242,12 +1242,12 @@ class TestRegistryEnvVarResolution:
 
     def test_list_remote_uses_registry_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario 21: list-remote with OTS_REGISTRY env var should resolve registry."""
-        from ots_containers.commands.image.app import list_remote
+        from rots.commands.image.app import list_remote
 
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
 
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1275,24 +1275,24 @@ class TestRegistryEnvVarResolution:
 
     def test_push_uses_registry_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario 22: push with OTS_REGISTRY env var should use registry for target."""
-        from ots_containers.commands.image.app import push
+        from rots.commands.image.app import push
 
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
 
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
 
         # Mock podman.tag and podman.push via subprocess
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
 
         # Mock db.record_deployment
-        mock_record = mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mock_record = mocker.patch("rots.commands.image.app.db.record_deployment")
 
         push(tag="v1.0.0")
 
@@ -1332,12 +1332,12 @@ class TestPushEnvVarResolution:
     def _mock_externals(self, mocker, tmp_path):
         """Mock podman subprocess and db calls, return the subprocess mock."""
         mock_run = mocker.patch(
-            "ots_containers.podman.subprocess.run",
+            "rots.podman.subprocess.run",
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
-        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("rots.commands.image.app.db.record_deployment")
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1345,7 +1345,7 @@ class TestPushEnvVarResolution:
 
     def test_push_uses_tag_env_var_when_no_cli_flag(self, mocker, monkeypatch, tmp_path):
         """Scenario: TAG env var (no --tag flag) should be used as the image tag."""
-        from ots_containers.commands.image.app import push
+        from rots.commands.image.app import push
 
         monkeypatch.setenv("TAG", "v1.2.3")
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
@@ -1364,7 +1364,7 @@ class TestPushEnvVarResolution:
 
     def test_push_derives_src_basename_from_image_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario: IMAGE env var constructs source_full and target_full correctly."""
-        from ots_containers.commands.image.app import push
+        from rots.commands.image.app import push
 
         monkeypatch.setenv("IMAGE", "ghcr.io/myorg/myapp")
         monkeypatch.setenv("TAG", "v2.0.0")
@@ -1383,7 +1383,7 @@ class TestPushEnvVarResolution:
 
     def test_push_strips_registry_prefix_from_image_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario: custom IMAGE env var with registry host produces correct target basename."""
-        from ots_containers.commands.image.app import push
+        from rots.commands.image.app import push
 
         monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
         monkeypatch.setenv("TAG", "v3.0.0")
@@ -1407,13 +1407,13 @@ class TestPushEnvVarResolution:
         operation will fail.  Empty TAG env var is treated as unset,
         falling back to DEFAULT_TAG (@current).
         """
-        from ots_containers.commands.image.app import push
+        from rots.commands.image.app import push
 
         # Empty TAG falls back to @current sentinel (not a real OCI tag)
         monkeypatch.setenv("TAG", "")
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1450,7 +1450,7 @@ class TestListRemoteImageResolution:
         """Mock shutil.which (skopeo present) and subprocess.run (skopeo result)."""
         mocker.patch("shutil.which", return_value=str(tmp_path / "skopeo"))
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1468,14 +1468,14 @@ class TestListRemoteImageResolution:
     ):
         """IMAGE=docker.io/myorg/myapp should pass 'myapp' as image basename to skopeo."""
 
-        from ots_containers.commands.image.app import list_remote
+        from rots.commands.image.app import list_remote
 
         monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
 
         mocker.patch("shutil.which", return_value=str(tmp_path / "skopeo"))
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1499,14 +1499,14 @@ class TestListRemoteImageResolution:
 
     def test_list_remote_cli_image_flag_overrides_env_var(self, mocker, monkeypatch, tmp_path):
         """--image CLI flag should override IMAGE env var basename resolution."""
-        from ots_containers.commands.image.app import list_remote
+        from rots.commands.image.app import list_remote
 
         monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
 
         mocker.patch("shutil.which", return_value=str(tmp_path / "skopeo"))
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1532,14 +1532,14 @@ class TestListRemoteImageResolution:
         self, mocker, monkeypatch, tmp_path, capsys
     ):
         """With no IMAGE env var, list_remote uses 'onetimesecret' as basename."""
-        from ots_containers.commands.image.app import list_remote
+        from rots.commands.image.app import list_remote
 
         # No IMAGE env var set (cleared by autouse fixture)
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
 
         mocker.patch("shutil.which", return_value=str(tmp_path / "skopeo"))
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1590,11 +1590,11 @@ class TestRmImageBasenameDerivation:
         self, mocker, monkeypatch, tmp_path, capsys
     ):
         """IMAGE=docker.io/myorg/myapp tries 'myapp:<tag>', full image, 'localhost/myapp:<tag>'."""
-        from ots_containers.commands.image.app import rm
+        from rots.commands.image.app import rm
 
         monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1605,7 +1605,7 @@ class TestRmImageBasenameDerivation:
             attempted_images.append(self._extract_image_ref(cmd))
             return mocker.MagicMock(returncode=1, stdout="", stderr="not found")
 
-        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
+        mocker.patch("rots.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v1.0.0",), yes=True)
 
@@ -1618,11 +1618,11 @@ class TestRmImageBasenameDerivation:
         self, mocker, monkeypatch, tmp_path, capsys
     ):
         """Default IMAGE (no env var) tries 'onetimesecret:<tag>' as basename."""
-        from ots_containers.commands.image.app import rm
+        from rots.commands.image.app import rm
 
         # No IMAGE env var - default is 'ghcr.io/onetimesecret/onetimesecret'
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1633,7 +1633,7 @@ class TestRmImageBasenameDerivation:
             attempted_images.append(self._extract_image_ref(cmd))
             return mocker.MagicMock(returncode=1, stdout="", stderr="not found")
 
-        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
+        mocker.patch("rots.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v0.23.0",), yes=True)
 
@@ -1643,12 +1643,12 @@ class TestRmImageBasenameDerivation:
 
     def test_rm_with_private_image_adds_fourth_pattern(self, mocker, monkeypatch, tmp_path, capsys):
         """rm with OTS_REGISTRY set includes private registry as fourth pattern."""
-        from ots_containers.commands.image.app import rm
+        from rots.commands.image.app import rm
 
         monkeypatch.setenv("IMAGE", "ghcr.io/onetimesecret/onetimesecret")
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1659,7 +1659,7 @@ class TestRmImageBasenameDerivation:
             attempted_images.append(self._extract_image_ref(cmd))
             return mocker.MagicMock(returncode=1, stdout="", stderr="not found")
 
-        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
+        mocker.patch("rots.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v0.23.0",), yes=True)
 
@@ -1670,11 +1670,11 @@ class TestRmImageBasenameDerivation:
 
     def test_rm_succeeds_on_first_matching_pattern(self, mocker, monkeypatch, tmp_path, capsys):
         """rm should stop trying patterns once one succeeds."""
-        from ots_containers.commands.image.app import rm
+        from rots.commands.image.app import rm
 
         monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
         mocker.patch(
-            "ots_containers.config.Config.db_path",
+            "rots.config.Config.db_path",
             new_callable=mocker.PropertyMock,
             return_value=tmp_path / "deployments.db",
         )
@@ -1686,7 +1686,7 @@ class TestRmImageBasenameDerivation:
             attempted_images.append(self._extract_image_ref(cmd))
             return mocker.MagicMock(returncode=0, stdout="", stderr="")
 
-        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
+        mocker.patch("rots.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v1.0.0",), yes=True)
 
