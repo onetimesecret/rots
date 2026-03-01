@@ -55,36 +55,48 @@ class TestRmCommand:
         captured = capsys.readouterr()
         assert "Aborted" in captured.out
 
-    def test_rm_removes_image_with_yes(self, mocker, capsys):
+    def test_rm_removes_image_with_yes(self, mocker, capsys, tmp_path):
         """Should remove image when --yes is provided."""
         from ots_containers.commands.image.app import rm
 
-        mock_rmi = mocker.patch(
-            "ots_containers.commands.image.app.podman.rmi",
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mock_run = mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(returncode=0, stdout="", stderr=""),
         )
 
         rm(tags=("v0.22.0",), yes=True)
 
-        mock_rmi.assert_called()
+        mock_run.assert_called()
         captured = capsys.readouterr()
         assert "Removed" in captured.out
 
-    def test_rm_tries_multiple_patterns(self, mocker, capsys):
+    def test_rm_tries_multiple_patterns(self, mocker, capsys, tmp_path):
         """Should try multiple image patterns."""
         from ots_containers.commands.image.app import rm
 
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+
         call_count = 0
 
-        def mock_rmi_fail_twice(*_args, **_kwargs):
+        def mock_subprocess_run(*_args, **_kwargs):
             nonlocal call_count
             call_count += 1
             if call_count < 3:
-                raise Exception("Image not found")
-            return mocker.MagicMock()
+                return mocker.MagicMock(returncode=1, stdout="", stderr="not found")
+            return mocker.MagicMock(returncode=0, stdout="", stderr="")
 
         mocker.patch(
-            "ots_containers.commands.image.app.podman.rmi",
-            side_effect=mock_rmi_fail_twice,
+            "ots_containers.podman.subprocess.run",
+            side_effect=mock_subprocess_run,
         )
 
         rm(tags=("v0.22.0",), yes=True)
@@ -93,13 +105,18 @@ class TestRmCommand:
         captured = capsys.readouterr()
         assert "Removed" in captured.out
 
-    def test_rm_reports_not_found(self, mocker, capsys):
+    def test_rm_reports_not_found(self, mocker, capsys, tmp_path):
         """Should report when image not found."""
         from ots_containers.commands.image.app import rm
 
         mocker.patch(
-            "ots_containers.commands.image.app.podman.rmi",
-            side_effect=Exception("not found"),
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(returncode=1, stdout="", stderr="not found"),
         )
 
         rm(tags=("nonexistent",), yes=True)
@@ -107,17 +124,25 @@ class TestRmCommand:
         captured = capsys.readouterr()
         assert "Image not found" in captured.out
 
-    def test_rm_with_force(self, mocker):
+    def test_rm_with_force(self, mocker, tmp_path):
         """Should pass force flag to podman."""
         from ots_containers.commands.image.app import rm
 
-        mock_rmi = mocker.patch("ots_containers.commands.image.app.podman.rmi")
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        mock_run = mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(returncode=0, stdout="", stderr=""),
+        )
 
         rm(tags=("v0.22.0",), force=True, yes=True)
 
         # Check force was passed to at least one call
-        calls = mock_rmi.call_args_list
-        assert any("force" in str(call) for call in calls)
+        calls = mock_run.call_args_list
+        assert any("--force" in str(call) for call in calls)
 
 
 class TestPruneCommand:
@@ -253,6 +278,41 @@ class TestLsCommand:
 
         captured = capsys.readouterr()
         assert "Local images:" in captured.out
+
+    def test_ls_json_filters_by_custom_image_basename(self, mocker, monkeypatch, capsys):
+        """ls --json with custom IMAGE should filter by image basename, not hardcoded name."""
+        import json
+
+        from ots_containers.commands.image.app import ls
+
+        monkeypatch.setenv("IMAGE", "custom.registry.io/myapp")
+
+        # Provide JSON with myapp entries and other entries
+        podman_output = json.dumps(
+            [
+                {"Names": ["custom.registry.io/myapp:v1.0"], "Id": "aaa"},
+                {"Names": ["myapp:v1.0"], "Id": "bbb"},
+                {"Names": ["other-image:latest"], "Id": "ccc"},
+                {"Names": ["docker.io/library/nginx:latest"], "Id": "ddd"},
+            ]
+        )
+        mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout=podman_output),
+        )
+
+        ls(all_tags=False, json_output=True)
+
+        captured = capsys.readouterr()
+        result = json.loads(captured.out)
+        # Should include both entries with "myapp" in Names
+        assert len(result) == 2
+        ids = [img["Id"] for img in result]
+        assert "aaa" in ids  # custom.registry.io/myapp:v1.0
+        assert "bbb" in ids  # myapp:v1.0
+        # Should NOT include other-image or nginx
+        assert "ccc" not in ids
+        assert "ddd" not in ids
 
 
 class TestPullEnvVarResolution:
@@ -816,6 +876,160 @@ class TestRollbackPodmanTag:
         assert "To apply: ots instance redeploy" not in captured.out
 
 
+class TestPullPositionalReference:
+    """Test that pull accepts a full image reference as positional arg.
+
+    The reference is parsed into image and tag components. Named flags
+    (--image, --tag) take precedence over the parsed reference.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+
+    def _mock_externals(self, mocker, tmp_path):
+        mock_run = mocker.patch(
+            "ots_containers.podman.subprocess.run",
+            return_value=mocker.MagicMock(stdout="", returncode=0),
+        )
+        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+        mocker.patch("ots_containers.commands.image.app.db.set_current")
+        mocker.patch(
+            "ots_containers.commands.image.app.db.get_current_image",
+            return_value=None,
+        )
+        mocker.patch(
+            "ots_containers.config.Config.db_path",
+            new_callable=mocker.PropertyMock,
+            return_value=tmp_path / "deployments.db",
+        )
+        return mock_run
+
+    def test_pull_full_reference(self, mocker, tmp_path):
+        """Full reference like registry.io/org/image:tag should work."""
+        from ots_containers.commands.image.app import pull
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        pull(reference="registry.example.com/org/image:v1.0")
+
+        cmd = mock_run.call_args[0][0]
+        full_ref = " ".join(cmd)
+        assert "registry.example.com/org/image:v1.0" in full_ref
+
+    def test_pull_reference_without_tag_falls_back_to_tag_flag(self, mocker, tmp_path):
+        """Reference without colon should use --tag for the tag portion."""
+        from ots_containers.commands.image.app import pull
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        pull(reference="registry.example.com/org/image", tag="v2.0")
+
+        cmd = mock_run.call_args[0][0]
+        full_ref = " ".join(cmd)
+        assert "registry.example.com/org/image:v2.0" in full_ref
+
+    def test_pull_reference_without_tag_falls_back_to_env(self, mocker, monkeypatch, tmp_path):
+        """Reference without tag and no --tag flag falls back to TAG env var."""
+        from ots_containers.commands.image.app import pull
+
+        monkeypatch.setenv("TAG", "env-tag")
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        pull(reference="registry.example.com/org/image")
+
+        cmd = mock_run.call_args[0][0]
+        full_ref = " ".join(cmd)
+        assert "registry.example.com/org/image:env-tag" in full_ref
+
+    def test_pull_tag_flag_overrides_reference_tag(self, mocker, tmp_path):
+        """--tag flag should override the tag parsed from the reference."""
+        from ots_containers.commands.image.app import pull
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        pull(reference="registry.example.com/org/image:ref-tag", tag="override-tag")
+
+        cmd = mock_run.call_args[0][0]
+        full_ref = " ".join(cmd)
+        assert "registry.example.com/org/image:override-tag" in full_ref
+        assert "ref-tag" not in full_ref
+
+    def test_pull_image_flag_overrides_reference_image(self, mocker, tmp_path):
+        """--image flag should override the image parsed from the reference."""
+        from ots_containers.commands.image.app import pull
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        pull(reference="registry.example.com/org/image:v1.0", image="other.io/myapp")
+
+        cmd = mock_run.call_args[0][0]
+        full_ref = " ".join(cmd)
+        assert "other.io/myapp:v1.0" in full_ref
+        assert "registry.example.com" not in full_ref
+
+    def test_pull_both_flags_override_reference(self, mocker, tmp_path):
+        """Both --image and --tag flags should fully override the reference."""
+        from ots_containers.commands.image.app import pull
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        pull(
+            reference="registry.example.com/org/image:ref-tag",
+            image="override.io/app",
+            tag="override-tag",
+        )
+
+        cmd = mock_run.call_args[0][0]
+        full_ref = " ".join(cmd)
+        assert "override.io/app:override-tag" in full_ref
+
+    def test_pull_reference_with_current_flag(self, mocker, tmp_path, capsys):
+        """Full reference with --current should set the alias."""
+        from ots_containers.commands.image.app import pull
+
+        mock_run = self._mock_externals(mocker, tmp_path)
+        mock_set_current = mocker.patch(
+            "ots_containers.commands.image.app.db.set_current",
+            return_value=None,
+        )
+
+        pull(reference="registry.example.com/org/image:v1.0", set_as_current=True)
+
+        # Should have called pull + tag :current
+        assert mock_run.call_count == 2
+        mock_set_current.assert_called_once()
+
+    def test_pull_no_reference_no_tag_rejects_sentinel(self, mocker, monkeypatch, tmp_path, capsys):
+        """No reference, no --tag, empty TAG env var falls back to
+        @current sentinel which pull rejects."""
+        from ots_containers.commands.image.app import pull
+
+        monkeypatch.setenv("TAG", "")
+        self._mock_externals(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            pull()
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "alias" in captured.out.lower()
+
+    def test_pull_reference_with_trailing_colon(self, mocker, monkeypatch, tmp_path):
+        """Reference ending with colon should treat it as image-only (no tag)."""
+        from ots_containers.commands.image.app import pull
+
+        monkeypatch.setenv("TAG", "fallback")
+        mock_run = self._mock_externals(mocker, tmp_path)
+
+        pull(reference="registry.example.com/org/image:")
+
+        cmd = mock_run.call_args[0][0]
+        full_ref = " ".join(cmd)
+        assert "registry.example.com/org/image:fallback" in full_ref
+
+
 class TestPullCurrentPodmanTag:
     """Test that pull --current tags the image in podman."""
 
@@ -1187,10 +1401,15 @@ class TestPushEnvVarResolution:
         assert "docker.io/myorg/myapp:v3.0.0" in tag_cmd
 
     def test_push_missing_tag_exits_with_error(self, mocker, monkeypatch, tmp_path, capsys):
-        """Scenario: push with no --tag and TAG env var set to empty exits with code 1."""
+        """Scenario: push with no --tag and TAG env var unset falls back to @current sentinel.
+
+        The @current sentinel is not a valid OCI tag, so the podman tag
+        operation will fail.  Empty TAG env var is treated as unset,
+        falling back to DEFAULT_TAG (@current).
+        """
         from ots_containers.commands.image.app import push
 
-        # Setting TAG to empty string causes cfg.tag to return "" (falsy)
+        # Empty TAG falls back to @current sentinel (not a real OCI tag)
         monkeypatch.setenv("TAG", "")
         monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
         mocker.patch(
@@ -1199,12 +1418,18 @@ class TestPushEnvVarResolution:
             return_value=tmp_path / "deployments.db",
         )
 
+        # Mock subprocess.run to simulate podman tag failure with @current
+        mocker.patch(
+            "subprocess.run",
+            side_effect=Exception("failed (exit 125): podman tag"),
+        )
+
         with pytest.raises(SystemExit) as exc_info:
             push()
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        assert "Tag required" in captured.out
+        assert "Failed to tag image" in captured.out
 
 
 class TestListRemoteImageResolution:
@@ -1349,6 +1574,18 @@ class TestRmImageBasenameDerivation:
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
 
+    def _extract_image_ref(self, cmd):
+        """Extract the image reference from a podman rm command list.
+
+        Command is like ["podman", "image", "rm", image_ref] or
+        ["podman", "image", "rm", "--force", image_ref].
+        The image ref is the last non-flag element.
+        """
+        for part in reversed(cmd):
+            if not part.startswith("--"):
+                return part
+        return None
+
     def test_rm_custom_image_env_var_tries_basename_patterns(
         self, mocker, monkeypatch, tmp_path, capsys
     ):
@@ -1364,11 +1601,11 @@ class TestRmImageBasenameDerivation:
 
         attempted_images = []
 
-        def mock_rmi(*args, **kwargs):
-            attempted_images.extend(args)
-            raise Exception("not found")
+        def mock_subprocess_run(cmd, **kwargs):
+            attempted_images.append(self._extract_image_ref(cmd))
+            return mocker.MagicMock(returncode=1, stdout="", stderr="not found")
 
-        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v1.0.0",), yes=True)
 
@@ -1392,11 +1629,11 @@ class TestRmImageBasenameDerivation:
 
         attempted_images = []
 
-        def mock_rmi(*args, **kwargs):
-            attempted_images.extend(args)
-            raise Exception("not found")
+        def mock_subprocess_run(cmd, **kwargs):
+            attempted_images.append(self._extract_image_ref(cmd))
+            return mocker.MagicMock(returncode=1, stdout="", stderr="not found")
 
-        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v0.23.0",), yes=True)
 
@@ -1418,11 +1655,11 @@ class TestRmImageBasenameDerivation:
 
         attempted_images = []
 
-        def mock_rmi(*args, **kwargs):
-            attempted_images.extend(args)
-            raise Exception("not found")
+        def mock_subprocess_run(cmd, **kwargs):
+            attempted_images.append(self._extract_image_ref(cmd))
+            return mocker.MagicMock(returncode=1, stdout="", stderr="not found")
 
-        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v0.23.0",), yes=True)
 
@@ -1444,11 +1681,12 @@ class TestRmImageBasenameDerivation:
 
         attempted_images = []
 
-        def mock_rmi(*args, **kwargs):
+        def mock_subprocess_run(cmd, **kwargs):
             # First call (myapp:v1.0.0) succeeds
-            attempted_images.extend(args)
+            attempted_images.append(self._extract_image_ref(cmd))
+            return mocker.MagicMock(returncode=0, stdout="", stderr="")
 
-        mocker.patch("ots_containers.commands.image.app.podman.rmi", side_effect=mock_rmi)
+        mocker.patch("ots_containers.podman.subprocess.run", side_effect=mock_subprocess_run)
 
         rm(tags=("v1.0.0",), yes=True)
 

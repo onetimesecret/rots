@@ -1,6 +1,8 @@
 # tests/test_environment_file.py
 """Tests for environment_file module - env file parsing and secret management."""
 
+from unittest.mock import MagicMock
+
 
 class TestEnvVarToSecretName:
     """Test conversion between env var names and podman secret names."""
@@ -467,3 +469,217 @@ class TestGetSecretsFromEnvFile:
         assert len(secrets) == 1
         assert secrets[0].env_var_name == "API_KEY"
         assert env_file.read_text() == original  # File unchanged
+
+
+# =============================================================================
+# Remote executor tests
+# =============================================================================
+
+
+def _make_ssh_executor(mocker):
+    """Create a mock SSHExecutor that _is_remote() recognises as remote."""
+    mock_ex = mocker.MagicMock()
+    mocker.patch(
+        "ots_containers.environment_file._is_remote",
+        side_effect=lambda ex: ex is mock_ex,
+    )
+    return mock_ex
+
+
+def _make_remote_result(stdout="", returncode=0):
+    """Build a mock Result for executor.run()."""
+    result = MagicMock()
+    result.ok = returncode == 0
+    result.stdout = stdout
+    result.stderr = ""
+    result.returncode = returncode
+    return result
+
+
+class TestEnvFileParseRemote:
+    """Test EnvFile.parse() with remote executor."""
+
+    def test_parse_reads_file_via_executor(self, mocker):
+        from ots_containers.environment_file import EnvFile
+
+        mock_ex = _make_ssh_executor(mocker)
+        mock_ex.run.side_effect = [
+            _make_remote_result(returncode=0),  # test -f
+            _make_remote_result(stdout="HOST=example.com\nPORT=7043\n"),  # cat
+        ]
+
+        env_file = EnvFile.parse("/etc/onetimesecret/.env", executor=mock_ex)
+
+        assert mock_ex.run.call_count == 2
+        assert mock_ex.run.call_args_list[0][0][0] == ["test", "-f", "/etc/onetimesecret/.env"]
+        assert mock_ex.run.call_args_list[1][0][0] == ["cat", "/etc/onetimesecret/.env"]
+        assert env_file.get("HOST") == "example.com"
+        assert env_file.get("PORT") == "7043"
+
+    def test_parse_returns_empty_when_file_missing(self, mocker):
+        from ots_containers.environment_file import EnvFile
+
+        mock_ex = _make_ssh_executor(mocker)
+        mock_ex.run.return_value = _make_remote_result(returncode=1)  # test -f fails
+
+        env_file = EnvFile.parse("/nonexistent", executor=mock_ex)
+
+        assert len(env_file.entries) == 0
+        mock_ex.run.assert_called_once()
+
+
+class TestEnvFileWriteRemote:
+    """Test EnvFile.write() with remote executor."""
+
+    def test_write_uses_tee_via_executor(self, mocker):
+        from ots_containers.environment_file import EnvEntry, EnvFile
+
+        mock_ex = _make_ssh_executor(mocker)
+        mock_ex.run.return_value = _make_remote_result()
+
+        env_file = EnvFile(
+            path="/etc/onetimesecret/.env",
+            entries=[
+                EnvEntry(key="HOST", value="example.com", raw_line="HOST=example.com"),
+            ],
+            _variables={"HOST": "example.com"},
+        )
+        env_file.write(executor=mock_ex)
+
+        mock_ex.run.assert_called_once()
+        call_args = mock_ex.run.call_args
+        assert call_args[0][0] == ["tee", "/etc/onetimesecret/.env"]
+        assert call_args[1]["input"] == "HOST=example.com\n"
+
+
+class TestSecretExistsRemote:
+    """Test secret_exists() with remote executor."""
+
+    def test_secret_exists_remote_true(self, mocker):
+        from ots_containers.environment_file import secret_exists
+
+        mock_ex = _make_ssh_executor(mocker)
+        mock_ex.run.return_value = _make_remote_result(returncode=0)
+
+        assert secret_exists("ots_api_key", executor=mock_ex) is True
+        mock_ex.run.assert_called_once_with(
+            ["podman", "secret", "exists", "ots_api_key"], timeout=10
+        )
+
+    def test_secret_exists_remote_false(self, mocker):
+        from ots_containers.environment_file import secret_exists
+
+        mock_ex = _make_ssh_executor(mocker)
+        mock_ex.run.return_value = _make_remote_result(returncode=1)
+
+        assert secret_exists("ots_missing", executor=mock_ex) is False
+
+
+class TestEnsurePodmanSecretRemote:
+    """Test ensure_podman_secret() with remote executor."""
+
+    def test_creates_new_secret_remotely(self, mocker):
+        from ots_containers.environment_file import ensure_podman_secret
+
+        mock_ex = _make_ssh_executor(mocker)
+        mocker.patch("ots_containers.systemd.require_podman")
+        mock_ex.run.side_effect = [
+            _make_remote_result(returncode=1),  # secret doesn't exist
+            _make_remote_result(returncode=0),  # secret create
+        ]
+
+        result = ensure_podman_secret("ots_key", "secret_val", executor=mock_ex)
+
+        assert result == "created"
+        assert mock_ex.run.call_count == 2
+        # First call: podman secret exists (timeout=15)
+        exists_call = mock_ex.run.call_args_list[0]
+        assert exists_call[1]["timeout"] == 15, "secret exists should have timeout=15"
+        # Second call is the create (timeout=30)
+        create_call = mock_ex.run.call_args_list[1]
+        assert create_call[0][0] == ["podman", "secret", "create", "ots_key", "-"]
+        assert create_call[1]["input"] == "secret_val"
+        assert create_call[1]["check"] is True
+        assert create_call[1]["timeout"] == 30, "secret create should have timeout=30"
+
+    def test_replaces_existing_secret_remotely(self, mocker):
+        from ots_containers.environment_file import ensure_podman_secret
+
+        mock_ex = _make_ssh_executor(mocker)
+        mocker.patch("ots_containers.systemd.require_podman")
+        mock_ex.run.side_effect = [
+            _make_remote_result(returncode=0),  # secret exists
+            _make_remote_result(returncode=0),  # secret rm
+            _make_remote_result(returncode=0),  # secret create
+        ]
+
+        result = ensure_podman_secret("ots_key", "new_val", executor=mock_ex)
+
+        assert result == "replaced"
+        assert mock_ex.run.call_count == 3
+        # Verify timeout kwargs on each call
+        exists_call = mock_ex.run.call_args_list[0]
+        assert exists_call[1]["timeout"] == 15, "secret exists should have timeout=15"
+        rm_call = mock_ex.run.call_args_list[1]
+        assert rm_call[0][0] == ["podman", "secret", "rm", "ots_key"]
+        assert rm_call[1]["timeout"] == 15, "secret rm should have timeout=15"
+        create_call = mock_ex.run.call_args_list[2]
+        assert create_call[1]["timeout"] == 30, "secret create should have timeout=30"
+
+
+class TestGetSecretsFromEnvFileRemote:
+    """Test get_secrets_from_env_file() with remote executor."""
+
+    def test_reads_remote_env_file(self, mocker):
+        from ots_containers.environment_file import get_secrets_from_env_file
+
+        mock_ex = _make_ssh_executor(mocker)
+        mock_ex.run.side_effect = [
+            _make_remote_result(returncode=0),  # test -f
+            _make_remote_result(stdout="SECRET_VARIABLE_NAMES=API_KEY\nAPI_KEY=secret\n"),  # cat
+        ]
+
+        secrets = get_secrets_from_env_file("/remote/.env", executor=mock_ex)
+
+        assert len(secrets) == 1
+        assert secrets[0].env_var_name == "API_KEY"
+
+
+class TestProcessEnvFileRemote:
+    """Test process_env_file() threads executor correctly."""
+
+    def test_threads_executor_to_ensure_and_write(self, mocker):
+        from ots_containers.environment_file import EnvFile, process_env_file
+
+        mock_ex = _make_ssh_executor(mocker)
+        # Mock the two downstream functions to verify executor threading
+        mock_ensure = mocker.patch(
+            "ots_containers.environment_file.ensure_podman_secret",
+            return_value="created",
+        )
+        mock_write = mocker.patch.object(EnvFile, "write")
+
+        env_file = EnvFile.parse(  # local parse for test setup
+            "/dev/null"
+        )
+        env_file.entries = []
+        env_file._variables = {
+            "SECRET_VARIABLE_NAMES": "API_KEY",
+            "API_KEY": "secret_value",
+        }
+        # Add entries so extract_secrets finds them
+        from ots_containers.environment_file import EnvEntry
+
+        env_file.entries = [
+            EnvEntry(
+                key="SECRET_VARIABLE_NAMES",
+                value="API_KEY",
+                raw_line="SECRET_VARIABLE_NAMES=API_KEY",
+            ),
+            EnvEntry(key="API_KEY", value="secret_value", raw_line="API_KEY=secret_value"),
+        ]
+
+        process_env_file(env_file, executor=mock_ex)
+
+        mock_ensure.assert_called_once_with("ots_api_key", "secret_value", executor=mock_ex)
+        mock_write.assert_called_once_with(executor=mock_ex)

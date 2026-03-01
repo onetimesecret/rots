@@ -119,7 +119,9 @@ class TestAssetsSync:
             app(["assets", "sync"])
 
         assert exc_info.value.code == 0
-        mock_update.assert_called_once_with(mock_config, create_volume=False)
+        from unittest.mock import ANY
+
+        mock_update.assert_called_once_with(mock_config, create_volume=False, executor=ANY)
 
 
 class TestDefaultCommand:
@@ -171,13 +173,23 @@ class TestPsCommand:
     """Test the ps command."""
 
     def test_ps_calls_podman_ps(self, mocker):
-        """ps command should invoke podman.ps with onetime filter."""
+        """ps command should invoke Podman(executor=ex).ps with onetime filter."""
+        from unittest.mock import MagicMock
+
         from ots_containers.cli import ps
 
-        mock_ps = mocker.patch("ots_containers.cli.podman.ps")
+        mocker.patch("ots_containers.config.Config.__init__", return_value=None)
+        mocker.patch("ots_containers.config.Config.get_executor", return_value=MagicMock())
+
+        mock_podman_cls = mocker.patch("ots_containers.podman.Podman")
+        mock_p = MagicMock()
+        mock_podman_cls.return_value = mock_p
+
         ps()
-        mock_ps.assert_called_once()
-        call_kwargs = mock_ps.call_args
+
+        mock_podman_cls.assert_called_once()
+        mock_p.ps.assert_called_once()
+        call_kwargs = mock_p.ps.call_args
         assert "onetime" in str(call_kwargs)
 
     def test_ps_help(self, capsys):
@@ -252,14 +264,19 @@ class TestDoctorCommand:
     """
 
     def _make_cfg_mock(self, mocker, tmp_path):
-        """Config mock with real tmp_path directories."""
+        """Config mock with real tmp_path directories and LocalExecutor."""
+        from ots_shared.ssh import LocalExecutor
+
         cfg_mock = mocker.MagicMock()
         cfg_mock.config_dir = tmp_path / "onetimesecret"
         cfg_mock.config_dir.mkdir()
+        cfg_mock.config_yaml = cfg_mock.config_dir / "config.yaml"
+        cfg_mock.config_yaml.touch()
         cfg_mock.var_dir = tmp_path / "var"
         cfg_mock.var_dir.mkdir()
         cfg_mock.web_template_path = tmp_path / "onetime-web@.container"
         cfg_mock.web_template_path.touch()
+        cfg_mock.get_executor.return_value = LocalExecutor()
         return cfg_mock
 
     def test_doctor_all_pass(self, mocker, tmp_path, capsys):
@@ -280,9 +297,13 @@ class TestDoctorCommand:
         mocker.patch("ots_containers.environment_file.secret_exists", return_value=True)
 
         running_result = mocker.MagicMock()
+        running_result.returncode = 0
         running_result.stdout = "onetime-web@7043.service loaded active running\n"
+        running_result.stderr = ""
         caddy_result = mocker.MagicMock()
+        caddy_result.returncode = 0
         caddy_result.stdout = "active\n"
+        caddy_result.stderr = ""
         mocker.patch("subprocess.run", side_effect=[running_result, caddy_result])
 
         from ots_containers.cli import doctor
@@ -408,7 +429,14 @@ class TestDoctorCommand:
         assert exc_info.value.code == 0
 
     def test_doctor_systemctl_query_exception(self, mocker, tmp_path, capsys):
-        """Exception during systemctl query is handled gracefully."""
+        """Timeout during systemctl query is handled gracefully.
+
+        LocalExecutor.run catches subprocess.TimeoutExpired and returns a
+        Result with returncode=124 and ok=False.  doctor() treats non-ok
+        results as "systemctl query failed".
+        """
+        import subprocess
+
         mocker.patch("shutil.which", return_value="/usr/bin/systemctl")
         mocker.patch("os.access", return_value=True)
 
@@ -424,7 +452,11 @@ class TestDoctorCommand:
         mocker.patch("ots_containers.environment_file.EnvFile.parse", return_value=parsed_mock)
         mocker.patch("ots_containers.environment_file.secret_exists", return_value=True)
 
-        mocker.patch("subprocess.run", side_effect=TimeoutError("timeout"))
+        # subprocess.TimeoutExpired is caught by LocalExecutor.run → Result(returncode=124)
+        mocker.patch(
+            "subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="systemctl", timeout=10),
+        )
 
         from ots_containers.cli import doctor
 

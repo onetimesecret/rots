@@ -1,7 +1,11 @@
 # tests/test_db.py
 """Tests for deployment timeline database."""
 
+import json
 import sqlite3
+from unittest.mock import MagicMock
+
+import pytest
 
 from ots_containers import db
 
@@ -1103,3 +1107,991 @@ class TestServiceActions:
         # 'stop' has a later timestamp and should come first
         assert actions[0].action == "stop"
         assert actions[1].action == "start"
+
+
+def _make_ssh_executor(mocker):
+    """Create a mock SSHExecutor that _is_remote() recognises as remote."""
+    mock_ex = mocker.MagicMock()
+    # Patch _is_remote to return True for this executor
+    mocker.patch("ots_containers.db._is_remote", side_effect=lambda ex: ex is mock_ex)
+    return mock_ex
+
+
+def _make_remote_result(stdout="", returncode=0):
+    """Build a mock Result for executor.run()."""
+    result = MagicMock()
+    result.ok = returncode == 0
+    result.stdout = stdout
+    result.stderr = ""
+    result.returncode = returncode
+    return result
+
+
+class TestRollbackRemote:
+    """Test db.rollback() with a remote executor."""
+
+    def test_rollback_remote_queries_via_executor(self, mocker, tmp_path):
+        """rollback() with remote executor should use _remote_query for the timeline query."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        # The timeline query returns two distinct deployments
+        timeline_rows = json.dumps(
+            [
+                {"image": "img", "tag": "v2", "last_id": 2},
+                {"image": "img", "tag": "v1", "last_id": 1},
+            ]
+        )
+        # get_current_image -> get_alias -> _remote_query
+        current_alias = json.dumps(
+            [
+                {"alias": "CURRENT", "image": "img", "tag": "v2", "set_at": "2026-01-01"},
+            ]
+        )
+
+        # Track calls: first call is the timeline query, subsequent are from
+        # get_current_image, set_alias (x2), record_deployment
+        call_count = {"n": 0}
+        query_results = [timeline_rows, current_alias]
+
+        def mock_run(cmd, **kwargs):
+            call_count["n"] += 1
+            # SELECT queries use -json flag
+            if "-json" in cmd:
+                idx = min(call_count["n"] - 1, len(query_results) - 1)
+                return _make_remote_result(stdout=query_results[idx])
+            # Write queries (INSERT/UPDATE)
+            return _make_remote_result()
+
+        mock_ex.run.side_effect = mock_run
+
+        result = db.rollback(db_path, executor=mock_ex)
+
+        assert result == ("img", "v1")
+        # Verify executor.run was called (timeline query + alias reads + alias writes + record)
+        assert mock_ex.run.call_count >= 3
+
+    def test_rollback_remote_returns_none_when_insufficient_history(self, mocker, tmp_path):
+        """rollback() with remote executor returns None when < 2 distinct deployments."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        # Only one deployment in timeline
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps([{"image": "img", "tag": "v1", "last_id": 1}])
+        )
+
+        result = db.rollback(db_path, executor=mock_ex)
+
+        assert result is None
+
+    def test_rollback_local_still_works(self, tmp_path):
+        """rollback() without executor should still work via local sqlite3."""
+        db_path = tmp_path / "test.db"
+
+        db.record_deployment(db_path, "img", "v1", "deploy")
+        db.set_alias(db_path, "CURRENT", "img", "v1")
+        db.record_deployment(db_path, "img", "v2", "deploy")
+        db.set_alias(db_path, "CURRENT", "img", "v2")
+
+        result = db.rollback(db_path)
+
+        assert result == ("img", "v1")
+
+
+class TestGetPreviousTagsRemote:
+    """Test db.get_previous_tags() with a remote executor."""
+
+    def test_get_previous_tags_remote_queries_via_executor(self, mocker, tmp_path):
+        """get_previous_tags() with remote executor should use _remote_query."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {"image": "img", "tag": "v2", "last_used": "2026-01-02 00:00:00"},
+                    {"image": "img", "tag": "v1", "last_used": "2026-01-01 00:00:00"},
+                ]
+            )
+        )
+
+        tags = db.get_previous_tags(db_path, executor=mock_ex)
+
+        assert len(tags) == 2
+        assert tags[0] == ("img", "v2", "2026-01-02 00:00:00")
+        assert tags[1] == ("img", "v1", "2026-01-01 00:00:00")
+        # Verify the sqlite3 -json command was used
+        call_args = mock_ex.run.call_args[0][0]
+        assert "sqlite3" in call_args
+        assert "-json" in call_args
+
+    def test_get_previous_tags_remote_empty_result(self, mocker, tmp_path):
+        """get_previous_tags() with remote executor returns empty list when no rows."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        tags = db.get_previous_tags(db_path, executor=mock_ex)
+
+        assert tags == []
+
+    def test_get_previous_tags_remote_respects_limit(self, mocker, tmp_path):
+        """get_previous_tags() with remote executor should pass limit in SQL."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(stdout="[]")
+
+        db.get_previous_tags(db_path, limit=3, executor=mock_ex)
+
+        # The LIMIT clause should contain 3
+        call_args = mock_ex.run.call_args[0][0]
+        sql = call_args[-1]  # Last arg is the SQL string
+        assert "LIMIT 3" in sql
+
+    def test_get_previous_tags_local_still_works(self, tmp_path):
+        """get_previous_tags() without executor should still work via local sqlite3."""
+        db_path = tmp_path / "test.db"
+        db.record_deployment(db_path, "img", "v1", "deploy")
+        db.record_deployment(db_path, "img", "v2", "deploy")
+
+        tags = db.get_previous_tags(db_path)
+
+        assert len(tags) == 2
+        tag_values = [t[1] for t in tags]
+        assert "v1" in tag_values
+        assert "v2" in tag_values
+
+
+class TestRecordDeploymentRemote:
+    """Test db.record_deployment() with a remote executor."""
+
+    def test_record_deployment_remote_uses_remote_execute(self, mocker, tmp_path):
+        """record_deployment() with remote executor should call _remote_execute."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result()
+
+        result = db.record_deployment(
+            db_path, "img", "v1.0.0", "deploy", port=7043, executor=mock_ex
+        )
+
+        # Remote record_deployment returns 0 (no lastrowid from CLI)
+        assert result == 0
+        # Verify sqlite3 was called (INSERT)
+        mock_ex.run.assert_called_once()
+        call_args = mock_ex.run.call_args[0][0]
+        assert "sqlite3" in call_args
+        assert "INSERT" in call_args[-1]
+
+    def test_record_deployment_remote_includes_all_fields(self, mocker, tmp_path):
+        """record_deployment() remote should pass all fields in the SQL."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result()
+
+        db.record_deployment(
+            db_path,
+            "ghcr.io/org/app",
+            "v2.0.0",
+            "redeploy",
+            port=8080,
+            success=False,
+            notes="test note",
+            executor=mock_ex,
+        )
+
+        call_args = mock_ex.run.call_args[0][0]
+        sql = call_args[-1]
+        assert "ghcr.io/org/app" in sql
+        assert "v2.0.0" in sql
+        assert "redeploy" in sql
+        assert "8080" in sql
+        assert "test note" in sql
+
+    def test_record_deployment_local_still_works(self, tmp_path):
+        """record_deployment() without executor should still work locally."""
+        db_path = tmp_path / "test.db"
+
+        deploy_id = db.record_deployment(db_path, "img", "v1", "deploy")
+
+        assert deploy_id == 1
+        deployments = db.get_deployments(db_path)
+        assert len(deployments) == 1
+
+
+class TestGetDeploymentsRemote:
+    """Test db.get_deployments() with a remote executor."""
+
+    def test_get_deployments_remote_queries_via_executor(self, mocker, tmp_path):
+        """get_deployments() with remote executor should use _remote_query."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": 1,
+                        "timestamp": "2026-01-01 12:00:00",
+                        "port": 7043,
+                        "image": "img",
+                        "tag": "v1",
+                        "action": "deploy",
+                        "success": 1,
+                        "notes": None,
+                    },
+                ]
+            )
+        )
+
+        deployments = db.get_deployments(db_path, executor=mock_ex)
+
+        assert len(deployments) == 1
+        assert deployments[0].image == "img"
+        assert deployments[0].tag == "v1"
+        assert deployments[0].port == 7043
+        assert deployments[0].action == "deploy"
+        # Verify sqlite3 -json was used
+        call_args = mock_ex.run.call_args[0][0]
+        assert "sqlite3" in call_args
+        assert "-json" in call_args
+
+    def test_get_deployments_remote_empty_result(self, mocker, tmp_path):
+        """get_deployments() with remote executor returns empty list when no rows."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        deployments = db.get_deployments(db_path, executor=mock_ex)
+
+        assert deployments == []
+
+    def test_get_deployments_remote_respects_limit(self, mocker, tmp_path):
+        """get_deployments() with remote executor should pass limit in SQL."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(stdout="[]")
+
+        db.get_deployments(db_path, limit=5, executor=mock_ex)
+
+        call_args = mock_ex.run.call_args[0][0]
+        sql = call_args[-1]
+        assert "LIMIT 5" in sql
+
+    def test_get_deployments_remote_filters_by_port(self, mocker, tmp_path):
+        """get_deployments() with remote executor should filter by port in SQL."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(stdout="[]")
+
+        db.get_deployments(db_path, port=7043, executor=mock_ex)
+
+        call_args = mock_ex.run.call_args[0][0]
+        sql = call_args[-1]
+        assert "port = 7043" in sql
+
+
+class TestSetAliasRemote:
+    """Test db.set_alias() with a remote executor."""
+
+    def test_set_alias_remote_uses_remote_execute(self, mocker, tmp_path):
+        """set_alias() with remote executor should call _remote_execute."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result()
+
+        db.set_alias(db_path, "CURRENT", "img", "v1.0.0", executor=mock_ex)
+
+        mock_ex.run.assert_called_once()
+        call_args = mock_ex.run.call_args[0][0]
+        assert "sqlite3" in call_args
+        sql = call_args[-1]
+        assert "INSERT" in sql
+        assert "CURRENT" in sql
+
+    def test_set_alias_remote_normalizes_to_uppercase(self, mocker, tmp_path):
+        """set_alias() with remote executor should uppercase the alias."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result()
+
+        db.set_alias(db_path, "current", "img", "v1", executor=mock_ex)
+
+        call_args = mock_ex.run.call_args[0][0]
+        sql = call_args[-1]
+        assert "'CURRENT'" in sql
+
+
+class TestGetAliasRemote:
+    """Test db.get_alias() with a remote executor."""
+
+    def test_get_alias_remote_returns_alias(self, mocker, tmp_path):
+        """get_alias() with remote executor should return an ImageAlias."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {
+                        "alias": "CURRENT",
+                        "image": "img",
+                        "tag": "v2.0.0",
+                        "set_at": "2026-01-15 10:00:00",
+                    }
+                ]
+            )
+        )
+
+        alias = db.get_alias(db_path, "CURRENT", executor=mock_ex)
+
+        assert alias is not None
+        assert isinstance(alias, db.ImageAlias)
+        assert alias.alias == "CURRENT"
+        assert alias.image == "img"
+        assert alias.tag == "v2.0.0"
+
+    def test_get_alias_remote_returns_none_when_not_found(self, mocker, tmp_path):
+        """get_alias() with remote executor returns None when alias not set."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        alias = db.get_alias(db_path, "NONEXISTENT", executor=mock_ex)
+
+        assert alias is None
+
+
+class TestGetAllAliasesRemote:
+    """Test db.get_all_aliases() with a remote executor."""
+
+    def test_get_all_aliases_remote_returns_list(self, mocker, tmp_path):
+        """get_all_aliases() with remote executor should return a list of ImageAlias."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {"alias": "CURRENT", "image": "img", "tag": "v2", "set_at": "2026-01-15"},
+                    {"alias": "ROLLBACK", "image": "img", "tag": "v1", "set_at": "2026-01-14"},
+                ]
+            )
+        )
+
+        aliases = db.get_all_aliases(db_path, executor=mock_ex)
+
+        assert len(aliases) == 2
+        assert all(isinstance(a, db.ImageAlias) for a in aliases)
+
+    def test_get_all_aliases_remote_empty(self, mocker, tmp_path):
+        """get_all_aliases() with remote executor returns empty list when no aliases."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        aliases = db.get_all_aliases(db_path, executor=mock_ex)
+
+        assert aliases == []
+
+
+class TestSetCurrentRemote:
+    """Test db.set_current() with a remote executor."""
+
+    def test_set_current_remote_first_time(self, mocker, tmp_path):
+        """set_current() with remote executor should set CURRENT on first call."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        # First call: get_current_image -> get_alias -> _remote_query returns empty
+        # Then: set_alias -> _remote_execute, record_deployment -> _remote_execute
+        call_count = {"n": 0}
+
+        def mock_run(cmd, **kwargs):
+            call_count["n"] += 1
+            if "-json" in cmd:
+                # get_alias queries return empty (no previous CURRENT)
+                return _make_remote_result(stdout="")
+            # Write operations succeed
+            return _make_remote_result()
+
+        mock_ex.run.side_effect = mock_run
+
+        previous = db.set_current(db_path, "img", "v1.0.0", executor=mock_ex)
+
+        assert previous is None
+        # Should have made multiple calls: get_alias + set_alias + record_deployment
+        assert mock_ex.run.call_count >= 2
+
+    def test_set_current_remote_moves_previous_to_rollback(self, mocker, tmp_path):
+        """set_current() with remote executor should move previous CURRENT to ROLLBACK."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        call_count = {"n": 0}
+
+        def mock_run(cmd, **kwargs):
+            call_count["n"] += 1
+            if "-json" in cmd:
+                # get_alias returns existing CURRENT
+                return _make_remote_result(
+                    stdout=json.dumps(
+                        [
+                            {
+                                "alias": "CURRENT",
+                                "image": "img",
+                                "tag": "v1.0.0",
+                                "set_at": "2026-01-01",
+                            }
+                        ]
+                    )
+                )
+            return _make_remote_result()
+
+        mock_ex.run.side_effect = mock_run
+
+        previous = db.set_current(db_path, "img", "v2.0.0", executor=mock_ex)
+
+        assert previous == "v1.0.0"
+
+
+class TestGetCurrentImageRemote:
+    """Test db.get_current_image() with a remote executor."""
+
+    def test_get_current_image_remote_returns_tuple(self, mocker, tmp_path):
+        """get_current_image() with remote executor should return (image, tag)."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {
+                        "alias": "CURRENT",
+                        "image": "ghcr.io/org/app",
+                        "tag": "v3.0.0",
+                        "set_at": "2026-01-20",
+                    }
+                ]
+            )
+        )
+
+        result = db.get_current_image(db_path, executor=mock_ex)
+
+        assert result == ("ghcr.io/org/app", "v3.0.0")
+
+    def test_get_current_image_remote_returns_none_when_not_set(self, mocker, tmp_path):
+        """get_current_image() with remote executor returns None when CURRENT not set."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        result = db.get_current_image(db_path, executor=mock_ex)
+
+        assert result is None
+
+
+class TestGetRollbackImageRemote:
+    """Test db.get_rollback_image() with a remote executor."""
+
+    def test_get_rollback_image_remote_returns_tuple(self, mocker, tmp_path):
+        """get_rollback_image() with remote executor should return (image, tag)."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {
+                        "alias": "ROLLBACK",
+                        "image": "ghcr.io/org/app",
+                        "tag": "v2.0.0",
+                        "set_at": "2026-01-19",
+                    }
+                ]
+            )
+        )
+
+        result = db.get_rollback_image(db_path, executor=mock_ex)
+
+        assert result == ("ghcr.io/org/app", "v2.0.0")
+
+    def test_get_rollback_image_remote_returns_none_when_not_set(self, mocker, tmp_path):
+        """get_rollback_image() with remote executor returns None when ROLLBACK not set."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        result = db.get_rollback_image(db_path, executor=mock_ex)
+
+        assert result is None
+
+
+class TestInitDbRemote:
+    """Test db.init_db() with a remote executor."""
+
+    def test_init_db_remote_sends_schema(self, mocker, tmp_path):
+        """init_db() with remote executor should send full SCHEMA via sqlite3."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result()
+
+        db.init_db(db_path, executor=mock_ex)
+
+        mock_ex.run.assert_called_once()
+        call_args = mock_ex.run.call_args[0][0]
+        assert "sqlite3" in call_args
+        # Should contain the schema SQL
+        assert "CREATE TABLE" in call_args[-1]
+
+
+class TestGetConnectionGuard:
+    """Test that get_connection raises on remote executor."""
+
+    def test_get_connection_raises_on_remote_executor(self, mocker, tmp_path):
+        """get_connection() should raise ValueError with a remote executor."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        with pytest.raises(ValueError, match="cannot be used with a remote executor"):
+            with db.get_connection(db_path, executor=mock_ex):
+                pass
+
+    def test_get_connection_works_with_none_executor(self, tmp_path):
+        """get_connection() should work normally with executor=None."""
+        db_path = tmp_path / "test.db"
+
+        with db.get_connection(db_path, executor=None) as conn:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+
+        assert "deployments" in tables
+
+
+class TestRecordServiceInstanceRemote:
+    """Test record_service_instance() with a remote executor."""
+
+    def test_record_service_instance_remote(self, mocker, tmp_path):
+        """record_service_instance() with remote executor should use _remote_execute."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result()
+
+        result = db.record_service_instance(
+            db_path,
+            "valkey",
+            "6379",
+            "/etc/valkey/6379.conf",
+            "/var/lib/valkey/6379",
+            port=6379,
+            executor=mock_ex,
+        )
+
+        assert result == 0
+        mock_ex.run.assert_called_once()
+        call_args = mock_ex.run.call_args[0][0]
+        assert "sqlite3" in call_args
+        assert "INSERT" in call_args[-1]
+
+    def test_record_service_instance_local_still_works(self, tmp_path):
+        """record_service_instance() without executor should still work locally."""
+        db_path = tmp_path / "test.db"
+
+        instance_id = db.record_service_instance(
+            db_path,
+            "valkey",
+            "6379",
+            "/c",
+            "/d",
+            port=6379,
+        )
+
+        assert instance_id >= 1
+
+
+class TestGetServiceInstanceRemote:
+    """Test get_service_instance() with a remote executor."""
+
+    def test_get_service_instance_remote_found(self, mocker, tmp_path):
+        """get_service_instance() with remote executor should return ServiceInstance."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": 1,
+                        "package": "valkey",
+                        "instance": "6379",
+                        "config_file": "/etc/valkey/6379.conf",
+                        "data_dir": "/var/lib/valkey/6379",
+                        "port": 6379,
+                        "created_at": "2026-01-01",
+                        "updated_at": "2026-01-01",
+                        "notes": None,
+                    }
+                ]
+            )
+        )
+
+        svc = db.get_service_instance(db_path, "valkey", "6379", executor=mock_ex)
+
+        assert svc is not None
+        assert isinstance(svc, db.ServiceInstance)
+        assert svc.package == "valkey"
+        assert svc.port == 6379
+
+    def test_get_service_instance_remote_not_found(self, mocker, tmp_path):
+        """get_service_instance() with remote executor returns None when not found."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        svc = db.get_service_instance(db_path, "valkey", "9999", executor=mock_ex)
+
+        assert svc is None
+
+
+class TestGetServiceInstancesRemote:
+    """Test get_service_instances() with a remote executor."""
+
+    def test_get_service_instances_remote(self, mocker, tmp_path):
+        """get_service_instances() with remote executor returns list."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": 1,
+                        "package": "valkey",
+                        "instance": "6379",
+                        "config_file": "/c1",
+                        "data_dir": "/d1",
+                        "port": 6379,
+                        "created_at": "2026-01-01",
+                        "updated_at": "2026-01-01",
+                        "notes": None,
+                    },
+                    {
+                        "id": 2,
+                        "package": "valkey",
+                        "instance": "6380",
+                        "config_file": "/c2",
+                        "data_dir": "/d2",
+                        "port": 6380,
+                        "created_at": "2026-01-01",
+                        "updated_at": "2026-01-01",
+                        "notes": None,
+                    },
+                ]
+            )
+        )
+
+        instances = db.get_service_instances(db_path, executor=mock_ex)
+
+        assert len(instances) == 2
+        assert all(isinstance(i, db.ServiceInstance) for i in instances)
+
+    def test_get_service_instances_remote_empty(self, mocker, tmp_path):
+        """get_service_instances() with remote executor returns empty list."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        instances = db.get_service_instances(db_path, executor=mock_ex)
+
+        assert instances == []
+
+
+class TestDeleteServiceInstanceRemote:
+    """Test delete_service_instance() with a remote executor."""
+
+    def test_delete_service_instance_remote_found(self, mocker, tmp_path):
+        """delete_service_instance() with remote executor returns True when exists."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        # First call: COUNT query returns 1; second: DELETE
+        call_count = {"n": 0}
+
+        def mock_run(cmd, **kwargs):
+            call_count["n"] += 1
+            if "-json" in cmd:
+                return _make_remote_result(stdout=json.dumps([{"cnt": 1}]))
+            return _make_remote_result()
+
+        mock_ex.run.side_effect = mock_run
+
+        deleted = db.delete_service_instance(db_path, "valkey", "6379", executor=mock_ex)
+
+        assert deleted is True
+
+    def test_delete_service_instance_remote_not_found(self, mocker, tmp_path):
+        """delete_service_instance() with remote executor returns False when not exists."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(stdout=json.dumps([{"cnt": 0}]))
+
+        deleted = db.delete_service_instance(db_path, "valkey", "9999", executor=mock_ex)
+
+        assert deleted is False
+
+
+class TestRecordServiceActionRemote:
+    """Test record_service_action() with a remote executor."""
+
+    def test_record_service_action_remote(self, mocker, tmp_path):
+        """record_service_action() with remote executor should use _remote_execute."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result()
+
+        result = db.record_service_action(
+            db_path,
+            "valkey",
+            "6379",
+            "init",
+            executor=mock_ex,
+        )
+
+        assert result == 0
+        mock_ex.run.assert_called_once()
+        sql = mock_ex.run.call_args[0][0][-1]
+        assert "INSERT" in sql
+
+    def test_record_service_action_local_still_works(self, tmp_path):
+        """record_service_action() without executor should still work locally."""
+        db_path = tmp_path / "test.db"
+
+        action_id = db.record_service_action(db_path, "valkey", "6379", "start")
+
+        assert action_id >= 1
+
+
+class TestGetServiceActionsRemote:
+    """Test get_service_actions() with a remote executor."""
+
+    def test_get_service_actions_remote(self, mocker, tmp_path):
+        """get_service_actions() with remote executor returns list."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+
+        mock_ex.run.return_value = _make_remote_result(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": 1,
+                        "timestamp": "2026-01-01 12:00:00",
+                        "package": "valkey",
+                        "instance": "6379",
+                        "action": "start",
+                        "success": 1,
+                        "notes": None,
+                    },
+                ]
+            )
+        )
+
+        actions = db.get_service_actions(db_path, executor=mock_ex)
+
+        assert len(actions) == 1
+        assert isinstance(actions[0], db.ServiceAction)
+        assert actions[0].package == "valkey"
+        assert actions[0].action == "start"
+
+    def test_get_service_actions_remote_filtered(self, mocker, tmp_path):
+        """get_service_actions() with remote executor should filter by package."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result(stdout="[]")
+
+        db.get_service_actions(db_path, package="valkey", executor=mock_ex)
+
+        sql = mock_ex.run.call_args[0][0][-1]
+        assert "package = 'valkey'" in sql
+
+    def test_get_service_actions_remote_empty(self, mocker, tmp_path):
+        """get_service_actions() with remote executor returns empty list."""
+        mock_ex = _make_ssh_executor(mocker)
+        db_path = tmp_path / "test.db"
+        mock_ex.run.return_value = _make_remote_result(stdout="")
+
+        actions = db.get_service_actions(db_path, executor=mock_ex)
+
+        assert actions == []
+
+
+# ---------------------------------------------------------------------------
+# Parametrized cross-executor tests for db operations
+# ---------------------------------------------------------------------------
+
+
+def _make_remote_executor_for_db(mocker, db_path):
+    """Build a mock SSH executor wired up for db operations.
+
+    Returns (executor, spy) where spy is the mock.run method for assertions.
+    The mock patches _is_remote to return True for this executor.
+    """
+    mock_ex = MagicMock()
+    mocker.patch("ots_containers.db._is_remote", side_effect=lambda ex: ex is mock_ex)
+    mock_ex.run.return_value = _make_remote_result()
+    return mock_ex
+
+
+@pytest.fixture(
+    params=["local", "remote"],
+    ids=["local-executor", "remote-executor"],
+)
+def db_executor_pair(request, mocker, tmp_path):
+    """Parametrized fixture for db operations across executor types.
+
+    For local: executor is None (uses sqlite3 directly).
+    For remote: executor is a mock SSHExecutor with _is_remote() returning True.
+
+    Yields (db_path, executor, kind).
+    """
+    db_path = tmp_path / "test.db"
+    if request.param == "local":
+        return db_path, None, "local"
+    else:
+        mock_ex = _make_remote_executor_for_db(mocker, db_path)
+        return db_path, mock_ex, "remote"
+
+
+class TestCrossExecutorDbOperations:
+    """Verify that db operations have consistent API contracts across executor types.
+
+    Local operations use sqlite3 directly; remote operations use the sqlite3 CLI
+    via executor.run(). These tests verify the API-level contract is the same.
+    """
+
+    def test_init_db_does_not_raise(self, db_executor_pair):
+        """init_db should complete without error via both executors."""
+        db_path, executor, kind = db_executor_pair
+
+        # Should not raise
+        db.init_db(db_path, executor=executor)
+
+        if kind == "local":
+            assert db_path.exists()
+
+    def test_record_deployment_returns_int(self, db_executor_pair):
+        """record_deployment should return an int via both executors."""
+        db_path, executor, kind = db_executor_pair
+
+        result = db.record_deployment(db_path, "img", "v1", "deploy", port=7043, executor=executor)
+
+        assert isinstance(result, int)
+
+    def test_set_alias_and_get_alias_roundtrip(self, db_executor_pair):
+        """set_alias + get_alias should round-trip via both executors."""
+        db_path, executor, kind = db_executor_pair
+
+        if kind == "remote":
+            # Wire the mock to return the alias we set
+            call_count = {"n": 0}
+
+            def mock_run(cmd, **kwargs):
+                call_count["n"] += 1
+                if "-json" in cmd:
+                    return _make_remote_result(
+                        stdout=json.dumps(
+                            [
+                                {
+                                    "alias": "CURRENT",
+                                    "image": "img",
+                                    "tag": "v1",
+                                    "set_at": "2026-01-01",
+                                }
+                            ]
+                        )
+                    )
+                return _make_remote_result()
+
+            executor.run.side_effect = mock_run
+
+        db.set_alias(db_path, "CURRENT", "img", "v1", executor=executor)
+        alias = db.get_alias(db_path, "CURRENT", executor=executor)
+
+        assert alias is not None
+        assert alias.alias == "CURRENT"
+        assert alias.image == "img"
+        assert alias.tag == "v1"
+        assert isinstance(alias, db.ImageAlias)
+
+    def test_get_deployments_returns_list(self, db_executor_pair):
+        """get_deployments should return a list via both executors."""
+        db_path, executor, kind = db_executor_pair
+
+        if kind == "remote":
+            executor.run.return_value = _make_remote_result(stdout="[]")
+
+        result = db.get_deployments(db_path, executor=executor)
+
+        assert isinstance(result, list)
+
+    def test_record_service_action_returns_int(self, db_executor_pair):
+        """record_service_action should return an int via both executors."""
+        db_path, executor, kind = db_executor_pair
+
+        result = db.record_service_action(db_path, "valkey", "6379", "start", executor=executor)
+
+        assert isinstance(result, int)
+
+    def test_get_service_instances_returns_list(self, db_executor_pair):
+        """get_service_instances should return a list via both executors."""
+        db_path, executor, kind = db_executor_pair
+
+        if kind == "remote":
+            executor.run.return_value = _make_remote_result(stdout="[]")
+
+        result = db.get_service_instances(db_path, executor=executor)
+
+        assert isinstance(result, list)
+
+    def test_get_current_image_returns_none_when_empty(self, db_executor_pair):
+        """get_current_image should return None when CURRENT not set."""
+        db_path, executor, kind = db_executor_pair
+
+        if kind == "remote":
+            executor.run.return_value = _make_remote_result(stdout="")
+
+        result = db.get_current_image(db_path, executor=executor)
+
+        assert result is None
+
+    def test_rollback_returns_none_when_insufficient_history(self, db_executor_pair):
+        """rollback should return None when < 2 distinct deployments."""
+        db_path, executor, kind = db_executor_pair
+
+        if kind == "remote":
+            executor.run.return_value = _make_remote_result(
+                stdout=json.dumps([{"image": "img", "tag": "v1", "last_id": 1}])
+            )
+
+        result = db.rollback(db_path, executor=executor)
+
+        assert result is None

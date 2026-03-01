@@ -34,6 +34,157 @@ def _make_env_file(tmp_path: Path, content: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# _file_exists helper
+# ---------------------------------------------------------------------------
+
+
+class TestFileExists:
+    """Tests for the _file_exists helper function."""
+
+    def test_local_existing_file_returns_true(self, tmp_path):
+        """_file_exists should return True for an existing local file."""
+        from ots_shared.ssh import LocalExecutor
+
+        from ots_containers.commands.env.app import _file_exists
+
+        f = tmp_path / "test.env"
+        f.write_text("KEY=VALUE\n")
+
+        assert _file_exists(f, LocalExecutor()) is True
+
+    def test_local_missing_file_returns_false(self, tmp_path):
+        """_file_exists should return False for a missing local file."""
+        from ots_shared.ssh import LocalExecutor
+
+        from ots_containers.commands.env.app import _file_exists
+
+        f = tmp_path / "nonexistent"
+        assert _file_exists(f, LocalExecutor()) is False
+
+    def test_remote_existing_file_returns_true(self):
+        """_file_exists should run 'test -f' on remote executor and return True when ok."""
+        from unittest.mock import MagicMock
+
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+        from ots_shared.ssh.executor import Result
+
+        from ots_containers.commands.env.app import _file_exists
+
+        client = MagicMock(spec=paramiko.SSHClient)
+        ex = SSHExecutor(client)
+        ex.run = MagicMock(return_value=Result(command="test", returncode=0, stdout="", stderr=""))
+
+        result = _file_exists(Path("/etc/default/onetimesecret"), ex)
+        assert result is True
+        ex.run.assert_called_once_with(["test", "-f", "/etc/default/onetimesecret"])
+
+    def test_remote_missing_file_returns_false(self):
+        """_file_exists should run 'test -f' on remote executor and return False when not ok."""
+        from unittest.mock import MagicMock
+
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+        from ots_shared.ssh.executor import Result
+
+        from ots_containers.commands.env.app import _file_exists
+
+        client = MagicMock(spec=paramiko.SSHClient)
+        ex = SSHExecutor(client)
+        ex.run = MagicMock(return_value=Result(command="test", returncode=1, stdout="", stderr=""))
+
+        result = _file_exists(Path("/etc/default/nonexistent"), ex)
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Executor wiring in env commands
+# ---------------------------------------------------------------------------
+
+
+class TestEnvCommandExecutorWiring:
+    """Verify env commands pass executor to EnvFile.parse() and secret_exists()."""
+
+    def test_show_passes_executor_to_parse_and_secret_exists(self, mocker, tmp_path, capsys):
+        """show should pass the executor from get_executor to EnvFile.parse and secret_exists."""
+        from unittest.mock import MagicMock
+
+        from ots_shared.ssh import LocalExecutor
+
+        mock_ex = LocalExecutor()
+        mocker.patch("ots_containers.commands.env.app.Config.get_executor", return_value=mock_ex)
+
+        env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc123\n"
+        env_file = _make_env_file(tmp_path, env_content)
+
+        mock_parse = mocker.patch("ots_containers.commands.env.app.EnvFile.parse")
+        mock_parsed = MagicMock()
+        mock_parsed.secret_variable_names = ["HMAC_SECRET"]
+        mock_parsed.get.return_value = "HMAC_SECRET"
+        mock_parsed.has.side_effect = lambda k: k == "HMAC_SECRET"
+        mock_parse.return_value = mock_parsed
+
+        mock_extract = mocker.patch("ots_containers.commands.env.app.extract_secrets")
+        mock_extract.return_value = (
+            [SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret")],
+            [],
+        )
+
+        mock_secret_exists = mocker.patch("ots_containers.commands.env.app.secret_exists")
+        mock_secret_exists.return_value = True
+
+        show(env_file=env_file)
+
+        # Verify executor was passed through
+        mock_parse.assert_called_once_with(env_file, executor=mock_ex)
+        mock_secret_exists.assert_called_once_with("ots_hmac_secret", executor=mock_ex)
+
+    def test_verify_passes_executor_to_secret_exists(self, mocker, tmp_path, capsys):
+        """verify should pass executor to secret_exists for each secret."""
+        from unittest.mock import MagicMock
+
+        from ots_shared.ssh import LocalExecutor
+
+        mock_ex = LocalExecutor()
+        mocker.patch("ots_containers.commands.env.app.Config.get_executor", return_value=mock_ex)
+
+        env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\nHMAC_SECRET=abc\nAPI_KEY=xyz\n"
+        env_file = _make_env_file(tmp_path, env_content)
+
+        mock_parse = mocker.patch("ots_containers.commands.env.app.EnvFile.parse")
+        mock_parsed = MagicMock()
+        mock_parsed.secret_variable_names = ["HMAC_SECRET", "API_KEY"]
+        mock_parse.return_value = mock_parsed
+
+        mock_extract = mocker.patch("ots_containers.commands.env.app.extract_secrets")
+        mock_extract.return_value = (
+            [
+                SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
+                SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
+            ],
+            [],
+        )
+
+        mock_secret_exists = mocker.patch("ots_containers.commands.env.app.secret_exists")
+        mock_secret_exists.return_value = True
+
+        verify(env_file=env_file)
+
+        # Both secrets should be checked with the executor
+        assert mock_secret_exists.call_count == 2
+        mock_secret_exists.assert_any_call("ots_hmac_secret", executor=mock_ex)
+        mock_secret_exists.assert_any_call("ots_api_key", executor=mock_ex)
+
+
+# ---------------------------------------------------------------------------
 # Structural tests
 # ---------------------------------------------------------------------------
 

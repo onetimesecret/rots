@@ -1,6 +1,8 @@
 # tests/commands/proxy/test_app.py
 """Tests for proxy app commands."""
 
+from unittest.mock import ANY
+
 import pytest
 
 
@@ -62,7 +64,7 @@ class TestRenderCommand:
 
         render(template=template, output=output, dry_run=False)
 
-        mock_validate.assert_called_once_with("rendered content")
+        mock_validate.assert_called_once_with("rendered content", executor=ANY)
 
     def test_render_error_exits(self, tmp_path, mocker):
         """Should exit with error message on ProxyError."""
@@ -103,21 +105,146 @@ class TestRenderCommand:
 
         render(template=None, output=None, dry_run=False)
 
-        mock_render.assert_called_once_with(cfg.proxy_template)
+        mock_render.assert_called_once_with(cfg.proxy_template, executor=ANY)
+
+
+class TestPushCommand:
+    """Test push command."""
+
+    def _mock_remote_executor(self, mocker):
+        """Create a mock remote (SSH) executor that passes is_remote() checks."""
+        mock_ex = mocker.MagicMock()
+        # Make it NOT an instance of LocalExecutor so is_remote() returns True
+        mock_ex.__class__ = type("SSHExecutor", (), {})
+        mock_result = mocker.MagicMock()
+        mock_result.ok = True
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+        mock_ex.run.return_value = mock_result
+        return mock_ex
+
+    def test_push_requires_remote_host(self, tmp_path, mocker):
+        """push should exit when running locally (no --host)."""
+        from ots_containers.commands.proxy.app import push
+
+        template = tmp_path / "Caddyfile.template"
+        template.write_text("localhost { }")
+
+        with pytest.raises(SystemExit) as exc_info:
+            push(template_file=template)
+
+        assert "remote host" in str(exc_info.value)
+
+    def test_push_missing_template_exits(self, tmp_path, mocker):
+        """push should exit when template file doesn't exist."""
+        from ots_containers.commands.proxy.app import push
+
+        missing = tmp_path / "nonexistent.template"
+
+        # Need remote executor to pass the remote check
+        mock_ex = self._mock_remote_executor(mocker)
+        mock_cfg = mocker.MagicMock()
+        mock_cfg.get_executor.return_value = mock_ex
+        mocker.patch("ots_containers.commands.proxy.app.Config", return_value=mock_cfg)
+
+        with pytest.raises(SystemExit) as exc_info:
+            push(template_file=missing)
+
+        assert "not found" in str(exc_info.value)
+
+    def test_push_dry_run_prints_actions(self, tmp_path, mocker, capsys):
+        """push --dry-run should print expected actions without side effects."""
+        from ots_containers.commands.proxy.app import push
+
+        template = tmp_path / "Caddyfile.template"
+        template.write_text("localhost { }")
+
+        mock_ex = self._mock_remote_executor(mocker)
+        mock_cfg = mocker.MagicMock()
+        mock_cfg.get_executor.return_value = mock_ex
+        mock_cfg.proxy_template.return_value = "/etc/onetimesecret/Caddyfile.template"
+        mock_cfg.proxy_config.return_value = "/etc/caddy/Caddyfile"
+        mocker.patch("ots_containers.commands.proxy.app.Config", return_value=mock_cfg)
+
+        push(template_file=template, dry_run=True)
+
+        captured = capsys.readouterr()
+        assert "Would push" in captured.out
+        assert "Would render" in captured.out
+        assert "Would reload" in captured.out
+        # Executor should NOT have been called for actual operations
+        mock_ex.run.assert_not_called()
+
+    def test_push_happy_path(self, tmp_path, mocker, capsys):
+        """push should push template, render, validate, and reload."""
+        from ots_containers.commands.proxy.app import push
+
+        template = tmp_path / "Caddyfile.template"
+        template.write_text("localhost { respond 200 }")
+
+        mock_ex = self._mock_remote_executor(mocker)
+        mock_cfg = mocker.MagicMock()
+        mock_cfg.get_executor.return_value = mock_ex
+        mock_cfg.proxy_template = tmp_path / "remote-template"
+        mock_cfg.proxy_config = tmp_path / "remote-config"
+        mocker.patch("ots_containers.commands.proxy.app.Config", return_value=mock_cfg)
+
+        mock_render = mocker.patch(
+            "ots_containers.commands.proxy.app.render_template",
+            return_value="rendered content",
+        )
+        mock_validate = mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
+        mock_reload = mocker.patch("ots_containers.commands.proxy.app.reload_caddy")
+
+        push(template_file=template)
+
+        captured = capsys.readouterr()
+        # Verify all three steps completed
+        assert "[ok] Pushed" in captured.out
+        assert "[ok] Rendered" in captured.out
+        assert "[ok] Caddy reloaded" in captured.out
+        # Verify render, validate, reload were called
+        mock_render.assert_called_once_with(mock_cfg.proxy_template, executor=mock_ex)
+        mock_validate.assert_called_once_with("rendered content", executor=mock_ex)
+        mock_reload.assert_called_once_with(executor=mock_ex)
+
+    def test_push_write_failure_exits(self, tmp_path, mocker):
+        """push should exit when remote write fails."""
+        from ots_containers.commands.proxy.app import push
+
+        template = tmp_path / "Caddyfile.template"
+        template.write_text("localhost { }")
+
+        mock_ex = self._mock_remote_executor(mocker)
+        # First run (mkdir) succeeds, second run (tee) fails
+        mock_ok = mocker.MagicMock(ok=True, stdout="", stderr="")
+        mock_fail = mocker.MagicMock(ok=False, stdout="", stderr="permission denied")
+        mock_ex.run.side_effect = [mock_ok, mock_fail]
+
+        mock_cfg = mocker.MagicMock()
+        mock_cfg.get_executor.return_value = mock_ex
+        mock_cfg.proxy_template = tmp_path / "remote-template"
+        mock_cfg.proxy_config = tmp_path / "remote-config"
+        mocker.patch("ots_containers.commands.proxy.app.Config", return_value=mock_cfg)
+
+        with pytest.raises(SystemExit) as exc_info:
+            push(template_file=template)
+
+        assert "Failed to write" in str(exc_info.value)
 
 
 class TestReloadCommand:
     """Test reload command."""
 
     def test_reload_calls_helper(self, mocker, capsys):
-        """Should call reload_caddy helper."""
+        """Should call reload_caddy helper with executor."""
         from ots_containers.commands.proxy.app import reload
 
         mock_reload = mocker.patch("ots_containers.commands.proxy.app.reload_caddy")
 
         reload()
 
-        mock_reload.assert_called_once()
+        mock_reload.assert_called_once_with(executor=ANY)
         captured = capsys.readouterr()
         assert "[ok]" in captured.out
 
@@ -139,24 +266,23 @@ class TestReloadCommand:
 
 
 class TestStatusCommand:
-    """Test status command."""
+    """Test status command — now uses executor.run() instead of subprocess.run()."""
 
-    def test_status_calls_systemctl(self, mocker, capsys):
-        """Should call systemctl status caddy."""
+    def test_status_prints_output(self, mocker, capsys):
+        """Should print systemctl output via executor."""
         from ots_containers.commands.proxy.app import status
 
-        mock_run = mocker.patch(
+        # Mock subprocess.run which LocalExecutor uses internally
+        mocker.patch(
             "subprocess.run",
-            return_value=mocker.MagicMock(stdout="active (running)", stderr=""),
+            return_value=mocker.MagicMock(
+                returncode=0,
+                stdout="active (running)",
+                stderr="",
+            ),
         )
 
         status()
-
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert "systemctl" in call_args
-        assert "status" in call_args
-        assert "caddy" in call_args
 
         captured = capsys.readouterr()
         assert "active (running)" in captured.out
@@ -167,7 +293,11 @@ class TestStatusCommand:
 
         mocker.patch(
             "subprocess.run",
-            return_value=mocker.MagicMock(stdout="output", stderr="warning message"),
+            return_value=mocker.MagicMock(
+                returncode=0,
+                stdout="output",
+                stderr="warning message",
+            ),
         )
 
         status()
@@ -189,29 +319,20 @@ class TestStatusCommand:
 
 
 class TestValidateCommand:
-    """Test validate command."""
+    """Test validate command — now reads file then calls validate_caddy_config helper."""
 
-    def test_validate_calls_caddy(self, tmp_path, mocker, capsys):
-        """Should call caddy validate with config file."""
+    def test_validate_existing_file(self, tmp_path, mocker, capsys):
+        """Should validate an existing config file."""
         from ots_containers.commands.proxy.app import validate
 
         config = tmp_path / "Caddyfile"
         config.write_text("localhost { }")
 
-        mock_run = mocker.patch(
-            "subprocess.run",
-            return_value=mocker.MagicMock(returncode=0, stdout="", stderr=""),
-        )
+        mock_validate = mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
 
         validate(config_file=config)
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert "caddy" in call_args
-        assert "validate" in call_args
-        assert "--config" in call_args
-        assert str(config) in call_args
-
+        mock_validate.assert_called_once_with("localhost { }", executor=ANY)
         captured = capsys.readouterr()
         assert "[ok]" in captured.out
 
@@ -225,39 +346,34 @@ class TestValidateCommand:
 
         mock_cfg = mocker.MagicMock()
         mock_cfg.proxy_config = default_config
+        # get_executor returns a LocalExecutor
+        from ots_shared.ssh import LocalExecutor
+
+        mock_cfg.get_executor.return_value = LocalExecutor()
         mocker.patch(
             "ots_containers.commands.proxy.app.Config",
             return_value=mock_cfg,
         )
 
-        mock_run = mocker.patch(
-            "subprocess.run",
-            return_value=mocker.MagicMock(returncode=0, stdout="", stderr=""),
-        )
+        mock_validate = mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
 
         validate(config_file=None)
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert str(default_config) in call_args
+        mock_validate.assert_called_once_with("localhost { }", executor=ANY)
 
-    def test_validate_success_with_stdout(self, tmp_path, mocker, capsys):
-        """Should print stdout when validation succeeds with output."""
+    def test_validate_success_with_output(self, tmp_path, mocker, capsys):
+        """Should print [ok] when validation succeeds."""
         from ots_containers.commands.proxy.app import validate
 
         config = tmp_path / "Caddyfile"
         config.write_text("localhost { }")
 
-        mocker.patch(
-            "subprocess.run",
-            return_value=mocker.MagicMock(returncode=0, stdout="Valid config", stderr=""),
-        )
+        mocker.patch("ots_containers.commands.proxy.app.validate_caddy_config")
 
         validate(config_file=config)
 
         captured = capsys.readouterr()
         assert "[ok]" in captured.out
-        assert "Valid config" in captured.out
 
     def test_validate_missing_file_exits(self, tmp_path):
         """Should exit if config file doesn't exist."""
@@ -273,20 +389,21 @@ class TestValidateCommand:
 
     def test_validate_failure_exits(self, tmp_path, mocker):
         """Should exit on validation failure."""
+        from ots_containers.commands.proxy._helpers import ProxyError
         from ots_containers.commands.proxy.app import validate
 
         config = tmp_path / "Caddyfile"
         config.write_text("invalid config")
 
         mocker.patch(
-            "subprocess.run",
-            return_value=mocker.MagicMock(returncode=1, stdout="", stderr="syntax error"),
+            "ots_containers.commands.proxy.app.validate_caddy_config",
+            side_effect=ProxyError("Caddy validation failed:\nsyntax error"),
         )
 
         with pytest.raises(SystemExit) as exc_info:
             validate(config_file=config)
 
-        assert exc_info.value.code == 1
+        assert "Caddy validation failed" in str(exc_info.value)
 
     def test_validate_caddy_not_found_exits(self, tmp_path, mocker):
         """Should exit if caddy not in PATH."""
@@ -295,7 +412,10 @@ class TestValidateCommand:
         config = tmp_path / "Caddyfile"
         config.write_text("localhost { }")
 
-        mocker.patch("subprocess.run", side_effect=FileNotFoundError())
+        mocker.patch(
+            "ots_containers.commands.proxy.app.validate_caddy_config",
+            side_effect=FileNotFoundError(),
+        )
 
         with pytest.raises(SystemExit) as exc_info:
             validate(config_file=config)

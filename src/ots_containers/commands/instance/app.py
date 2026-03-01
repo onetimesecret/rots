@@ -2,25 +2,28 @@
 
 """Instance management app and commands for OTS containers."""
 
+import dataclasses
 import difflib
 import logging
-import subprocess
 import sys
 from typing import Annotated
 
 import cyclopts
 
-from ots_containers import assets, db, quadlet, systemd
-from ots_containers.config import Config
+from ots_containers import assets, context, db, quadlet, systemd
+from ots_containers.config import Config, parse_image_reference
+from ots_containers.podman import Podman
 
 from ..common import (
     EXIT_FAILURE,
     EXIT_PARTIAL,
     DryRun,
     Follow,
+    ImageRef,
     JsonOutput,
     Lines,
     Quiet,
+    TagFlag,
     Yes,
 )
 from ._helpers import (
@@ -57,15 +60,17 @@ def _list_instances_impl(
     json_output: bool,
 ):
     """Shared implementation for listing instances."""
-    systemd.require_systemctl()
-    instances = resolve_identifiers(identifiers, instance_type, running_only=False)
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    instances = resolve_identifiers(identifiers, instance_type, running_only=False, executor=ex)
 
     if not instances:
         print("No configured instances found")
         print("Deploy one first: ots instances deploy --help")
         return
 
-    cfg = Config()
+    # Fetch container health once for all instances
+    health_map = systemd.get_container_health_map(executor=ex)
 
     if json_output:
         import json
@@ -75,23 +80,24 @@ def _list_instances_impl(
             for id_ in ids:
                 unit = systemd.unit_name(inst_type.value, id_)
                 service = f"{unit}.service"
-                result = subprocess.run(
-                    ["systemctl", "is-active", service],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                status = result.stdout.strip()
+                active_status = systemd.is_active(service, executor=ex)
+
+                # Look up container health
+                health_info = health_map.get((inst_type.value, id_), {})
+                health = health_info.get("health", "")
+                uptime = health_info.get("uptime", "")
 
                 # Get deployment info
+                db_path = cfg.get_db_path(ex)
                 if inst_type == InstanceType.WEB:
-                    deployments = db.get_deployments(cfg.db_path, limit=1, port=int(id_))
+                    deployments = db.get_deployments(db_path, limit=1, port=int(id_), executor=ex)
                 else:
                     # Worker/scheduler: query by notes containing instance ID
                     deployments = db.get_deployments(
-                        cfg.db_path,
+                        db_path,
                         limit=1,
                         notes_like=f"%{inst_type.value}_id={id_}%",
+                        executor=ex,
                     )
                 if deployments:
                     dep = deployments[0]
@@ -101,7 +107,9 @@ def _list_instances_impl(
                             "id": id_,
                             "service": service,
                             "container": unit,
-                            "status": status,
+                            "status": active_status,
+                            "health": health,
+                            "uptime": uptime,
                             "image": dep.image,
                             "tag": dep.tag,
                             "deployed": dep.timestamp,
@@ -115,7 +123,9 @@ def _list_instances_impl(
                             "id": id_,
                             "service": service,
                             "container": unit,
-                            "status": status,
+                            "status": active_status,
+                            "health": health,
+                            "uptime": uptime,
                             "image": None,
                             "tag": None,
                             "deployed": None,
@@ -128,10 +138,10 @@ def _list_instances_impl(
     # Header
     header = (
         f"{'TYPE':<10} {'ID':<10} {'SERVICE':<28} {'CONTAINER':<24} "
-        f"{'STATUS':<12} {'IMAGE:TAG':<38} {'DEPLOYED':<20} {'ACTION':<10}"
+        f"{'STATUS':<22} {'IMAGE:TAG':<38} {'DEPLOYED':<20} {'ACTION':<10}"
     )
     print(header)
-    print("-" * 160)
+    print("-" * 170)
 
     for inst_type, ids in instances.items():
         for id_ in ids:
@@ -139,23 +149,27 @@ def _list_instances_impl(
             service = f"{unit}.service"
 
             # Get systemd status
-            result = subprocess.run(
-                ["systemctl", "is-active", service],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            status = result.stdout.strip()
+            active_status = systemd.is_active(service, executor=ex)
+
+            # Combine systemd status with container health
+            health_info = health_map.get((inst_type.value, id_), {})
+            health = health_info.get("health", "")
+            if health:
+                display_status = f"{active_status} ({health})"
+            else:
+                display_status = active_status
 
             # Get last deployment from database
+            db_path = cfg.get_db_path(ex)
             if inst_type == InstanceType.WEB:
-                deployments = db.get_deployments(cfg.db_path, limit=1, port=int(id_))
+                deployments = db.get_deployments(db_path, limit=1, port=int(id_), executor=ex)
             else:
                 # Worker/scheduler: query by notes containing instance ID
                 deployments = db.get_deployments(
-                    cfg.db_path,
+                    db_path,
                     limit=1,
                     notes_like=f"%{inst_type.value}_id={id_}%",
+                    executor=ex,
                 )
             if deployments:
                 dep = deployments[0]
@@ -170,9 +184,42 @@ def _list_instances_impl(
 
             row = (
                 f"{inst_type.value:<10} {id_:<10} {service:<28} {unit:<24} "
-                f"{status:<12} {image_tag:<38} {deployed:<20} {action:<10}"
+                f"{display_status:<22} {image_tag:<38} {deployed:<20} {action:<10}"
             )
             print(row)
+
+
+@app.command
+def ps(
+    instance_type: TypeSelector = None,
+    web: WebFlag = False,
+    worker: WorkerFlag = False,
+    scheduler: SchedulerFlag = False,
+):
+    """Show running OTS containers (podman view).
+
+    Displays the podman-native view of containers, including health status.
+    Filters to the selected instance type when --web/--worker/--scheduler is given.
+
+    Examples:
+        ots instances ps                    # All OTS containers
+        ots instances ps --web              # Web containers only
+        ots instances ps --scheduler        # Scheduler containers only
+    """
+    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
+
+    if itype is not None:
+        name_filter = f"name=systemd-onetime-{itype.value}"
+    else:
+        name_filter = "name=systemd-onetime"
+
+    p.ps(
+        filter=name_filter,
+        format="table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}",
+    )
 
 
 @app.default
@@ -204,13 +251,14 @@ def list_instances(
 
 @app.command
 def run(
+    reference: ImageRef = None,
     port: Annotated[
-        int,
+        int | None,
         cyclopts.Parameter(
             name=["--port", "-p"],
             help="Container port to run on",
         ),
-    ],
+    ] = None,
     detach: Annotated[
         bool,
         cyclopts.Parameter(
@@ -240,49 +288,34 @@ def run(
         ),
     ] = None,
     quiet: Quiet = False,
-    tag: Annotated[
-        str | None,
-        cyclopts.Parameter(
-            name=["--tag", "-t"],
-            help="Image tag to run (default: from TAG env or 'current' alias)",
-        ),
-    ] = None,
-    remote: Annotated[
-        bool,
-        cyclopts.Parameter(
-            name=["--remote", "-r"],
-            help="Pull from registry instead of using local image",
-        ),
-    ] = False,
+    tag: TagFlag = None,
 ):
     """Run a container directly with podman (no systemd).
 
-    By default uses local images (from 'ots image build').
     If .env exists in current directory, it will be used.
-    Use --remote to pull from registry instead.
     Use --production to include system env file, secrets, and volumes.
 
     Examples:
-        ots instance run -p 7143 --tag plop-2   # local build (default)
+        ots instance run -p 7143 --tag plop-2   # specific tag
         ots instance run -p 7143 -d             # detached
-        ots instance run -p 7143 --remote --tag v0.19.0  # from registry
         ots instance run -p 7143 --production   # full production config
+        ots instance run ghcr.io/org/image:v1.0 -p 7143  # explicit image ref
     """
+    if port is None:
+        raise SystemExit("--port / -p is required. Example: ots instance run -p 7143")
+
     cfg = Config()
 
-    # Resolve image/tag
-    # Default: local images (from 'ots image build')
-    # --remote: pull from registry (ghcr.io or OTS_REGISTRY)
-    if remote:
-        if tag:
-            image = cfg.image
-            resolved_tag = tag
-        else:
-            image, resolved_tag = cfg.resolve_image_tag()
-    else:
-        # Local is the default
-        image = "onetimesecret"  # localhost/onetimesecret
-        resolved_tag = tag or cfg.tag
+    # Apply image reference overrides (positional ref > --tag flag > env/config)
+    ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
+    override_tag = ref_tag or tag
+    if ref_image or override_tag:
+        cfg = dataclasses.replace(cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag)
+
+    ex = cfg.get_executor(host=context.host_var.get(None))
+
+    # Resolve image/tag (handles @current/@rollback aliases)
+    image, resolved_tag = cfg.resolve_image_tag(executor=ex)
     full_image = f"{image}:{resolved_tag}"
 
     # Container name
@@ -300,25 +333,34 @@ def run(
     cmd.extend(["-p", f"{port}:{port}"])
     cmd.extend(["-e", f"PORT={port}"])
 
-    # Check for local .env file in current directory
+    # Check for .env file in current directory (local only)
     from pathlib import Path
 
-    local_env = Path.cwd() / ".env"
-    if local_env.exists():
-        cmd.extend(["--env-file", str(local_env)])
+    from ots_shared.ssh import LocalExecutor as _LECheck
+
+    if isinstance(ex, _LECheck):
+        local_env = Path.cwd() / ".env"
+        if local_env.exists():
+            cmd.extend(["--env-file", str(local_env)])
 
     # Production mode: add env file, secrets, and volumes
     if production:
+        from ots_shared.ssh import LocalExecutor
+
         from ots_containers.environment_file import get_secrets_from_env_file
 
         env_file = quadlet.DEFAULT_ENV_FILE
 
         # Environment file
-        if env_file.exists():
+        if not isinstance(ex, LocalExecutor):
+            env_exists = ex.run(["test", "-f", str(env_file)]).ok
+        else:
+            env_exists = env_file.exists()
+        if env_exists:
             cmd.extend(["--env-file", str(env_file)])
 
             # Secrets
-            secret_specs = get_secrets_from_env_file(env_file)
+            secret_specs = get_secrets_from_env_file(env_file, executor=ex)
             for spec in secret_specs:
                 cmd.extend(
                     [
@@ -328,7 +370,8 @@ def run(
                 )
 
         # Config overrides (per-file)
-        for f in cfg.existing_config_files:
+        config_files = cfg.get_existing_config_files(executor=ex)
+        for f in config_files:
             cmd.extend(["-v", f"{f}:/app/etc/{f.name}:ro"])
         cmd.extend(["-v", "static_assets:/app/public:ro"])
 
@@ -346,27 +389,26 @@ def run(
     # Run it
     try:
         if detach:
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            result = ex.run(cmd, check=True)
             print(f"Container started: {result.stdout.strip()[:12]}")
         else:
-            # Foreground - let it take over the terminal
-            subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to run container: {e}")
-        if e.stderr:
-            print(e.stderr)
-        raise SystemExit(1)
+            # Foreground - stream output to terminal in real time
+            rc = ex.run_stream(cmd)
+            if rc != 0:
+                raise SystemExit(rc)
     except KeyboardInterrupt:
         print("\nStopped")
 
 
 @app.command
 def deploy(
+    reference: ImageRef = None,
     identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
     web: WebFlag = False,
     worker: WorkerFlag = False,
     scheduler: SchedulerFlag = False,
+    tag: TagFlag = None,
     delay: Delay = 5,
     dry_run: DryRun = False,
     quiet: Quiet = False,
@@ -441,6 +483,8 @@ def deploy(
         ots instances deploy --web 7043 --wait      # Wait up to 60s for HTTP health check
         ots instances deploy --web 7043 --pre-hook './scan.sh'   # Validate before deploy
         ots instances deploy --web 7043 --post-hook './notify.sh'  # Notify after deploy
+        ots instances deploy ghcr.io/org/image:v1.0 --web 7043  # Explicit image reference
+        ots instances deploy --tag v0.24.0 --web 7043  # Specific tag only
     """
     import datetime
     import json as json_mod
@@ -457,12 +501,21 @@ def deploy(
 
     cfg = Config()
 
-    # Resolve image/tag (handles CURRENT/ROLLBACK aliases)
-    image, tag = cfg.resolve_image_tag()
+    # Apply image reference overrides (positional ref > --tag flag > env/config)
+    ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
+    override_tag = ref_tag or tag
+    if ref_image or override_tag:
+        cfg = dataclasses.replace(cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag)
+
+    ex = cfg.get_executor(host=context.host_var.get(None))
+
+    # Resolve image/tag (handles @current/@rollback aliases)
+    image, resolved_tag = cfg.resolve_image_tag(executor=ex)
     if not quiet and not json_output:
-        print(f"Image: {image}:{tag}")
-        if cfg.has_custom_config:
-            mounted = [f.name for f in cfg.existing_config_files]
+        print(f"Image: {image}:{resolved_tag}")
+        config_files = cfg.get_existing_config_files(executor=ex)
+        if config_files:
+            mounted = [f.name for f in config_files]
             print(f"Config overrides: {', '.join(mounted)}")
         else:
             print("Config: using container built-in defaults")
@@ -473,15 +526,21 @@ def deploy(
         # configured yet and we don't want that to block the diff output.
         if itype == InstanceType.WEB:
             template_path = cfg.web_template_path
-            new_content = quadlet.render_web_template(cfg, force=True)
+            new_content = quadlet.render_web_template(cfg, force=True, executor=ex)
         elif itype == InstanceType.WORKER:
             template_path = cfg.worker_template_path
-            new_content = quadlet.render_worker_template(cfg, force=True)
+            new_content = quadlet.render_worker_template(cfg, force=True, executor=ex)
         else:
             template_path = cfg.scheduler_template_path
-            new_content = quadlet.render_scheduler_template(cfg, force=True)
+            new_content = quadlet.render_scheduler_template(cfg, force=True, executor=ex)
 
-        old_content = template_path.read_text() if template_path.exists() else ""
+        from ots_shared.ssh import LocalExecutor as _LE
+
+        if ex is not None and not isinstance(ex, _LE):
+            _r = ex.run(["cat", str(template_path)])
+            old_content = _r.stdout if _r.ok else ""
+        else:
+            old_content = template_path.read_text() if template_path.exists() else ""
         diff_lines = list(
             difflib.unified_diff(
                 old_content.splitlines(keepends=True),
@@ -497,7 +556,7 @@ def deploy(
             "instance_type": itype.value,
             "identifiers": list(identifiers),
             "image": image,
-            "tag": tag,
+            "tag": resolved_tag,
             "quadlet_path": str(template_path),
             "quadlet_changed": bool(diff_lines),
         }
@@ -519,51 +578,52 @@ def deploy(
 
     # Execute pre-deploy hook (aborts if it exits non-zero)
     if pre_hook and not dry_run:
-        run_hook(pre_hook, "pre-hook", quiet=quiet or json_output)
+        run_hook(pre_hook, "pre-hook", quiet=quiet or json_output, executor=ex)
 
     deploy_results: list[dict] = []
 
-    with deploy_lock():
+    with deploy_lock(executor=ex):
         # Write appropriate quadlet template.
         # Raises SystemExit(1) if env file or secrets are missing (unless force=True).
         if itype == InstanceType.WEB:
-            assets.update(cfg, create_volume=True)
+            assets.update(cfg, create_volume=True, executor=ex)
             logger.info("Writing quadlet files to %s", cfg.web_template_path.parent)
-            quadlet.write_web_template(cfg, force=force)
+            quadlet.write_web_template(cfg, force=force, executor=ex)
         elif itype == InstanceType.WORKER:
             logger.info("Writing quadlet files to %s", cfg.worker_template_path.parent)
-            quadlet.write_worker_template(cfg, force=force)
+            quadlet.write_worker_template(cfg, force=force, executor=ex)
         elif itype == InstanceType.SCHEDULER:
             logger.info("Writing quadlet files to %s", cfg.scheduler_template_path.parent)
-            quadlet.write_scheduler_template(cfg, force=force)
+            quadlet.write_scheduler_template(cfg, force=force, executor=ex)
 
         def do_deploy(inst_type: InstanceType, id_: str) -> None:
             unit = systemd.unit_name(inst_type.value, id_)
             port = int(id_) if inst_type == InstanceType.WEB else 0
             base_notes = None if inst_type == InstanceType.WEB else f"{inst_type.value}_id={id_}"
             try:
-                systemd.start(unit)
+                systemd.start(unit, executor=ex)
                 # Optionally wait for the unit to become active (systemd state)
                 if wait_timeout > 0:
                     if not quiet and not json_output:
                         print(f"  Waiting up to {wait_timeout}s for {unit} to become active...")
-                    systemd.wait_for_healthy(unit, timeout=wait_timeout)
+                    systemd.wait_for_healthy(unit, timeout=wait_timeout, executor=ex)
                 # Optionally wait for HTTP health check (web instances only)
                 if wait and inst_type == InstanceType.WEB:
                     if not quiet and not json_output:
                         timeout_s = wait_timeout or 60
                         url = f"http://localhost:{port}/health"
                         print(f"  Waiting up to {timeout_s}s for {url} ...")
-                    systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60)
+                    systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60, executor=ex)
                 # Record successful deployment
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
-                    tag=tag,
+                    tag=resolved_tag,
                     action=f"deploy-{inst_type.value}",
                     port=port,
                     success=True,
                     notes=base_notes,
+                    executor=ex,
                 )
                 deploy_results.append(
                     {
@@ -572,7 +632,7 @@ def deploy(
                         "identifier": id_,
                         "success": True,
                         "image": image,
-                        "tag": tag,
+                        "tag": resolved_tag,
                         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                     }
                 )
@@ -583,13 +643,14 @@ def deploy(
                     else f"{inst_type.value}_id={id_}; health-timeout: {e}"
                 )
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
-                    tag=tag,
+                    tag=resolved_tag,
                     action=f"deploy-{inst_type.value}",
                     port=port,
                     success=False,
                     notes=fail_notes,
+                    executor=ex,
                 )
                 deploy_results.append(
                     {
@@ -599,7 +660,7 @@ def deploy(
                         "success": False,
                         "error": str(e),
                         "image": image,
-                        "tag": tag,
+                        "tag": resolved_tag,
                         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                     }
                 )
@@ -613,13 +674,14 @@ def deploy(
                     else f"{inst_type.value}_id={id_}; error={e}"
                 )
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
-                    tag=tag,
+                    tag=resolved_tag,
                     action=f"deploy-{inst_type.value}",
                     port=port,
                     success=False,
                     notes=fail_notes,
+                    executor=ex,
                 )
                 deploy_results.append(
                     {
@@ -629,7 +691,7 @@ def deploy(
                         "success": False,
                         "error": str(e),
                         "image": image,
-                        "tag": tag,
+                        "tag": resolved_tag,
                         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                     }
                 )
@@ -640,7 +702,7 @@ def deploy(
 
     # Execute post-deploy hook (runs only when all instances deployed successfully)
     if post_hook and all(r["success"] for r in deploy_results):
-        run_hook(post_hook, "post-hook", quiet=quiet or json_output)
+        run_hook(post_hook, "post-hook", quiet=quiet or json_output, executor=ex)
 
     all_ok = all(r["success"] for r in deploy_results)
     any_ok = any(r["success"] for r in deploy_results)
@@ -663,11 +725,13 @@ def deploy(
 
 @app.command
 def redeploy(
+    reference: ImageRef = None,
     identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
     web: WebFlag = False,
     worker: WorkerFlag = False,
     scheduler: SchedulerFlag = False,
+    tag: TagFlag = None,
     delay: Delay = 30,
     force: Annotated[
         bool,
@@ -742,12 +806,23 @@ def redeploy(
         ots instances redeploy --web 7043 --wait    # Wait up to 60s for HTTP health check
         ots instances redeploy --pre-hook './scan.sh'    # Validate before redeploy
         ots instances redeploy --post-hook './notify.sh'  # Notify after redeploy
+        ots instances redeploy ghcr.io/org/image:v1.0    # Explicit image reference
+        ots instances redeploy --tag v0.24.0             # Specific tag only
     """
     import datetime
     import json as json_mod
 
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=True)
+    cfg = Config()
+
+    # Apply image reference overrides (positional ref > --tag flag > env/config)
+    ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
+    override_tag = ref_tag or tag
+    if ref_image or override_tag:
+        cfg = dataclasses.replace(cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag)
+
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
         if json_output:
@@ -758,14 +833,13 @@ def redeploy(
             print("Or deploy new ones with:       ots instances deploy --help")
         return
 
-    cfg = Config()
-
     # Resolve image/tag (handles CURRENT/ROLLBACK aliases)
-    image, tag = cfg.resolve_image_tag()
+    image, tag = cfg.resolve_image_tag(executor=ex)
     if not quiet and not json_output:
         print(f"Image: {image}:{tag}")
-        if cfg.has_custom_config:
-            mounted = [f.name for f in cfg.existing_config_files]
+        config_files = cfg.get_existing_config_files(executor=ex)
+        if config_files:
+            mounted = [f.name for f in config_files]
             print(f"Config overrides: {', '.join(mounted)}")
         else:
             print("Config: using container built-in defaults")
@@ -780,15 +854,21 @@ def redeploy(
         for inst_type in instances:
             if inst_type == InstanceType.WEB:
                 template_path = cfg.web_template_path
-                new_content = quadlet.render_web_template(cfg, force=True)
+                new_content = quadlet.render_web_template(cfg, force=True, executor=ex)
             elif inst_type == InstanceType.WORKER:
                 template_path = cfg.worker_template_path
-                new_content = quadlet.render_worker_template(cfg, force=True)
+                new_content = quadlet.render_worker_template(cfg, force=True, executor=ex)
             else:
                 template_path = cfg.scheduler_template_path
-                new_content = quadlet.render_scheduler_template(cfg, force=True)
+                new_content = quadlet.render_scheduler_template(cfg, force=True, executor=ex)
 
-            old_content = template_path.read_text() if template_path.exists() else ""
+            from ots_shared.ssh import LocalExecutor as _LE
+
+            if ex is not None and not isinstance(ex, _LE):
+                _r = ex.run(["cat", str(template_path)])
+                old_content = _r.stdout if _r.ok else ""
+            else:
+                old_content = template_path.read_text() if template_path.exists() else ""
             diff_lines = list(
                 difflib.unified_diff(
                     old_content.splitlines(keepends=True),
@@ -833,24 +913,24 @@ def redeploy(
 
     # Execute pre-redeploy hook (aborts if it exits non-zero)
     if pre_hook and not dry_run:
-        run_hook(pre_hook, "pre-hook", quiet=quiet or json_output)
+        run_hook(pre_hook, "pre-hook", quiet=quiet or json_output, executor=ex)
 
     redeploy_results: list[dict] = []
 
-    with deploy_lock():
+    with deploy_lock(executor=ex):
         # Write quadlet templates for each type being redeployed.
         # Raises SystemExit(1) if env file or secrets are missing.
         # Redeploy always enforces secrets check (no --force override for secrets here).
         if InstanceType.WEB in instances:
-            assets.update(cfg, create_volume=force)
+            assets.update(cfg, create_volume=force, executor=ex)
             logger.info("Writing quadlet files to %s", cfg.web_template_path.parent)
-            quadlet.write_web_template(cfg)
+            quadlet.write_web_template(cfg, executor=ex)
         if InstanceType.WORKER in instances:
             logger.info("Writing quadlet files to %s", cfg.worker_template_path.parent)
-            quadlet.write_worker_template(cfg)
+            quadlet.write_worker_template(cfg, executor=ex)
         if InstanceType.SCHEDULER in instances:
             logger.info("Writing quadlet files to %s", cfg.scheduler_template_path.parent)
-            quadlet.write_scheduler_template(cfg)
+            quadlet.write_scheduler_template(cfg, executor=ex)
 
         def do_redeploy(inst_type: InstanceType, id_: str) -> None:
             unit = systemd.unit_name(inst_type.value, id_)
@@ -864,39 +944,40 @@ def redeploy(
             if force:
                 if not json_output:
                     print(f"Stopping {unit}")
-                systemd.stop(unit)
+                systemd.stop(unit, executor=ex)
 
             try:
-                if force or not systemd.container_exists(unit):
+                if force or not systemd.container_exists(unit, executor=ex):
                     if not json_output:
                         print(f"Starting {unit}")
-                    systemd.start(unit)
+                    systemd.start(unit, executor=ex)
                 else:
                     if not json_output:
                         print(f"Recreating {unit}")
-                    systemd.recreate(unit)
+                    systemd.recreate(unit, executor=ex)
 
                 # Optionally wait for the unit to become active (systemd state)
                 if wait_timeout > 0:
                     if not quiet and not json_output:
                         print(f"  Waiting up to {wait_timeout}s for {unit} to become active...")
-                    systemd.wait_for_healthy(unit, timeout=wait_timeout)
+                    systemd.wait_for_healthy(unit, timeout=wait_timeout, executor=ex)
                 # Optionally wait for HTTP health check (web instances only)
                 if wait and inst_type == InstanceType.WEB:
                     if not quiet and not json_output:
                         timeout_s = wait_timeout or 60
                         url = f"http://localhost:{port}/health"
                         print(f"  Waiting up to {timeout_s}s for {url} ...")
-                    systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60)
+                    systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60, executor=ex)
 
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
                     tag=tag,
                     action=f"redeploy-{inst_type.value}",
                     port=port,
                     success=True,
                     notes=base_notes,
+                    executor=ex,
                 )
                 redeploy_results.append(
                     {
@@ -916,13 +997,14 @@ def redeploy(
                     else f"{inst_type.value}_id={id_}; health-timeout: {e}"
                 )
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
                     tag=tag,
                     action=f"redeploy-{inst_type.value}",
                     port=port,
                     success=False,
                     notes=fail_notes,
+                    executor=ex,
                 )
                 redeploy_results.append(
                     {
@@ -946,13 +1028,14 @@ def redeploy(
                     else f"{inst_type.value}_id={id_}; error={e}"
                 )
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=image,
                     tag=tag,
                     action=f"redeploy-{inst_type.value}",
                     port=port,
                     success=False,
                     notes=fail_notes,
+                    executor=ex,
                 )
                 redeploy_results.append(
                     {
@@ -973,7 +1056,7 @@ def redeploy(
 
     # Execute post-redeploy hook (runs only when all instances redeployed successfully)
     if post_hook and all(r["success"] for r in redeploy_results):
-        run_hook(post_hook, "post-hook", quiet=quiet or json_output)
+        run_hook(post_hook, "post-hook", quiet=quiet or json_output, executor=ex)
 
     all_ok = all(r["success"] for r in redeploy_results)
     any_ok = any(r["success"] for r in redeploy_results)
@@ -1025,8 +1108,10 @@ def undeploy(
     import datetime
     import json as json_mod
 
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=True)
+    instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
         if json_output:
@@ -1065,27 +1150,27 @@ def undeploy(
                 print(f"[dry-run] Would undeploy {inst_type.value}: {', '.join(ids)}")
         return
 
-    cfg = Config()
-    image, tag = cfg.resolve_image_tag()
+    image, tag = cfg.resolve_image_tag(executor=ex)
     undeploy_results: list[dict] = []
 
     def do_undeploy(inst_type: InstanceType, id_: str) -> None:
         unit = systemd.unit_name(inst_type.value, id_)
         try:
-            systemd.stop(unit)
+            systemd.stop(unit, executor=ex)
             # Prevent auto-start on reboot — disable is idempotent (no-op if not enabled)
-            systemd.disable(unit)
+            systemd.disable(unit, executor=ex)
             # Clear failed state so unit doesn't appear in discovery
-            systemd.reset_failed(unit)
+            systemd.reset_failed(unit, executor=ex)
             port = int(id_) if inst_type == InstanceType.WEB else 0
             db.record_deployment(
-                cfg.db_path,
+                cfg.get_db_path(ex),
                 image=image,
                 tag=tag,
                 action=f"undeploy-{inst_type.value}",
                 port=port,
                 success=True,
                 notes=None if inst_type == InstanceType.WEB else f"{inst_type.value}_id={id_}",
+                executor=ex,
             )
             undeploy_results.append(
                 {
@@ -1104,13 +1189,14 @@ def undeploy(
                 else f"{inst_type.value}_id={id_}; error={e}"
             )
             db.record_deployment(
-                cfg.db_path,
+                cfg.get_db_path(ex),
                 image=image,
                 tag=tag,
                 action=f"undeploy-{inst_type.value}",
                 port=port,
                 success=False,
                 notes=fail_notes,
+                executor=ex,
             )
             undeploy_results.append(
                 {
@@ -1157,8 +1243,10 @@ def start(
         ots instances start --web 7043 7044         # Start specific web
         ots instances start --scheduler main        # Start specific scheduler
     """
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=False)
+    instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
         print("No configured instances found")
@@ -1168,7 +1256,7 @@ def start(
     for inst_type, ids in instances.items():
         for id_ in ids:
             unit = systemd.unit_name(inst_type.value, id_)
-            systemd.start(unit)
+            systemd.start(unit, executor=ex)
             print(f"Started {unit}")
 
     hint = format_journalctl_hint(instances)
@@ -1195,8 +1283,10 @@ def stop(
         ots instances stop --web 7043 7044          # Stop specific web
         ots instances stop --scheduler              # Stop scheduler instances
     """
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=True)
+    instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
         print("No running instances found")
@@ -1206,7 +1296,7 @@ def stop(
     for inst_type, ids in instances.items():
         for id_ in ids:
             unit = systemd.unit_name(inst_type.value, id_)
-            systemd.stop(unit)
+            systemd.stop(unit, executor=ex)
             print(f"Stopped {unit}")
 
 
@@ -1232,8 +1322,10 @@ def restart(
         ots instances restart --scheduler main      # Restart specific scheduler
         ots instances restart --delay 10            # Longer wait between restarts
     """
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=True)
+    instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
         print("No running instances found")
@@ -1242,7 +1334,7 @@ def restart(
 
     def do_restart(inst_type: InstanceType, id_: str) -> None:
         unit = systemd.unit_name(inst_type.value, id_)
-        systemd.restart(unit)
+        systemd.restart(unit, executor=ex)
 
     for_each_instance(instances, delay, do_restart, "Restarting", show_logs_hint=True)
 
@@ -1265,9 +1357,10 @@ def enable(
         ots instances enable --web 7043 7044        # Enable specific web
         ots instances enable --scheduler main       # Enable specific scheduler
     """
-    systemd.require_systemctl()
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=False)
+    instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
         print("No configured instances found")
@@ -1278,15 +1371,10 @@ def enable(
         for id_ in ids:
             unit = systemd.unit_name(inst_type.value, id_)
             try:
-                subprocess.run(
-                    ["sudo", "systemctl", "enable", unit],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
+                systemd.enable(unit, executor=ex)
                 print(f"Enabled {unit}")
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to enable {unit}: {e.stderr}")
+            except systemd.SystemctlError as e:
+                print(f"Failed to enable {unit}: {e.journal}")
 
 
 @app.command
@@ -1308,9 +1396,10 @@ def disable(
         ots instances disable --web 7043 7044 -y    # Disable specific web
         ots instances disable --scheduler main -y   # Disable specific scheduler
     """
-    systemd.require_systemctl()
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=False)
+    instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
         print("No configured instances found")
@@ -1331,15 +1420,10 @@ def disable(
         for id_ in ids:
             unit = systemd.unit_name(inst_type.value, id_)
             try:
-                subprocess.run(
-                    ["sudo", "systemctl", "disable", unit],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
+                systemd.disable(unit, executor=ex)
                 print(f"Disabled {unit}")
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to disable {unit}: {e.stderr}")
+            except systemd.SystemctlError as e:
+                print(f"Failed to disable {unit}: {e.journal}")
 
 
 @app.command
@@ -1362,8 +1446,10 @@ def status(
     """
     import json as json_mod
 
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=False)
+    instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
         if json_output:
@@ -1378,13 +1464,7 @@ def status(
         for inst_type, ids in instances.items():
             for id_ in ids:
                 unit = systemd.unit_name(inst_type.value, id_)
-                result = subprocess.run(
-                    ["systemctl", "is-active", unit],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                active_state = result.stdout.strip()
+                active_state = systemd.is_active(unit, executor=ex)
                 results.append(
                     {
                         "unit": unit,
@@ -1399,7 +1479,7 @@ def status(
         for inst_type, ids in instances.items():
             for id_ in ids:
                 unit = systemd.unit_name(inst_type.value, id_)
-                systemd.status(unit)
+                systemd.status(unit, executor=ex)
                 print()
 
 
@@ -1422,8 +1502,10 @@ def logs(
         ots instances logs --scheduler main -f      # Follow scheduler logs
         ots instances logs -n 100                   # Last 100 lines
     """
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=False)
+    instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
         print("No instances found")
@@ -1435,12 +1517,28 @@ def logs(
         for id_ in ids:
             units.append(systemd.unit_name(inst_type.value, id_))
 
-    cmd = ["sudo", "journalctl", "--no-pager", f"-n{lines}"]
+    cmd = ["journalctl", "--no-pager", f"-n{lines}"]
     if follow:
         cmd.append("-f")
     for unit in units:
         cmd.extend(["-u", unit])
-    subprocess.run(cmd)
+
+    # Route through executor for remote support.
+    # Follow mode uses run_stream() for real-time output;
+    # non-follow uses run() since output is bounded.
+    from ots_containers.systemd import _get_executor
+
+    resolved_ex = _get_executor(ex)
+    if follow:
+        rc = resolved_ex.run_stream(cmd, sudo=True, timeout=300)
+        if rc != 0:
+            print(f"journalctl exited with code {rc}", file=sys.stderr)
+    else:
+        result = resolved_ex.run(cmd, sudo=True, timeout=30)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
 
 
 @app.command(name="show-env")
@@ -1450,34 +1548,57 @@ def show_env():
     Displays the contents of /etc/default/onetimesecret (shared by all instances).
     Only shows valid KEY=VALUE pairs, sorted alphabetically.
 
+    When ``--host`` is set, reads the file from the remote host via the executor.
+
     Examples:
         ots instances show-env
     """
-    from pathlib import Path
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
 
-    env_file = Path("/etc/default/onetimesecret")
-    print(f"=== {env_file} ===")
-    if env_file.exists():
-        lines = env_file.read_text().splitlines()
-        # Parse only valid KEY=VALUE lines (key must be valid shell identifier)
-        env_vars = {}
-        for line in lines:
-            line = line.strip()
-            # Skip empty lines, comments, and shell commands
-            if not line or line.startswith("#"):
-                continue
-            # Must contain = and start with a valid identifier char
-            if "=" in line:
-                key, _, value = line.partition("=")
-                key = key.strip()
-                # Valid env var: letter/underscore start, alnum/underscore chars
-                if key and (key[0].isalpha() or key.startswith("_")):
-                    if all(c.isalnum() or c == "_" for c in key):
-                        env_vars[key] = value
-        for key in sorted(env_vars.keys()):
-            print(f"{key}={env_vars[key]}")
+    env_path = "/etc/default/onetimesecret"
+    print(f"=== {env_path} ===")
+
+    from ots_containers.systemd import _get_executor, _is_local
+
+    resolved_ex = _get_executor(ex)
+
+    if _is_local(resolved_ex):
+        # Local: read file directly for efficiency
+        from pathlib import Path
+
+        env_file = Path(env_path)
+        if not env_file.exists():
+            print("  (file not found)")
+            print()
+            return
+        content = env_file.read_text()
     else:
-        print("  (file not found)")
+        # Remote: read via executor
+        result = resolved_ex.run(["cat", env_path], timeout=10)
+        if not result.ok:
+            print("  (file not found)")
+            print()
+            return
+        content = result.stdout
+
+    # Parse only valid KEY=VALUE lines (key must be valid shell identifier)
+    env_vars = {}
+    for line in content.splitlines():
+        line = line.strip()
+        # Skip empty lines, comments, and shell commands
+        if not line or line.startswith("#"):
+            continue
+        # Must contain = and start with a valid identifier char
+        if "=" in line:
+            key, _, value = line.partition("=")
+            key = key.strip()
+            # Valid env var: letter/underscore start, alnum/underscore chars
+            if key and (key[0].isalpha() or key.startswith("_")):
+                if all(c.isalnum() or c == "_" for c in key):
+                    env_vars[key] = value
+    for key in sorted(env_vars.keys()):
+        print(f"{key}={env_vars[key]}")
     print()
 
 
@@ -1505,8 +1626,10 @@ def exec_shell(
     """
     import os
 
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=True)
+    instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
         print("No running instances found")
@@ -1521,13 +1644,13 @@ def exec_shell(
             unit = systemd.unit_name(inst_type.value, id_)
             container = systemd.unit_to_container_name(unit)
             print(f"=== Entering {unit} ===")
-            # Interactive exec requires subprocess.run with no capture
-            subprocess.run(["podman", "exec", "-it", container, shell])
+            ex.run_interactive(["podman", "exec", "-it", container, shell])
             print()
 
 
 @app.command
 def shell(
+    reference: ImageRef = None,
     persistent: Annotated[
         str | None,
         cyclopts.Parameter(
@@ -1557,20 +1680,7 @@ def shell(
         ),
     ] = None,
     quiet: Quiet = False,
-    tag: Annotated[
-        str | None,
-        cyclopts.Parameter(
-            name=["--tag", "-t"],
-            help="Image tag to use (default: from TAG env or 'current' alias)",
-        ),
-    ] = None,
-    remote: Annotated[
-        bool,
-        cyclopts.Parameter(
-            name=["--remote", "-r"],
-            help="Pull from registry instead of using local image",
-        ),
-    ] = False,
+    tag: TagFlag = None,
 ):
     """Run ephemeral shell for migrations and maintenance.
 
@@ -1587,6 +1697,7 @@ def shell(
         ots instance shell -v ./data                    # bind-mount ./data at /app/data
         ots instance shell -v ./data -e REDIS_URL=redis://10.0.0.5:6379/0  # with env
         ots instance shell -e FOO=bar -e BAZ=qux        # multiple env vars, tmpfs default
+        ots instance shell ghcr.io/org/image:v0.24.0     # explicit image ref
     """
     from pathlib import Path
 
@@ -1596,17 +1707,19 @@ def shell(
 
     cfg = Config()
 
-    # Resolve image/tag (same pattern as run command)
-    if remote:
-        if tag:
-            image = cfg.image
-            resolved_tag = tag
-        else:
-            image, resolved_tag = cfg.resolve_image_tag()
-    else:
-        # Local is the default
-        image = "onetimesecret"  # localhost/onetimesecret
-        resolved_tag = tag or cfg.tag
+    # Apply image reference overrides (positional ref > --tag flag > env/config)
+    ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
+    override_tag = ref_tag or tag
+    if ref_image or override_tag:
+        cfg = dataclasses.replace(cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag)
+
+    # Obtain executor early for remote env file checks
+    from ots_containers.systemd import _get_executor
+
+    ex = _get_executor(cfg.get_executor(host=context.host_var.get(None)))
+
+    # Resolve image/tag (handles @current/@rollback aliases)
+    image, resolved_tag = cfg.resolve_image_tag(executor=ex)
     full_image = f"{image}:{resolved_tag}"
 
     # Build podman run command
@@ -1620,14 +1733,25 @@ def shell(
 
     # Environment file and secrets
     env_file = quadlet.DEFAULT_ENV_FILE
-    if env_file.exists():
+    from ots_shared.ssh import LocalExecutor
+
+    if not isinstance(ex, LocalExecutor):
+        env_exists = ex.run(["test", "-f", str(env_file)]).ok
+    else:
+        env_exists = env_file.exists()
+    if env_exists:
         cmd.extend(["--env-file", str(env_file)])
-        cmd.extend(build_secret_args(env_file))
+        cmd.extend(build_secret_args(env_file, executor=ex))
 
     # Data volume: bind-mount, persistent named volume, or tmpfs (default)
     if volume:
-        host_path = Path(volume).resolve()
-        host_path.mkdir(parents=True, exist_ok=True)
+        if not isinstance(ex, LocalExecutor):
+            # Remote: create directory on the remote host, use path as-is
+            host_path = Path(volume)
+            ex.run(["mkdir", "-p", str(host_path)])
+        else:
+            host_path = Path(volume).resolve()
+            host_path.mkdir(parents=True, exist_ok=True)
         cmd.extend(["-v", f"{host_path}:/app/data:rw,U"])
     elif persistent:
         volume_name = f"ots-migration-{persistent}"
@@ -1640,7 +1764,7 @@ def shell(
         cmd.extend(["-e", entry])
 
     # Config overrides (per-file, if any exist on host)
-    for f in cfg.existing_config_files:
+    for f in cfg.get_existing_config_files(executor=ex):
         resolved = f.resolve()  # symlink resolution for macOS podman VM
         cmd.extend(["-v", f"{resolved}:/app/etc/{f.name}:ro"])
 
@@ -1657,25 +1781,30 @@ def shell(
         print(format_command(cmd))
         print()
 
-    # Run it
     try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Shell exited with code {e.returncode}")
-        raise SystemExit(e.returncode)
+        if command is None:
+            # Interactive shell — full PTY
+            rc = ex.run_interactive(cmd)
+        else:
+            # Non-interactive command — stream output
+            rc = ex.run_stream(cmd)
+        if rc != 0:
+            print(f"Shell exited with code {rc}")
+            raise SystemExit(rc)
     except KeyboardInterrupt:
         print("\nInterrupted")
 
 
 @app.command(name="config-transform")
 def config_transform(
+    reference: ImageRef = None,
     command: Annotated[
-        str,
+        str | None,
         cyclopts.Parameter(
             name=["--command", "-c"],
             help="Migration command to run (e.g., 'bin/ots migrate 20250727_01')",
         ),
-    ],
+    ] = None,
     file: Annotated[
         str,
         cyclopts.Parameter(
@@ -1691,20 +1820,7 @@ def config_transform(
         ),
     ] = False,
     quiet: Quiet = False,
-    tag: Annotated[
-        str | None,
-        cyclopts.Parameter(
-            name=["--tag", "-t"],
-            help="Image tag to use (default: from TAG env or 'current' alias)",
-        ),
-    ] = None,
-    remote: Annotated[
-        bool,
-        cyclopts.Parameter(
-            name=["--remote", "-r"],
-            help="Pull from registry instead of using local image",
-        ),
-    ] = False,
+    tag: TagFlag = None,
 ):
     """Transform config files with backup/apply workflow.
 
@@ -1731,12 +1847,34 @@ def config_transform(
 
         # Different config file
         ots instance config-transform -c "bin/ots migrate auth_fix" -f auth.yaml --apply
+
+        # Explicit image reference
+        ots instance config-transform ghcr.io/org/image:v0.25.0 -c "bin/ots migrate fix"
     """
     import difflib
     import time
     from pathlib import Path
 
+    if command is None:
+        raise SystemExit(
+            "--command / -c is required. "
+            "Example: ots instance config-transform -c 'bin/ots migrate fix'"
+        )
+
     cfg = Config()
+
+    # Apply image reference overrides (positional ref > --tag flag > env/config)
+    ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
+    override_tag = ref_tag or tag
+    if ref_image or override_tag:
+        cfg = dataclasses.replace(cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag)
+
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
+
+    from ots_shared.ssh import LocalExecutor
+
+    is_remote = not isinstance(ex, LocalExecutor)
 
     # Validate: prevent path traversal
     if ".." in file or file.startswith("/"):
@@ -1744,19 +1882,14 @@ def config_transform(
 
     # Check config file exists
     config_path = cfg.config_dir / file
-    if not config_path.exists():
+    if is_remote:
+        if not ex.run(["test", "-f", str(config_path)]).ok:
+            raise SystemExit(f"Config file not found: {config_path}")
+    elif not config_path.exists():
         raise SystemExit(f"Config file not found: {config_path}")
 
-    # Resolve image/tag (same pattern as shell command)
-    if remote:
-        if tag:
-            image = cfg.image
-            resolved_tag = tag
-        else:
-            image, resolved_tag = cfg.resolve_image_tag()
-    else:
-        image = "onetimesecret"
-        resolved_tag = tag or cfg.tag
+    # Resolve image/tag (handles @current/@rollback aliases)
+    image, resolved_tag = cfg.resolve_image_tag(executor=ex)
     full_image = f"{image}:{resolved_tag}"
 
     # Create temporary volume with timestamp
@@ -1765,30 +1898,21 @@ def config_transform(
 
     try:
         # Create the volume
-        subprocess.run(
-            ["podman", "volume", "create", volume_name],
-            check=True,
-            capture_output=True,
-        )
+        p.volume.create(volume_name, check=True, capture_output=True)
 
         # Copy config file to volume using a helper container
-        # We use a busybox-style approach: mount both and copy
-        # Resolve symlinks for podman VM compatibility (macOS)
-        config_path_resolved = config_path.resolve()
-        subprocess.run(
-            [
-                "podman",
-                "run",
-                "--rm",
-                "-v",
-                f"{config_path_resolved}:/src/{file}:ro",
-                "-v",
-                f"{volume_name}:/dest",
-                full_image,
-                "/bin/cp",
-                f"/src/{file}",
-                f"/dest/{file}",
-            ],
+        # Resolve symlinks for podman VM compatibility (macOS, local only)
+        config_path_str = str(config_path.resolve()) if not is_remote else str(config_path)
+        p.run(
+            "--rm",
+            "-v",
+            f"{config_path_str}:/src/{file}:ro",
+            "-v",
+            f"{volume_name}:/dest",
+            full_image,
+            "/bin/cp",
+            f"/src/{file}",
+            f"/dest/{file}",
             check=True,
             capture_output=True,
         )
@@ -1797,14 +1921,18 @@ def config_transform(
         env_file = quadlet.DEFAULT_ENV_FILE
         cmd = ["podman", "run", "--rm", "--network=host"]
 
-        if env_file.exists():
+        if is_remote:
+            env_exists = ex.run(["test", "-f", str(env_file)]).ok
+        else:
+            env_exists = env_file.exists()
+        if env_exists:
             cmd.extend(["--env-file", str(env_file)])
-            cmd.extend(build_secret_args(env_file))
+            cmd.extend(build_secret_args(env_file, executor=ex))
 
         cmd.extend(["-v", f"{volume_name}:/app/data"])
-        # Resolve symlinks for podman VM compatibility (macOS)
-        config_dir_resolved = cfg.config_dir.resolve()
-        cmd.extend(["-v", f"{config_dir_resolved}:/app/etc:ro"])
+        # Resolve symlinks for podman VM compatibility (macOS, local only)
+        config_dir_str = str(cfg.config_dir.resolve()) if not is_remote else str(cfg.config_dir)
+        cmd.extend(["-v", f"{config_dir_str}:/app/etc:ro"])
         cmd.append(full_image)
         cmd.extend(["/bin/bash", "-c", command])
 
@@ -1812,9 +1940,9 @@ def config_transform(
             print(f"Running: {format_command(cmd)}")
             print()
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = ex.run(cmd)
 
-        if result.returncode != 0:
+        if not result.ok:
             # Show migration command output for operator debugging.
             # No secrets here: env vars are passed via podman secrets,
             # not visible in command stdout/stderr.
@@ -1826,7 +1954,7 @@ def config_transform(
             raise SystemExit(result.returncode)
 
         # Read the transformed file from volume
-        read_result = subprocess.run(
+        read_result = ex.run(
             [
                 "podman",
                 "run",
@@ -1836,18 +1964,22 @@ def config_transform(
                 full_image,
                 "/bin/cat",
                 f"/data/{file}.new",
-            ],
-            capture_output=True,
-            text=True,
+            ]
         )
 
-        if read_result.returncode != 0:
+        if not read_result.ok:
             print(f"No transformed file produced: /app/data/{file}.new")
             print("Migration command should write transformed config to {file}.new")
             raise SystemExit(1)
 
         new_content = read_result.stdout
-        original_content = config_path.read_text()
+
+        # Read original config content
+        if is_remote:
+            orig_result = ex.run(["cat", str(config_path)])
+            original_content = orig_result.stdout
+        else:
+            original_content = config_path.read_text()
 
         # Show unified diff of proposed config changes. This is the primary
         # output of dry-run mode — config files contain app settings, not secrets.
@@ -1875,31 +2007,35 @@ def config_transform(
         backup_time = time.strftime("%Y%m%d-%H%M%S")
         backup_path = Path(f"{config_path}.bak.{backup_time}")
 
-        # Handle numbered backups if timestamp backup exists
-        if backup_path.exists():
-            counter = 1
-            while True:
-                numbered_backup = Path(f"{config_path}.bak.{backup_time}.{counter}")
-                if not numbered_backup.exists():
-                    backup_path = numbered_backup
-                    break
-                counter += 1
+        if is_remote:
+            # Remote: use cp for backup, tee for write
+            ex.run(["cp", "-p", str(config_path), str(backup_path)], check=True)
+            print(f"Backup created: {backup_path}")
+            ex.run(["tee", str(config_path)], input=new_content)
+            print(f"Config updated: {config_path}")
+        else:
+            # Handle numbered backups if timestamp backup exists
+            if backup_path.exists():
+                counter = 1
+                while True:
+                    numbered_backup = Path(f"{config_path}.bak.{backup_time}.{counter}")
+                    if not numbered_backup.exists():
+                        backup_path = numbered_backup
+                        break
+                    counter += 1
 
-        # Create backup and apply
-        import shutil
+            # Create backup and apply
+            import shutil
 
-        shutil.copy2(config_path, backup_path)
-        print(f"Backup created: {backup_path}")
+            shutil.copy2(config_path, backup_path)
+            print(f"Backup created: {backup_path}")
 
-        config_path.write_text(new_content)
-        print(f"Config updated: {config_path}")
+            config_path.write_text(new_content)
+            print(f"Config updated: {config_path}")
 
     finally:
         # Cleanup: remove temporary volume
-        subprocess.run(
-            ["podman", "volume", "rm", "-f", volume_name],
-            capture_output=True,
-        )
+        p.volume.rm("-f", volume_name, capture_output=True)
 
 
 @app.command
@@ -1931,12 +2067,12 @@ def cleanup(
             print("Aborted")
             return
 
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
+
     try:
-        result = subprocess.run(
-            ["podman", "volume", "rm", volume_name],
-            capture_output=True,
-            text=True,
-        )
+        result = p.volume.rm(volume_name)
         if result.returncode == 0:
             outcome = {"success": True, "volume": volume_name, "removed": True}
             if json_output:
@@ -1999,7 +2135,11 @@ def metrics(
     import json as json_mod
 
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
-    instances = resolve_identifiers(identifiers, itype, running_only=False)
+
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+
+    instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
         if json_output:
@@ -2008,6 +2148,8 @@ def metrics(
             print("No configured instances found")
             print("Deploy one first: ots instances deploy --help")
         return
+
+    p = Podman(executor=ex)
 
     results = []
 
@@ -2018,38 +2160,20 @@ def metrics(
 
             # Get systemd active state
             try:
-                state_result = subprocess.run(
-                    ["systemctl", "is-active", f"{unit}.service"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                active_state = state_result.stdout.strip()
-            except (subprocess.SubprocessError, OSError):
+                active_state = systemd.is_active(f"{unit}.service", executor=ex)
+            except Exception:
                 active_state = "unknown"
 
             # Get podman stats (non-streaming, single snapshot)
             stats_data = None
             try:
-                stats_result = subprocess.run(
-                    [
-                        "podman",
-                        "stats",
-                        "--no-stream",
-                        "--format",
-                        "json",
-                        container,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                )
+                stats_result = p.stats(container, no_stream=True, format="json", timeout=15)
                 if stats_result.returncode == 0 and stats_result.stdout.strip():
                     raw = json_mod.loads(stats_result.stdout)
                     # podman stats --format json returns a list
                     if isinstance(raw, list) and raw:
                         stats_data = raw[0]
-            except (subprocess.SubprocessError, OSError, json_mod.JSONDecodeError):
+            except Exception:
                 stats_data = None
 
             entry: dict = {
@@ -2138,9 +2262,10 @@ def rollback(
 
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
 
     # Determine rollback target from the deployment timeline
-    previous = db.get_previous_tags(cfg.db_path, limit=5)
+    previous = db.get_previous_tags(cfg.get_db_path(ex), limit=5, executor=ex)
     if len(previous) < 2:
         msg = "No previous deployment found in history - cannot roll back"
         if json_output:
@@ -2153,7 +2278,7 @@ def rollback(
     rollback_image, rollback_tag, rollback_ts = previous[1]
 
     if dry_run:
-        instances = resolve_identifiers(identifiers, itype, running_only=True)
+        instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
         dry_items = [{"instance_type": t.value, "identifiers": ids} for t, ids in instances.items()]
         result = {
             "action": "rollback",
@@ -2184,7 +2309,7 @@ def rollback(
             return
 
     # Update DB aliases (CURRENT -> ROLLBACK, rollback_tag -> CURRENT)
-    rollback_result = db.rollback(cfg.db_path)
+    rollback_result = db.rollback(cfg.get_db_path(ex), executor=ex)
     if rollback_result is None:
         msg = "Rollback failed - deployment timeline returned no result"
         if json_output:
@@ -2202,7 +2327,7 @@ def rollback(
         )
 
     # Redeploy running instances with the rolled-back image/tag
-    instances = resolve_identifiers(identifiers, itype, running_only=True)
+    instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
         msg_extra = "No running instances to redeploy"
@@ -2226,15 +2351,15 @@ def rollback(
 
     redeploy_results: list[dict] = []
 
-    with deploy_lock():
+    with deploy_lock(executor=ex):
         # Write quadlet templates for each instance type being redeployed
         if InstanceType.WEB in instances:
-            assets.update(cfg, create_volume=False)
-            quadlet.write_web_template(cfg)
+            assets.update(cfg, create_volume=False, executor=ex)
+            quadlet.write_web_template(cfg, executor=ex)
         if InstanceType.WORKER in instances:
-            quadlet.write_worker_template(cfg)
+            quadlet.write_worker_template(cfg, executor=ex)
         if InstanceType.SCHEDULER in instances:
-            quadlet.write_scheduler_template(cfg)
+            quadlet.write_scheduler_template(cfg, executor=ex)
 
         def do_rollback_redeploy(inst_type: InstanceType, id_: str) -> None:
             unit = systemd.unit_name(inst_type.value, id_)
@@ -2245,15 +2370,16 @@ def rollback(
                 else f"{inst_type.value}_id={id_}; rollback from {current_tag}"
             )
             try:
-                systemd.recreate(unit)
+                systemd.recreate(unit, executor=ex)
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=new_image,
                     tag=new_tag,
                     action=f"rollback-{inst_type.value}",
                     port=port,
                     success=True,
                     notes=base_notes,
+                    executor=ex,
                 )
                 redeploy_results.append(
                     {
@@ -2273,13 +2399,14 @@ def rollback(
                     else f"{inst_type.value}_id={id_}; rollback from {current_tag}; error={e}"
                 )
                 db.record_deployment(
-                    cfg.db_path,
+                    cfg.get_db_path(ex),
                     image=new_image,
                     tag=new_tag,
                     action=f"rollback-{inst_type.value}",
                     port=port,
                     success=False,
                     notes=fail_notes,
+                    executor=ex,
                 )
                 redeploy_results.append(
                     {

@@ -151,6 +151,102 @@ class TestDiscoverWebInstances:
         )
 
 
+class TestIsActive:
+    """Test is_active function."""
+
+    def test_is_active_returns_active_state(self, mocker):
+        """Should return the state string from systemctl is-active."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = "active\n"
+        mock_result.returncode = 0
+        mock_result.ok = True
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        state = systemd.is_active("onetime-web@7043")
+        assert state == "active"
+
+    def test_is_active_returns_inactive(self, mocker):
+        """Should return 'inactive' for stopped units."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = "inactive\n"
+        mock_result.returncode = 3
+        mock_result.ok = False
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        state = systemd.is_active("onetime-web@7043")
+        assert state == "inactive"
+
+    def test_is_active_returns_failed(self, mocker):
+        """Should return 'failed' for failed units."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = "failed\n"
+        mock_result.returncode = 3
+        mock_result.ok = False
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        state = systemd.is_active("onetime-web@7043")
+        assert state == "failed"
+
+    def test_is_active_calls_systemctl_correctly(self, mocker):
+        """Should call systemctl is-active with the unit name."""
+        from ots_containers import systemd
+
+        mock_result = mocker.Mock()
+        mock_result.stdout = "active\n"
+        mock_result.returncode = 0
+        mock_result.ok = True
+        mock_run = mocker.patch("subprocess.run", return_value=mock_result)
+
+        systemd.is_active("onetime-web@7043")
+
+        mock_run.assert_called_once_with(
+            ["systemctl", "is-active", "onetime-web@7043"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+
+class TestEnable:
+    """Test enable function."""
+
+    def test_enable_calls_systemctl_enable(self, mocker):
+        """Should call sudo systemctl enable with unit name."""
+        from ots_containers import systemd
+
+        mock_run = mocker.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        )
+
+        systemd.enable("onetime-web@7043")
+
+        mock_run.assert_called_once_with(
+            ["sudo", "--", "systemctl", "enable", "onetime-web@7043"],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+
+    def test_enable_raises_systemctl_error_on_failure(self, mocker):
+        """Should raise SystemctlError with journal context on failure."""
+        from ots_containers import systemd
+
+        mocker.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 1, stdout="", stderr=""),
+        )
+
+        with pytest.raises(SystemctlError, match="failed to enable"):
+            systemd.enable("onetime-web@7043")
+
+
 class TestDaemonReload:
     """Test daemon_reload function."""
 
@@ -158,24 +254,30 @@ class TestDaemonReload:
         """Should call sudo systemctl daemon-reload."""
         from ots_containers import systemd
 
-        mock_run = mocker.patch("subprocess.run")
+        mock_run = mocker.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        )
 
         systemd.daemon_reload()
 
         mock_run.assert_called_once_with(
-            ["sudo", "systemctl", "daemon-reload"], check=True, timeout=30
+            ["sudo", "--", "systemctl", "daemon-reload"],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
 
     def test_daemon_reload_raises_on_failure(self, mocker):
-        """Should propagate CalledProcessError on failure."""
+        """Should raise SystemctlError on failure."""
         from ots_containers import systemd
 
         mocker.patch(
             "subprocess.run",
-            side_effect=subprocess.CalledProcessError(1, "cmd"),
+            return_value=subprocess.CompletedProcess([], 1, stdout="", stderr="fail"),
         )
 
-        with pytest.raises(subprocess.CalledProcessError):
+        with pytest.raises(SystemctlError):
             systemd.daemon_reload()
 
 
@@ -188,13 +290,13 @@ class TestStart:
 
         mock_run = mocker.patch(
             "subprocess.run",
-            return_value=subprocess.CompletedProcess([], 0),
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
         )
 
         systemd.start("onetime-web@7043")
 
         mock_run.assert_called_once_with(
-            ["sudo", "systemctl", "start", "onetime-web@7043"],
+            ["sudo", "--", "systemctl", "start", "onetime-web@7043"],
             capture_output=True,
             text=True,
             timeout=90,
@@ -222,13 +324,13 @@ class TestStop:
 
         mock_run = mocker.patch(
             "subprocess.run",
-            return_value=subprocess.CompletedProcess([], 0),
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
         )
 
         systemd.stop("onetime-web@7043")
 
         mock_run.assert_called_once_with(
-            ["sudo", "systemctl", "stop", "onetime-web@7043"],
+            ["sudo", "--", "systemctl", "stop", "onetime-web@7043"],
             capture_output=True,
             text=True,
             timeout=90,
@@ -256,13 +358,13 @@ class TestRestart:
 
         mock_run = mocker.patch(
             "subprocess.run",
-            return_value=subprocess.CompletedProcess([], 0),
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
         )
 
         systemd.restart("onetime-web@7043")
 
         mock_run.assert_called_once_with(
-            ["sudo", "systemctl", "restart", "onetime-web@7043"],
+            ["sudo", "--", "systemctl", "restart", "onetime-web@7043"],
             capture_output=True,
             text=True,
             timeout=90,
@@ -288,20 +390,25 @@ class TestStatus:
         """Should call sudo systemctl status with unit name."""
         from ots_containers import systemd
 
-        mock_run = mocker.patch("subprocess.run")
+        mock_run = mocker.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        )
 
         systemd.status("onetime-web@7043")
 
         mock_run.assert_called_once_with(
             [
                 "sudo",
+                "--",
                 "systemctl",
                 "--no-pager",
                 "-n25",
                 "status",
                 "onetime-web@7043",
             ],
-            check=False,
+            capture_output=True,
+            text=True,
             timeout=30,
         )
 
@@ -309,20 +416,25 @@ class TestStatus:
         """Should use custom line count when specified."""
         from ots_containers import systemd
 
-        mock_run = mocker.patch("subprocess.run")
+        mock_run = mocker.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        )
 
         systemd.status("onetime-web@7043", lines=50)
 
         mock_run.assert_called_once_with(
             [
                 "sudo",
+                "--",
                 "systemctl",
                 "--no-pager",
                 "-n50",
                 "status",
                 "onetime-web@7043",
             ],
-            check=False,
+            capture_output=True,
+            text=True,
             timeout=30,
         )
 
@@ -330,17 +442,10 @@ class TestStatus:
         """Should not raise when unit is not running (non-zero exit)."""
         from ots_containers import systemd
 
-        # status returns non-zero when unit is not active
-        mocker.patch(
+        mock_run = mocker.patch(
             "subprocess.run",
-            side_effect=subprocess.CalledProcessError(3, "cmd"),
+            return_value=subprocess.CompletedProcess([], 3, stdout="inactive", stderr=""),
         )
-
-        # Should not raise because check=False
-        # But since we're mocking with side_effect, it will raise
-        # Let's fix the mock to just return normally
-        mock_run = mocker.patch("subprocess.run")
-        mock_run.return_value.returncode = 3
 
         systemd.status("onetime-web@7043")  # Should not raise
 
@@ -392,16 +497,23 @@ class TestRecreate:
 
         mock_run = mocker.patch(
             "subprocess.run",
-            return_value=subprocess.CompletedProcess([], 0),
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
         )
 
         systemd.recreate("onetime-web@7044")
 
         assert mock_run.call_count == 3
         calls = mock_run.call_args_list
-        assert calls[0][0][0] == ["sudo", "systemctl", "stop", "onetime-web@7044"]
-        assert calls[1][0][0] == ["sudo", "podman", "rm", "--ignore", "systemd-onetime-web--7044"]
-        assert calls[2][0][0] == ["sudo", "systemctl", "start", "onetime-web@7044"]
+        assert calls[0][0][0] == ["sudo", "--", "systemctl", "stop", "onetime-web@7044"]
+        assert calls[1][0][0] == [
+            "sudo",
+            "--",
+            "podman",
+            "rm",
+            "--ignore",
+            "systemd-onetime-web--7044",
+        ]
+        assert calls[2][0][0] == ["sudo", "--", "systemctl", "start", "onetime-web@7044"]
 
     def test_recreate_raises_on_stop_failure(self, mocker):
         """Should raise SystemctlError if stop fails."""
@@ -452,6 +564,7 @@ class TestContainerExists:
         mock_run.assert_called_once_with(
             ["podman", "container", "exists", "systemd-onetime-web--7044"],
             capture_output=True,
+            text=True,
             timeout=10,
         )
 
@@ -759,6 +872,7 @@ class TestWorkerContainerExists:
         mock_run.assert_called_once_with(
             ["podman", "container", "exists", "systemd-onetime-worker--billing"],
             capture_output=True,
+            text=True,
             timeout=10,
         )
 
@@ -775,6 +889,7 @@ class TestWorkerContainerExists:
         mock_run.assert_called_once_with(
             ["podman", "container", "exists", "systemd-onetime-worker--1"],
             capture_output=True,
+            text=True,
             timeout=10,
         )
 
@@ -1078,7 +1193,7 @@ class TestQuadletWritePermissionError:
         cfg.cpu_quota = None
         cfg.valkey_service = None
         cfg.config_dir = tmp_path / "etc"
-        cfg.resolved_image_with_tag = "ghcr.io/test/image:v1.0.0"
+        cfg.resolved_image_with_tag.return_value = "ghcr.io/test/image:v1.0.0"
 
         # secrets section: use a real env file with no secrets → force bypasses check
         env_file = tmp_path / "onetimesecret"
@@ -1428,3 +1543,509 @@ class TestDiscoverInstancesSharedImpl:
 
         assert ids == ["1"]
         assert "7043" not in ids
+
+
+class TestRequireSystemctlRemote:
+    """Test require_systemctl() with a remote executor."""
+
+    def test_require_systemctl_remote_found(self, mocker):
+        """require_systemctl with remote executor should pass when 'which' succeeds."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+
+        mock_ex = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_ex.run.return_value = mock_result
+        # Make _is_local return False for this executor
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+
+        # Should not raise
+        systemd.require_systemctl(executor=mock_ex)
+
+        mock_ex.run.assert_called_once_with(["which", "systemctl"], timeout=10)
+
+    def test_require_systemctl_remote_not_found(self, mocker):
+        """require_systemctl with remote executor should exit when 'which' fails."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+
+        mock_ex = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = False
+        mock_ex.run.return_value = mock_result
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+
+        with pytest.raises(SystemExit) as exc_info:
+            systemd.require_systemctl(executor=mock_ex)
+
+        assert exc_info.value.code == 1
+
+    def test_require_systemctl_local_fallback(self, mocker):
+        """require_systemctl without executor should use shutil.which (existing behavior)."""
+        from ots_containers import systemd
+
+        # The autouse fixture already mocks shutil.which to return a path
+        # Should not raise
+        systemd.require_systemctl()
+
+    def test_require_systemctl_local_missing(self, mocker):
+        """require_systemctl without executor exits when systemctl not on local PATH."""
+        from ots_containers import systemd
+
+        mocker.patch("shutil.which", return_value=None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            systemd.require_systemctl()
+
+        assert exc_info.value.code == 1
+
+
+class TestRequirePodmanRemote:
+    """Test require_podman() with a remote executor."""
+
+    def test_require_podman_remote_found(self, mocker):
+        """require_podman with remote executor should pass when 'which' succeeds."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+
+        mock_ex = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_ex.run.return_value = mock_result
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+
+        systemd.require_podman(executor=mock_ex)
+
+        mock_ex.run.assert_called_once_with(["which", "podman"], timeout=10)
+
+    def test_require_podman_remote_not_found(self, mocker):
+        """require_podman with remote executor should exit when 'which' fails."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+
+        mock_ex = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = False
+        mock_ex.run.return_value = mock_result
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+
+        with pytest.raises(SystemExit) as exc_info:
+            systemd.require_podman(executor=mock_ex)
+
+        assert exc_info.value.code == 1
+
+    def test_require_podman_local_fallback(self, mocker):
+        """require_podman without executor should use shutil.which (existing behavior)."""
+        from ots_containers import systemd
+
+        systemd.require_podman()
+
+    def test_require_podman_local_missing(self, mocker):
+        """require_podman without executor exits when podman not on local PATH."""
+        from ots_containers import systemd
+
+        mocker.patch("shutil.which", return_value=None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            systemd.require_podman()
+
+        assert exc_info.value.code == 1
+
+
+class TestWaitForHealthyRemote:
+    """Test wait_for_healthy() with a remote executor."""
+
+    def test_wait_for_healthy_remote_returns_when_active(self, mocker):
+        """wait_for_healthy with remote executor should return when unit is active."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+
+        mock_ex = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.stdout = "active"
+        mock_ex.run.return_value = mock_result
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+        mock_sleep = mocker.patch("time.sleep")
+
+        systemd.wait_for_healthy("onetime-web@7043", timeout=10, executor=mock_ex)
+
+        mock_sleep.assert_not_called()
+        mock_ex.run.assert_called_once_with(
+            ["systemctl", "is-active", "onetime-web@7043"],
+            timeout=10,
+        )
+
+    def test_wait_for_healthy_remote_polls_until_active(self, mocker):
+        """wait_for_healthy with remote executor should poll until unit becomes active."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+
+        mock_ex = MagicMock()
+        activating_result = MagicMock()
+        activating_result.ok = False
+        activating_result.stdout = "activating"
+        active_result = MagicMock()
+        active_result.ok = True
+        active_result.stdout = "active"
+        mock_ex.run.side_effect = [activating_result, active_result]
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+        mock_sleep = mocker.patch("time.sleep")
+
+        systemd.wait_for_healthy("onetime-web@7043", timeout=30, executor=mock_ex)
+
+        assert mock_sleep.call_count == 1
+
+    def test_wait_for_healthy_remote_raises_timeout(self, mocker):
+        """wait_for_healthy with remote executor should raise on timeout."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+        from ots_containers.systemd import HealthCheckTimeoutError
+
+        mock_ex = MagicMock()
+        activating_result = MagicMock()
+        activating_result.ok = False
+        activating_result.stdout = "activating"
+        mock_ex.run.return_value = activating_result
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+        mocker.patch("time.sleep")
+        mocker.patch("time.monotonic", side_effect=iter([0.0, 0.0, 5.0, 5.0, 11.0]))
+
+        with pytest.raises(HealthCheckTimeoutError) as exc_info:
+            systemd.wait_for_healthy("onetime-web@7043", timeout=10, executor=mock_ex)
+
+        assert exc_info.value.unit == "onetime-web@7043"
+        assert exc_info.value.last_state == "activating"
+
+    def test_wait_for_healthy_remote_skips_require_systemctl(self, mocker):
+        """wait_for_healthy with remote executor should NOT call require_systemctl."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+
+        mock_ex = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.stdout = "active"
+        mock_ex.run.return_value = mock_result
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+        mock_require = mocker.patch("ots_containers.systemd.require_systemctl")
+
+        systemd.wait_for_healthy("onetime-web@7043", timeout=10, executor=mock_ex)
+
+        mock_require.assert_not_called()
+
+
+class TestWaitForHttpHealthyRemote:
+    """Test wait_for_http_healthy() with a remote executor (curl branch)."""
+
+    def test_returns_when_curl_succeeds(self, mocker):
+        """wait_for_http_healthy with remote executor should return when curl ok."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+
+        mock_ex = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_ex.run.return_value = mock_result
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+        mock_sleep = mocker.patch("time.sleep")
+
+        systemd.wait_for_http_healthy(7043, timeout=10, executor=mock_ex)
+
+        mock_sleep.assert_not_called()
+        mock_ex.run.assert_called_once_with(
+            ["curl", "-sf", "http://localhost:7043/health"],
+            timeout=10,
+        )
+
+    def test_polls_until_curl_succeeds(self, mocker):
+        """wait_for_http_healthy remote should poll until curl succeeds."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+
+        mock_ex = MagicMock()
+        fail_result = MagicMock()
+        fail_result.ok = False
+        fail_result.returncode = 7
+        ok_result = MagicMock()
+        ok_result.ok = True
+        mock_ex.run.side_effect = [fail_result, ok_result]
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+        mock_sleep = mocker.patch("time.sleep")
+
+        systemd.wait_for_http_healthy(7043, timeout=30, poll_interval=0.1, executor=mock_ex)
+
+        assert mock_sleep.call_count == 1
+
+    def test_raises_timeout_when_curl_never_succeeds(self, mocker):
+        """wait_for_http_healthy remote should raise timeout if curl always fails."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+        from ots_containers.systemd import HttpHealthCheckTimeoutError
+
+        mock_ex = MagicMock()
+        fail_result = MagicMock()
+        fail_result.ok = False
+        fail_result.returncode = 7
+        mock_ex.run.return_value = fail_result
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+        mocker.patch("time.sleep")
+        mocker.patch("time.monotonic", side_effect=iter([0.0, 0.0, 5.0, 5.0, 11.0]))
+
+        with pytest.raises(HttpHealthCheckTimeoutError) as exc_info:
+            systemd.wait_for_http_healthy(7043, timeout=10, executor=mock_ex)
+
+        assert exc_info.value.port == 7043
+        assert exc_info.value.timeout == 10
+        assert "curl exit 7" in exc_info.value.last_error
+
+    def test_uses_curl_not_urllib_for_remote(self, mocker):
+        """wait_for_http_healthy remote should use curl, not urllib."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+
+        mock_ex = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_ex.run.return_value = mock_result
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+        mock_urlopen = mocker.patch("urllib.request.urlopen")
+
+        systemd.wait_for_http_healthy(7043, timeout=10, executor=mock_ex)
+
+        # urllib should NOT have been called (remote uses curl)
+        mock_urlopen.assert_not_called()
+        # curl should have been called via executor
+        mock_ex.run.assert_called_once()
+        call_args = mock_ex.run.call_args[0][0]
+        assert call_args[0] == "curl"
+
+    def test_correct_curl_url_includes_port(self, mocker):
+        """wait_for_http_healthy remote should use the correct port in curl URL."""
+        from unittest.mock import MagicMock
+
+        from ots_containers import systemd
+
+        mock_ex = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_ex.run.return_value = mock_result
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+
+        systemd.wait_for_http_healthy(8080, timeout=10, executor=mock_ex)
+
+        call_args = mock_ex.run.call_args[0][0]
+        assert "http://localhost:8080/health" in call_args
+
+
+# ---------------------------------------------------------------------------
+# Parametrized cross-executor tests
+# ---------------------------------------------------------------------------
+
+
+def _make_local_executor(mocker):
+    """Build a LocalExecutor with subprocess.run mocked."""
+
+    # Let _get_executor return a real LocalExecutor
+    from ots_shared.ssh import LocalExecutor
+
+    ex = LocalExecutor()
+    return ex
+
+
+def _make_remote_executor(mocker):
+    """Build a mock SSHExecutor that _is_local() recognises as remote."""
+    from unittest.mock import MagicMock
+
+    mock_ex = MagicMock()
+    # _is_local checks isinstance(ex, LocalExecutor), so MagicMock returns False
+    return mock_ex
+
+
+@pytest.fixture(
+    params=["local", "remote"],
+    ids=["local-executor", "remote-executor"],
+)
+def executor_pair(request, mocker):
+    """Parametrized fixture that yields (executor, run_mock) for both types.
+
+    For local: executor is a real LocalExecutor; run_mock patches subprocess.run.
+    For remote: executor is a MagicMock; run_mock is executor.run itself.
+
+    Both run_mocks return a successful result by default.
+    """
+    from unittest.mock import MagicMock
+
+    if request.param == "local":
+        from ots_shared.ssh import LocalExecutor
+
+        ex = LocalExecutor()
+        mock_run = mocker.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        )
+        return ex, mock_run, "local"
+    else:
+        mock_ex = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+        mock_ex.run.return_value = mock_result
+        mocker.patch("ots_containers.systemd._is_local", return_value=False)
+        return mock_ex, mock_ex.run, "remote"
+
+
+def _extract_systemctl_cmd(run_mock, kind):
+    """Extract the core systemctl command from a run mock.
+
+    For local: subprocess.run receives ["sudo", "--", "systemctl", ...], so strip the prefix.
+    For remote: executor.run receives ["systemctl", ...] directly (sudo is a kwarg).
+    """
+    cmd = run_mock.call_args[0][0]
+    if kind == "local" and cmd[:2] == ["sudo", "--"]:
+        return cmd[2:]
+    return cmd
+
+
+class TestCrossExecutorSystemdCommands:
+    """Verify that systemd operations produce consistent commands across executor types.
+
+    These parametrized tests run the same operation through both LocalExecutor and
+    a mock SSHExecutor, verifying the systemctl command payload is identical.
+
+    LocalExecutor prepends ``["sudo", "--"]`` at the subprocess.run layer,
+    while SSHExecutor passes ``sudo=True`` as a kwarg to executor.run().
+    The core systemctl command list must be the same in both cases.
+    """
+
+    def test_start_command_is_consistent(self, executor_pair):
+        """start() should produce the same systemctl command payload via both executors."""
+        from ots_containers import systemd
+
+        ex, run_mock, kind = executor_pair
+        systemd.start("onetime-web@7043", executor=ex)
+
+        assert _extract_systemctl_cmd(run_mock, kind) == [
+            "systemctl",
+            "start",
+            "onetime-web@7043",
+        ]
+
+    def test_stop_command_is_consistent(self, executor_pair):
+        """stop() should produce the same systemctl command payload via both executors."""
+        from ots_containers import systemd
+
+        ex, run_mock, kind = executor_pair
+        systemd.stop("onetime-web@7043", executor=ex)
+
+        assert _extract_systemctl_cmd(run_mock, kind) == [
+            "systemctl",
+            "stop",
+            "onetime-web@7043",
+        ]
+
+    def test_restart_command_is_consistent(self, executor_pair):
+        """restart() should produce the same systemctl command payload via both executors."""
+        from ots_containers import systemd
+
+        ex, run_mock, kind = executor_pair
+        systemd.restart("onetime-web@7043", executor=ex)
+
+        assert _extract_systemctl_cmd(run_mock, kind) == [
+            "systemctl",
+            "restart",
+            "onetime-web@7043",
+        ]
+
+    def test_daemon_reload_command_is_consistent(self, executor_pair):
+        """daemon_reload() should produce the same command payload via both executors."""
+        from ots_containers import systemd
+
+        ex, run_mock, kind = executor_pair
+        systemd.daemon_reload(executor=ex)
+
+        assert _extract_systemctl_cmd(run_mock, kind) == [
+            "systemctl",
+            "daemon-reload",
+        ]
+
+    def test_is_active_command_and_result_consistent(self, executor_pair):
+        """is_active() should produce the same command and parse output identically."""
+        from ots_containers import systemd
+
+        ex, run_mock, kind = executor_pair
+
+        if kind == "local":
+            run_mock.return_value = subprocess.CompletedProcess([], 0, stdout="active\n", stderr="")
+        else:
+            mock_result = run_mock.return_value
+            mock_result.stdout = "active\n"
+
+        state = systemd.is_active("onetime-web@7043", executor=ex)
+
+        assert state == "active"
+        # is_active does NOT use sudo, so command is the same for both
+        cmd = run_mock.call_args[0][0]
+        assert cmd == ["systemctl", "is-active", "onetime-web@7043"]
+
+    def test_enable_command_is_consistent(self, executor_pair):
+        """enable() should produce the same systemctl command payload via both executors."""
+        from ots_containers import systemd
+
+        ex, run_mock, kind = executor_pair
+        systemd.enable("onetime-web@7043", executor=ex)
+
+        assert _extract_systemctl_cmd(run_mock, kind) == [
+            "systemctl",
+            "enable",
+            "onetime-web@7043",
+        ]
+
+    def test_sudo_used_for_mutating_commands(self, executor_pair):
+        """Mutating systemctl commands should use sudo via both executor types."""
+        from ots_containers import systemd
+
+        ex, run_mock, kind = executor_pair
+        systemd.start("onetime-web@7043", executor=ex)
+
+        if kind == "local":
+            cmd = run_mock.call_args[0][0]
+            # LocalExecutor prepends sudo -- at subprocess.run layer
+            assert cmd[:2] == ["sudo", "--"]
+        else:
+            call_kwargs = run_mock.call_args[1]
+            assert call_kwargs.get("sudo") is True
+
+    def test_failure_raises_systemctl_error(self, executor_pair):
+        """Both executor types should raise SystemctlError on start failure."""
+        from ots_containers import systemd
+        from ots_containers.systemd import SystemctlError
+
+        ex, run_mock, kind = executor_pair
+
+        if kind == "local":
+            run_mock.return_value = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+        else:
+            mock_result = run_mock.return_value
+            mock_result.ok = False
+            mock_result.returncode = 1
+            mock_result.stdout = ""
+            mock_result.stderr = ""
+
+        with pytest.raises(SystemctlError, match="failed to start"):
+            systemd.start("onetime-web@7043", executor=ex)

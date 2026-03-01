@@ -14,16 +14,18 @@ Maintains CURRENT and ROLLBACK aliases in SQLite database for:
   - Full audit trail
 """
 
+import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Annotated
 
 import cyclopts
 
-from ots_containers import db
-from ots_containers.config import Config
-from ots_containers.podman import podman
+from ots_containers import context, db
+from ots_containers.config import Config, parse_image_reference
+from ots_containers.podman import Podman
 
 from ..common import JsonOutput, Lines, Quiet, Yes
 
@@ -37,6 +39,12 @@ app = cyclopts.App(
 
 @app.command
 def pull(
+    reference: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            help="Full image reference (e.g. registry.io/org/image:tag)",
+        ),
+    ] = None,
     tag: Annotated[
         str | None,
         cyclopts.Parameter(
@@ -77,6 +85,8 @@ def pull(
     """Pull a container image from registry.
 
     Examples:
+        ots image pull registry.io/org/image:tag
+        ots image pull registry.io/org/image:tag --current
         ots image pull --tag v0.23.0
         ots image pull --tag latest --current
         TAG=dev ots image pull                  # Use TAG env var
@@ -85,10 +95,15 @@ def pull(
         ots image pull --tag dev --platform linux/amd64  # Pull amd64 on Apple Silicon
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
-    # Resolve image and tag from env vars if not provided
-    resolved_image = image or cfg.image
-    resolved_tag = tag or cfg.tag
+    # Parse positional reference into image/tag components
+    ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
+
+    # Resolve image and tag: CLI flags > positional reference > env vars
+    resolved_image = image or ref_image or cfg.image
+    resolved_tag = tag or ref_tag or cfg.tag
     if not resolved_tag:
         print("Error: --tag is required (or set TAG env var)")
         raise SystemExit(1)
@@ -99,7 +114,7 @@ def pull(
     # by the DB alias system.  An explicit concrete tag (e.g. 'v0.23.0') is required.
     tag_key = resolved_tag.lstrip("@")
     if tag_key.lower() in ("current", "rollback"):
-        alias = db.get_alias(cfg.db_path, tag_key)
+        alias = db.get_alias(cfg.db_path, tag_key, executor=ex)
         if alias:
             print(
                 f"Error: '{resolved_tag}' is a DB alias pointing to {alias.image}:{alias.tag}.\n"
@@ -136,7 +151,7 @@ def pull(
         if platform:
             pull_kwargs["platform"] = platform
 
-        podman.pull(full_image, **pull_kwargs)
+        p.pull(full_image, **pull_kwargs)
         if not quiet:
             print(f"Successfully pulled {full_image}")
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -148,6 +163,7 @@ def pull(
             action="pull",
             success=False,
             notes=str(e),
+            executor=ex,
         )
         raise SystemExit(1)
 
@@ -158,15 +174,16 @@ def pull(
         tag=resolved_tag,
         action="pull",
         success=True,
+        executor=ex,
     )
 
     # Set as current if requested
     if set_as_current:
         # Tag in podman before updating the database
         source_ref = f"{resolved_image}:{resolved_tag}"
-        current_alias = db.get_current_image(cfg.db_path)
+        current_alias = db.get_current_image(cfg.db_path, executor=ex)
         try:
-            podman.tag(
+            p.tag(
                 source_ref,
                 f"{resolved_image}:current",
                 check=True,
@@ -175,7 +192,7 @@ def pull(
             )
             if current_alias:
                 prev_image, prev_tag = current_alias
-                podman.tag(
+                p.tag(
                     f"{prev_image}:{prev_tag}",
                     f"{prev_image}:rollback",
                     check=True,
@@ -185,7 +202,7 @@ def pull(
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             print(f"Warning: podman tag failed ({e}), aliases updated in DB only")
 
-        previous = db.set_current(cfg.db_path, resolved_image, resolved_tag)
+        previous = db.set_current(cfg.db_path, resolved_image, resolved_tag, executor=ex)
         if not quiet:
             if previous:
                 print(f"Set CURRENT to {resolved_tag} (previous: {previous})")
@@ -215,22 +232,27 @@ def ls(
         ots image list --json
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     if json_output:
         import json as json_module
 
-        result = podman.images(
+        result = p.images(
             format="json",
             capture_output=True,
             text=True,
         )
         # Filter if not all_tags
         if not all_tags:
+            # Use the basename of the configured image for filtering so
+            # that both registry-prefixed and local images are matched.
+            image_basename = cfg.image.rsplit("/", 1)[-1]
             images = json_module.loads(result.stdout)
             images = [
                 img
                 for img in images
-                if any("onetimesecret" in name for name in img.get("Names", []))
+                if any(image_basename in name for name in img.get("Names", []))
             ]
             print(json_module.dumps(images, indent=2))
         else:
@@ -238,14 +260,17 @@ def ls(
         return
 
     if all_tags:
-        result = podman.images(
+        result = p.images(
             format="table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}\t{{.Created}}",
             capture_output=True,
             text=True,
         )
     else:
-        result = podman.images(
-            filter="reference=*onetimesecret*",
+        # Use the basename of the configured image for the filter so
+        # that both registry-prefixed and local images are matched.
+        image_basename = cfg.image.rsplit("/", 1)[-1]
+        result = p.images(
+            filter=f"reference=*{image_basename}*",
             format="table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}\t{{.Created}}",
             capture_output=True,
             text=True,
@@ -255,7 +280,7 @@ def ls(
     print(result.stdout)
 
     # Show current aliases
-    aliases = db.get_all_aliases(cfg.db_path)
+    aliases = db.get_all_aliases(cfg.db_path, executor=ex)
     if aliases:
         print("\nAliases:")
         for alias in aliases:
@@ -289,9 +314,7 @@ def list_remote(
         ots image list-remote --registry ghcr.io/onetimesecret
         OTS_REGISTRY=registry.example.com ots image list-remote
     """
-    import json
     import shutil
-    import subprocess
 
     cfg = Config()
 
@@ -366,13 +389,15 @@ def set_current(
         ots image set-current latest --image docker.io/onetimesecret/onetimesecret
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     resolved_image = image or cfg.image
     source_ref = f"{resolved_image}:{tag}"
 
     # Verify the source image exists locally before proceeding
     try:
-        podman.image.inspect(source_ref, check=True, capture_output=True, text=True)
+        p.image.inspect(source_ref, check=True, capture_output=True, text=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         print(f"Image not found locally: {source_ref}")
         print(f"Pull it first: ots image pull --tag {tag}")
@@ -380,9 +405,9 @@ def set_current(
 
     # Tag in podman before updating the database. If podman tag fails,
     # the database remains unchanged.
-    current_alias = db.get_current_image(cfg.db_path)
+    current_alias = db.get_current_image(cfg.db_path, executor=ex)
     try:
-        podman.tag(
+        p.tag(
             source_ref,
             f"{resolved_image}:current",
             check=True,
@@ -391,7 +416,7 @@ def set_current(
         )
         if current_alias:
             prev_image, prev_tag = current_alias
-            podman.tag(
+            p.tag(
                 f"{prev_image}:{prev_tag}",
                 f"{prev_image}:rollback",
                 check=True,
@@ -402,7 +427,7 @@ def set_current(
         print(f"Failed to tag image in podman: {e}")
         raise SystemExit(1)
 
-    previous = db.set_current(cfg.db_path, resolved_image, tag)
+    previous = db.set_current(cfg.db_path, resolved_image, tag, executor=ex)
 
     print(f"CURRENT set to {resolved_image}:{tag}")
     if previous:
@@ -450,9 +475,11 @@ def rollback(
         ots image rollback --apply --delay 10  # Longer delay between instances
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     # Show current state
-    current = db.get_current_image(cfg.db_path)
+    current = db.get_current_image(cfg.db_path, executor=ex)
     if current:
         print(f"Current: {current[0]}:{current[1]}")
     else:
@@ -460,7 +487,7 @@ def rollback(
         raise SystemExit(1)
 
     # Get previous tags from timeline for context
-    previous = db.get_previous_tags(cfg.db_path, limit=5)
+    previous = db.get_previous_tags(cfg.db_path, limit=5, executor=ex)
     if len(previous) < 2:
         print("No previous deployment to roll back to")
         raise SystemExit(1)
@@ -468,19 +495,19 @@ def rollback(
     print(f"\nRolling back to: {previous[1][0]}:{previous[1][1]}")
     print(f"  (last deployed: {previous[1][2]})")
 
-    result = db.rollback(cfg.db_path)
+    result = db.rollback(cfg.db_path, executor=ex)
     if result:
         image, tag = result
         # Update podman tags to reflect the new alias state
         try:
-            podman.tag(
+            p.tag(
                 f"{image}:{tag}",
                 f"{image}:current",
                 check=True,
                 capture_output=True,
                 text=True,
             )
-            podman.tag(
+            p.tag(
                 f"{current[0]}:{current[1]}",
                 f"{current[0]}:rollback",
                 check=True,
@@ -528,8 +555,9 @@ def history(
         ots image history --json
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
 
-    deployments = db.get_deployments(cfg.db_path, limit=limit, port=port)
+    deployments = db.get_deployments(cfg.db_path, limit=limit, port=port, executor=ex)
 
     if not deployments:
         print("No deployments recorded yet.")
@@ -555,7 +583,7 @@ def history(
         return
 
     # Show aliases first
-    aliases = db.get_all_aliases(cfg.db_path)
+    aliases = db.get_all_aliases(cfg.db_path, executor=ex)
     if aliases:
         print("Current aliases:")
         for alias in aliases:
@@ -592,8 +620,9 @@ def aliases(json_output: JsonOutput = False):
         ots image aliases --json
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
 
-    aliases_list = db.get_all_aliases(cfg.db_path)
+    aliases_list = db.get_all_aliases(cfg.db_path, executor=ex)
 
     if json_output:
         import json
@@ -625,11 +654,11 @@ def aliases(json_output: JsonOutput = False):
 
     # Show what commands would resolve to
     print("\nResolution:")
-    current = db.get_current_image(cfg.db_path)
+    current = db.get_current_image(cfg.db_path, executor=ex)
     if current:
         print(f"  TAG=current  -> {current[0]}:{current[1]}")
 
-    rollback_img = db.get_rollback_image(cfg.db_path)
+    rollback_img = db.get_rollback_image(cfg.db_path, executor=ex)
     if rollback_img:
         print(f"  TAG=rollback -> {rollback_img[0]}:{rollback_img[1]}")
 
@@ -685,6 +714,8 @@ def login(
     import sys
 
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     # Resolve registry from arg or config
     reg = registry or cfg.registry
@@ -711,11 +742,12 @@ def login(
     print(f"Logging in to {reg}...")
 
     try:
-        podman.login(
+        p.login(
             reg,
             username=user,
-            password=pw,
+            password_stdin=True,
             authfile=str(cfg.registry_auth_file),
+            input=pw,
             check=True,
             capture_output=True,
             text=True,
@@ -763,6 +795,8 @@ def push(
         OTS_REGISTRY=registry.example.com ots image push --tag v0.23.0
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     # Resolve registry from arg or config
     reg = registry or cfg.registry
@@ -786,7 +820,7 @@ def push(
 
     # Tag the image for the target registry
     try:
-        podman.tag(source_full, target_full, check=True, capture_output=True, text=True)
+        p.tag(source_full, target_full, check=True, capture_output=True, text=True)
     except Exception as e:
         print(f"Failed to tag image: {e}")
         raise SystemExit(1)
@@ -796,7 +830,7 @@ def push(
 
     # Push to registry
     try:
-        podman.push(
+        p.push(
             target_full,
             authfile=str(cfg.registry_auth_file),
             check=True,
@@ -816,6 +850,7 @@ def push(
         tag=resolved_tag,
         action="push",
         success=True,
+        executor=ex,
     )
 
 
@@ -836,6 +871,8 @@ def logout(
         OTS_REGISTRY=registry.example.com ots image logout
     """
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     # Resolve registry from arg or config
     reg = registry or cfg.registry
@@ -846,7 +883,7 @@ def logout(
     print(f"Logging out from {reg}...")
 
     try:
-        podman.logout(
+        p.logout(
             reg,
             authfile=str(cfg.registry_auth_file),
             check=True,
@@ -892,6 +929,8 @@ def rm(
             return
 
     cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
 
     for tag in tags:
         # Try common image patterns, including configured image
@@ -910,7 +949,7 @@ def rm(
                 kwargs = {"check": True, "capture_output": True, "text": True}
                 if force:
                     kwargs["force"] = True
-                podman.rmi(image, **kwargs)
+                p.rmi(image, **kwargs)
                 print(f"Removed {image}")
                 removed = True
                 break
@@ -952,11 +991,15 @@ def prune(
             print("Aborted")
             return
 
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+    p = Podman(executor=ex)
+
     try:
         kwargs = {"check": True, "capture_output": True, "text": True}
         if all_images:
             kwargs["all"] = True
-        result = podman.image.prune(**kwargs)
+        result = p.image.prune(**kwargs)
         print("Pruned images:")
         print(result.stdout)
     except Exception as e:
@@ -1027,8 +1070,6 @@ def _get_git_hash(project_dir: Path, required: bool = True) -> str | None:
 
 def _read_package_version(project_dir: Path) -> str:
     """Read version from package.json in project directory."""
-    import json
-
     package_json = project_dir / "package.json"
     if not package_json.exists():
         raise SystemExit(f"package.json not found in {project_dir}")
@@ -1080,6 +1121,99 @@ def _validate_project_dir(project_dir: Path, skip_dockerfile_check: bool = False
 
     if not (project_dir / "package.json").exists():
         raise SystemExit(f"No package.json found in {project_dir}")
+
+
+def _format_build_error(e: Exception) -> str:
+    """Extract useful error details from build failures.
+
+    CommandError (from executor) wraps a Result with stdout/stderr,
+    but str() only shows the command and exit code. This extracts
+    the stderr/stdout so the user sees what actually went wrong.
+    """
+    from ots_shared.ssh.executor import CommandError
+
+    if isinstance(e, CommandError):
+        result = e.result
+        parts = [str(e)]
+        if result.stderr and result.stderr.strip():
+            parts.append(result.stderr.strip())
+        elif result.stdout and result.stdout.strip():
+            parts.append(result.stdout.strip())
+        return "\n".join(parts)
+    if isinstance(e, subprocess.CalledProcessError):
+        if e.stderr:
+            return f"{e}\n{e.stderr.strip()}"
+        if e.stdout:
+            return f"{e}\n{e.stdout.strip()}"
+    return str(e)
+
+
+def _load_oci_build_config(project_dir: Path) -> dict | None:
+    """Load .oci-build.json from project dir, or None if absent."""
+    config_path = project_dir / ".oci-build.json"
+    if not config_path.exists():
+        return None
+    with config_path.open() as f:
+        return json.load(f)
+
+
+def _build_base(
+    p: Podman,
+    project_dir: Path,
+    base_config: dict,
+    platform: str,
+    quiet: bool,
+) -> str:
+    """Build shared base image. Returns local tag for build-context injection."""
+    local_tag = f"ots-base:{os.getpid()}"
+    p.buildx.build(
+        str(project_dir),
+        file=str(project_dir / base_config["dockerfile"]),
+        platform=platform,
+        tag=local_tag,
+        check=True,
+        capture_output=quiet,
+        text=True,
+    )
+    return local_tag
+
+
+def _build_variant(
+    p: Podman,
+    project_dir: Path,
+    variant: dict,
+    build_tag: str,
+    image_name: str,
+    platform: str,
+    build_args: list[str],
+    build_contexts: dict[str, str] | None,
+    quiet: bool,
+) -> str:
+    """Build one variant. Returns the local image tag."""
+    suffix = variant.get("suffix", "")
+    local_image = f"{image_name}{suffix}:{build_tag}"
+
+    build_kwargs: dict = {
+        "platform": platform,
+        "tag": local_image,
+        "build_arg": build_args,
+        "check": True,
+        "capture_output": quiet,
+        "text": True,
+    }
+    if variant.get("dockerfile"):
+        build_kwargs["file"] = str(project_dir / variant["dockerfile"])
+    if variant.get("target"):
+        build_kwargs["target"] = variant["target"]
+    if build_contexts:
+        # Podman wrapper expands list kwargs as repeated flags:
+        # build_context=["base=container-image://img"] → --build-context base=container-image://img
+        build_kwargs["build_context"] = [
+            f"{name}=container-image://{img}" for name, img in build_contexts.items()
+        ]
+
+    p.buildx.build(str(project_dir), **build_kwargs)
+    return local_image
 
 
 @app.command
@@ -1147,25 +1281,268 @@ def build(
     Automatically determines version tag from package.json. For development
     versions (0.0.0, -rc0, -dev, -alpha, -beta), appends git hash.
 
+    When .oci-build.json is present in the project directory, builds are
+    driven by the config: the shared base image is built first, then each
+    variant receives --build-context base=container-image://... so that
+    FROM base stages resolve correctly.
+
     Examples:
-        # Standard build
+        # Standard build (no .oci-build.json)
         ots image build --project-dir ~/src/onetimesecret
 
-        # Build lite variant
+        # Build lite variant (no .oci-build.json)
         ots image build -d . -f docker/variants/lite.dockerfile --suffix -lite
 
-        # Build s6 multi-process variant
-        ots image build -d . --target final-s6 --suffix -s6
+        # Build all variants from .oci-build.json
+        ots image build -d /path/to/project --platform linux/amd64
+
+        # Build single variant from .oci-build.json by suffix
+        ots image build --suffix '' -d /path/to/project --platform linux/amd64
 
         # Build and push to registry
         ots image build -d . --push --registry registry.example.com
     """
     cfg = Config()
+    # Builds always run locally — no executor needed.  Podman() without
+    # executor uses subprocess.run directly so build output streams to
+    # the terminal in real-time.  Skipping get_executor() also avoids
+    # an unnecessary SSH connection when .otsinfra.env is present.
+    p = Podman()
 
     # Resolve project directory
     proj_dir = Path(project_dir) if project_dir else Path.cwd()
     proj_dir = proj_dir.resolve()
 
+    # Check for .oci-build.json — drives whether we use bake-aware or legacy path
+    oci_config = _load_oci_build_config(proj_dir)
+
+    # Immediate context feedback
+    if not quiet:
+        oci_label = ".oci-build.json" if oci_config is not None else "default"
+        print(f"build: {proj_dir} [{oci_label}]")
+
+    if oci_config is not None:
+        _build_with_oci_config(
+            p=p,
+            cfg=cfg,
+            proj_dir=proj_dir,
+            oci_config=oci_config,
+            dockerfile=dockerfile,
+            target=target,
+            suffix=suffix,
+            platform=platform,
+            push=push,
+            registry=registry,
+            tag=tag,
+            quiet=quiet,
+        )
+    else:
+        _build_legacy(
+            p=p,
+            cfg=cfg,
+            proj_dir=proj_dir,
+            dockerfile=dockerfile,
+            target=target,
+            suffix=suffix,
+            platform=platform,
+            push=push,
+            registry=registry,
+            tag=tag,
+            quiet=quiet,
+        )
+
+
+def _build_with_oci_config(
+    *,
+    p: Podman,
+    cfg,
+    proj_dir: Path,
+    oci_config: dict,
+    dockerfile: str | None,
+    target: str | None,
+    suffix: str | None,
+    platform: str,
+    push: bool,
+    registry: str | None,
+    tag: str | None,
+    quiet: bool,
+) -> None:
+    """Bake-aware build driven by .oci-build.json."""
+    # Validate — skip dockerfile check since dockerfiles come from config
+    _validate_project_dir(proj_dir, skip_dockerfile_check=True)
+
+    build_tag = _determine_build_tag(proj_dir, tag)
+    git_hash = _get_git_hash(proj_dir, required=False)
+    pkg_version = _read_package_version(proj_dir)
+
+    # Resolve image name from config (strip registry prefix, use basename).
+    # Falls back to cfg.image basename when .oci-build.json omits image_name.
+    default_image_name = cfg.image.rsplit("/", 1)[-1]
+    config_image_name = oci_config.get("image_name", default_image_name)
+    image_name = config_image_name.split("/")[-1]
+
+    # Resolve platform: CLI flag takes priority, then config, then default
+    resolved_platform = platform
+    config_platforms = oci_config.get("platforms", [])
+    if platform == "linux/amd64,linux/arm64" and config_platforms:
+        resolved_platform = config_platforms[0]
+
+    # Build args
+    build_args = [f"VERSION={pkg_version}"]
+    if git_hash:
+        build_args.append(f"COMMIT_HASH={git_hash}")
+
+    # Build base image if config declares one
+    base_tag = None
+    base_config = oci_config.get("base")
+    if base_config:
+        if not quiet:
+            print("Building base image...")
+        try:
+            base_tag = _build_base(p, proj_dir, base_config, resolved_platform, quiet)
+            if not quiet:
+                print(f"  Base: {base_tag}")
+        except Exception as e:
+            print(f"Base build failed: {_format_build_error(e)}")
+            raise SystemExit(1)
+
+    # Determine which variants to build
+    variants = oci_config.get("variants", [])
+    has_variant_flag = suffix is not None or dockerfile is not None or target is not None
+
+    if has_variant_flag:
+        # User specified variant-specific flags — build a single variant
+        if suffix is not None:
+            matching = [v for v in variants if v.get("suffix", "") == suffix]
+            if matching:
+                variants_to_build = [matching[0]]
+            else:
+                # Custom one-off build: use CLI flags, just inject base context
+                variants_to_build = [
+                    {
+                        "suffix": suffix,
+                        "dockerfile": dockerfile,
+                        "target": target,
+                    }
+                ]
+        else:
+            # --dockerfile or --target without --suffix
+            variants_to_build = [
+                {
+                    "suffix": suffix or "",
+                    "dockerfile": dockerfile,
+                    "target": target,
+                }
+            ]
+    else:
+        # No variant flags — build all variants from config
+        variants_to_build = variants
+
+    if not variants_to_build:
+        print("Error: No variants to build (check .oci-build.json)")
+        raise SystemExit(1)
+
+    if not quiet:
+        names = [f"{image_name}{v.get('suffix', '')}:{build_tag}" for v in variants_to_build]
+        print(f"Building {len(variants_to_build)} variant(s): {', '.join(names)}")
+        print(f"  Project: {proj_dir}")
+        print(f"  Platform: {resolved_platform}")
+        print(f"  Version: {pkg_version}")
+        print(f"  Commit: {git_hash or 'N/A (no git)'}")
+
+    built_images: list[str] = []
+    try:
+        # Track completed variant images for inter-variant build contexts
+        completed: dict[str, str] = {}  # suffix -> local_image_tag
+
+        for variant in variants_to_build:
+            # Build contexts: base + inter-variant dependencies
+            build_contexts: dict[str, str] | None = None
+            if base_tag:
+                build_contexts = {"base": base_tag}
+
+            # Check if variant depends on another variant (e.g., lite depends on main)
+            depends_on = variant.get("build_context")
+            if depends_on and isinstance(depends_on, dict):
+                if build_contexts is None:
+                    build_contexts = {}
+                for ctx_name, ctx_ref in depends_on.items():
+                    # ctx_ref could be "target:main" referring to a completed variant
+                    if ctx_ref.startswith("target:"):
+                        dep_suffix = ctx_ref.removeprefix("target:")
+                        # Find the completed image for that suffix
+                        dep_key = dep_suffix if dep_suffix else ""
+                        if dep_key in completed:
+                            build_contexts[ctx_name] = completed[dep_key]
+                        else:
+                            print(
+                                f"Warning: dependency '{ctx_ref}' not yet built, skipping context"
+                            )
+
+            local_image = _build_variant(
+                p,
+                proj_dir,
+                variant,
+                build_tag,
+                image_name,
+                resolved_platform,
+                build_args,
+                build_contexts,
+                quiet,
+            )
+            built_images.append(local_image)
+            completed[variant.get("suffix", "")] = local_image
+
+            if not quiet:
+                print(f"  Built: {local_image}")
+
+            # Record the build
+            db.record_deployment(
+                cfg.db_path,
+                image=f"{image_name}{variant.get('suffix', '')}",
+                tag=build_tag,
+                action="build",
+                success=True,
+                notes=f"oci-config, target={variant.get('target')}",
+            )
+    except Exception as e:
+        print(f"Build failed: {_format_build_error(e)}")
+        raise SystemExit(1)
+    finally:
+        # Clean up base image
+        if base_tag:
+            try:
+                p.rmi(base_tag, capture_output=True, text=True)
+            except Exception:
+                pass  # Best-effort cleanup
+
+    # Push if requested
+    if push:
+        _push_images(p, cfg, built_images, build_tag, registry, quiet)
+
+    # Print summary
+    if not quiet:
+        print()
+        print("Build complete:")
+        for img in built_images:
+            print(f"  Local:  {img}")
+
+
+def _build_legacy(
+    *,
+    p: Podman,
+    cfg,
+    proj_dir: Path,
+    dockerfile: str | None,
+    target: str | None,
+    suffix: str | None,
+    platform: str,
+    push: bool,
+    registry: str | None,
+    tag: str | None,
+    quiet: bool,
+) -> None:
+    """Legacy build path — no .oci-build.json, direct podman buildx build."""
     # Validate project structure (skip dockerfile check if custom dockerfile specified)
     _validate_project_dir(proj_dir, skip_dockerfile_check=dockerfile is not None)
 
@@ -1184,8 +1561,9 @@ def build(
     git_hash = _get_git_hash(proj_dir, required=False)
     pkg_version = _read_package_version(proj_dir)
 
-    # Image name with optional suffix
-    image_name = f"onetimesecret{suffix or ''}"
+    # Image name with optional suffix (use basename of configured image)
+    image_basename = cfg.image.rsplit("/", 1)[-1]
+    image_name = f"{image_basename}{suffix or ''}"
     local_image = f"{image_name}:{build_tag}"
 
     if not quiet:
@@ -1224,12 +1602,12 @@ def build(
         if target:
             build_kwargs["target"] = target
 
-        podman.buildx.build(str(proj_dir), **build_kwargs)
+        p.buildx.build(str(proj_dir), **build_kwargs)
 
         if not quiet:
             print(f"Successfully built {local_image}")
     except Exception as e:
-        print(f"Build failed: {e}")
+        print(f"Build failed: {_format_build_error(e)}")
         raise SystemExit(1)
 
     # Record the build action
@@ -1244,20 +1622,39 @@ def build(
 
     # Push if requested
     if push:
-        # Resolve registry from arg or config
-        reg = registry or cfg.registry
-        if not reg:
-            print("Error: --push requires --registry or OTS_REGISTRY env var")
-            raise SystemExit(1)
+        _push_images(p, cfg, [local_image], build_tag, registry, quiet)
 
-        target_image = f"{reg}/{image_name}:{build_tag}"
+    # Print summary
+    if not quiet:
+        print()
+        print("Build complete:")
+        print(f"  Local:  {local_image}")
+
+
+def _push_images(
+    p: Podman,
+    cfg,
+    images: list[str],
+    build_tag: str,
+    registry: str | None,
+    quiet: bool,
+) -> None:
+    """Tag and push built images to a registry."""
+    reg = registry or cfg.registry
+    if not reg:
+        print("Error: --push requires --registry or OTS_REGISTRY env var")
+        raise SystemExit(1)
+
+    for local_image in images:
+        # Extract image name (without tag) from local_image
+        image_name_part = local_image.rsplit(":", 1)[0]
+        target_image = f"{reg}/{image_name_part}:{build_tag}"
 
         if not quiet:
             print(f"Tagging {local_image} -> {target_image}")
 
-        # Tag for registry
         try:
-            podman.tag(
+            p.tag(
                 local_image,
                 target_image,
                 check=True,
@@ -1271,9 +1668,8 @@ def build(
         if not quiet:
             print(f"Pushing {target_image}...")
 
-        # Push to registry
         try:
-            podman.push(
+            p.push(
                 target_image,
                 authfile=str(cfg.registry_auth_file),
                 check=True,
@@ -1286,19 +1682,10 @@ def build(
             print(f"Failed to push {target_image}: {e}")
             raise SystemExit(1)
 
-        # Record the push
         db.record_deployment(
             cfg.db_path,
-            image=f"{reg}/{image_name}",
+            image=f"{reg}/{image_name_part}",
             tag=build_tag,
             action="push",
             success=True,
         )
-
-    # Print summary
-    if not quiet:
-        print()
-        print("Build complete:")
-        print(f"  Local:  {local_image}")
-        if push:
-            print(f"  Remote: {target_image}")

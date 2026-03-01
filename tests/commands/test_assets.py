@@ -34,7 +34,9 @@ class TestAssetsSyncCommand:
 
         assets.sync()
 
-        mock_update.assert_called_once_with(mock_config, create_volume=False)
+        from unittest.mock import ANY
+
+        mock_update.assert_called_once_with(mock_config, create_volume=False, executor=ANY)
 
     def test_sync_calls_assets_update(self, mocker):
         """sync should call assets_module.update."""
@@ -46,7 +48,9 @@ class TestAssetsSyncCommand:
 
         assets.sync()
 
-        mock_update.assert_called_once_with(mock_config, create_volume=False)
+        from unittest.mock import ANY
+
+        mock_update.assert_called_once_with(mock_config, create_volume=False, executor=ANY)
 
     def test_sync_with_create_volume(self, mocker):
         """sync --create-volume should pass flag to update."""
@@ -58,7 +62,43 @@ class TestAssetsSyncCommand:
 
         assets.sync(create_volume=True)
 
-        mock_update.assert_called_once_with(mock_config, create_volume=True)
+        from unittest.mock import ANY
+
+        mock_update.assert_called_once_with(mock_config, create_volume=True, executor=ANY)
+
+
+class TestAssetsSyncHostContext:
+    """Verify that assets sync passes host_var through to get_executor."""
+
+    def test_sync_passes_host_var_to_get_executor(self, mocker):
+        """sync should read context.host_var and pass it to get_executor(host=...)."""
+        from ots_containers import context
+        from ots_containers.commands import assets
+
+        mock_config = mocker.MagicMock()
+        mocker.patch("ots_containers.commands.assets.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.assets.assets_module.update")
+
+        # Simulate --host flag having set a hostname in the context var
+        token = context.host_var.set("eu1.example.com")
+        try:
+            assets.sync()
+            mock_config.get_executor.assert_called_once_with(host="eu1.example.com")
+        finally:
+            context.host_var.reset(token)
+
+    def test_sync_passes_none_host_when_no_host_flag(self, mocker):
+        """sync should pass host=None when no --host flag was given."""
+        from ots_containers.commands import assets
+
+        mock_config = mocker.MagicMock()
+        mocker.patch("ots_containers.commands.assets.Config", return_value=mock_config)
+        mocker.patch("ots_containers.commands.assets.assets_module.update")
+
+        # Default: no --host flag, host_var default is None
+        assets.sync()
+
+        mock_config.get_executor.assert_called_once_with(host=None)
 
 
 class TestAssetsSyncHelp:

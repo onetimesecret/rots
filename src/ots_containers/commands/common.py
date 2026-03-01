@@ -99,3 +99,24 @@ JsonOutput = Annotated[
         help="Output as JSON",
     ),
 ]
+
+
+# Image reference annotations
+ImageRef = Annotated[
+    str | None,
+    cyclopts.Parameter(
+        help=(
+            "Image reference (e.g. ghcr.io/org/image:tag). "
+            "Overrides IMAGE/TAG env vars when provided."
+        ),
+        show_default=False,
+    ),
+]
+
+TagFlag = Annotated[
+    str | None,
+    cyclopts.Parameter(
+        name=["--tag", "-t"],
+        help="Image tag to use (default: from TAG env or '@current' alias)",
+    ),
+]

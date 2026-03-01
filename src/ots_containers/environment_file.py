@@ -17,15 +17,28 @@ from __future__ import annotations
 
 import logging
 import re
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-logger = logging.getLogger(__name__)
+from ots_shared.ssh import is_remote as _is_remote
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from ots_shared.ssh import Executor
+
+logger = logging.getLogger(__name__)
+
+
+def _get_executor(executor: Executor | None = None) -> Executor:
+    """Return the given executor or a default LocalExecutor."""
+    if executor is not None:
+        return executor
+    from ots_shared.ssh import LocalExecutor
+
+    return LocalExecutor()
+
 
 # Regex to parse env file lines: KEY=VALUE or KEY="VALUE" or KEY='VALUE'
 ENV_LINE_PATTERN = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>.*)$")
@@ -104,7 +117,7 @@ class EnvFile:
     _variables: dict[str, str] = field(default_factory=dict, repr=False)
 
     @classmethod
-    def parse(cls, path: Path | str) -> EnvFile:
+    def parse(cls, path: Path | str, *, executor: Executor | None = None) -> EnvFile:
         """Parse an environment file.
 
         Preserves comments and blank lines for round-trip editing.
@@ -113,10 +126,20 @@ class EnvFile:
         entries: list[EnvEntry] = []
         variables: dict[str, str] = {}
 
-        if not path.exists():
-            return cls(path=path, entries=entries, _variables=variables)
+        if _is_remote(executor):
+            result = executor.run(["test", "-f", str(path)])  # type: ignore[union-attr]
+            if not result.ok:
+                return cls(path=path, entries=entries, _variables=variables)
+            result = executor.run(["cat", str(path)])  # type: ignore[union-attr]
+            if not result.ok:
+                return cls(path=path, entries=entries, _variables=variables)
+            text = result.stdout
+        else:
+            if not path.exists():
+                return cls(path=path, entries=entries, _variables=variables)
+            text = path.read_text()
 
-        for line in path.read_text().splitlines():
+        for line in text.splitlines():
             raw_line = line
             line = line.strip()
 
@@ -230,11 +253,12 @@ class EnvFile:
             if entry.key and not entry.is_comment_line:
                 yield entry.key, entry.value
 
-    def write(self, path: Path | str | None = None) -> None:
+    def write(self, path: Path | str | None = None, *, executor: Executor | None = None) -> None:
         """Write the environment file.
 
         Args:
             path: Optional path to write to (defaults to original path)
+            executor: Optional executor for remote writes
         """
         path = Path(path) if path else self.path
         lines: list[str] = []
@@ -251,7 +275,11 @@ class EnvFile:
                     value = f'"{value}"'
                 lines.append(f"{entry.key}={value}")
 
-        path.write_text("\n".join(lines) + "\n")
+        content = "\n".join(lines) + "\n"
+        if _is_remote(executor):
+            executor.run(["tee", str(path)], input=content)  # type: ignore[union-attr]
+        else:
+            path.write_text(content)
 
 
 @dataclass
@@ -330,7 +358,11 @@ def extract_secrets(env_file: EnvFile) -> tuple[list[SecretSpec], list[str]]:
 
 
 def process_env_file(
-    env_file: EnvFile, *, create_secrets: bool = True, dry_run: bool = False
+    env_file: EnvFile,
+    *,
+    create_secrets: bool = True,
+    dry_run: bool = False,
+    executor: Executor | None = None,
 ) -> tuple[list[SecretSpec], list[str]]:
     """Process an environment file: extract secrets and transform entries.
 
@@ -344,6 +376,7 @@ def process_env_file(
         env_file: Parsed environment file
         create_secrets: Whether to create podman secrets
         dry_run: If True, don't write changes or create secrets
+        executor: Optional executor for remote operations
 
     Returns:
         Tuple of (processed secrets, messages/warnings)
@@ -355,7 +388,7 @@ def process_env_file(
         if spec.value is not None:
             # Has a value to process - this secret needs extraction
             if create_secrets and not dry_run:
-                action = ensure_podman_secret(spec.secret_name, spec.value)
+                action = ensure_podman_secret(spec.secret_name, spec.value, executor=executor)
                 messages.append(f"Podman secret {action}: {spec.secret_name}")
 
             # Transform the entry in env file (in place, preserving position)
@@ -364,7 +397,7 @@ def process_env_file(
 
     if not dry_run:
         if file_modified:
-            env_file.write()
+            env_file.write(executor=executor)
             messages.append(f"Updated environment file: {env_file.path}")
         else:
             messages.append("No changes needed (secrets already processed)")
@@ -372,55 +405,45 @@ def process_env_file(
     return secrets, messages
 
 
-def ensure_podman_secret(secret_name: str, value: str) -> str:
+def ensure_podman_secret(secret_name: str, value: str, *, executor: Executor | None = None) -> str:
     """Create or replace a podman secret.
 
     Args:
         secret_name: Name for the secret
         value: Secret value
+        executor: Optional executor for remote operations
 
     Returns:
         "created" if new, "replaced" if existing was overwritten
     """
     from .systemd import require_podman
 
-    require_podman()
+    require_podman(executor=executor)
 
-    # Check if secret exists
-    result = subprocess.run(
-        ["podman", "secret", "exists", secret_name],
-        capture_output=True,
-    )
-    existed = result.returncode == 0
+    ex = _get_executor(executor)
+    result = ex.run(["podman", "secret", "exists", secret_name], timeout=15)
+    existed = result.ok
 
     if existed:
-        # Remove existing secret before recreating
-        subprocess.run(
-            ["podman", "secret", "rm", secret_name],
-            capture_output=True,
-            check=True,
-        )
+        ex.run(["podman", "secret", "rm", secret_name], check=True, timeout=15)
 
-    # Create the secret
-    subprocess.run(
+    ex.run(
         ["podman", "secret", "create", secret_name, "-"],
-        input=value.encode(),
+        input=value,
         check=True,
-        capture_output=True,
+        timeout=30,
     )
+
     return "replaced" if existed else "created"
 
 
-def secret_exists(secret_name: str) -> bool:
+def secret_exists(secret_name: str, *, executor: Executor | None = None) -> bool:
     """Check if a podman secret exists. Returns False if podman is unavailable."""
     try:
-        result = subprocess.run(
-            ["podman", "secret", "exists", secret_name],
-            capture_output=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except (subprocess.SubprocessError, OSError):
+        ex = _get_executor(executor)
+        result = ex.run(["podman", "secret", "exists", secret_name], timeout=10)
+        return result.ok
+    except Exception:
         return False
 
 
@@ -446,13 +469,15 @@ def generate_quadlet_secret_lines(secrets: list[SecretSpec]) -> str:
     return "\n".join(lines)
 
 
-def get_secrets_from_env_file(path: Path | str) -> list[SecretSpec]:
+def get_secrets_from_env_file(
+    path: Path | str, *, executor: Executor | None = None
+) -> list[SecretSpec]:
     """Convenience function to get secret specs from an environment file.
 
     This is useful for quadlet generation - it parses the env file and
     returns the secret specifications without modifying anything.
     """
-    env_file = EnvFile.parse(path)
+    env_file = EnvFile.parse(path, executor=executor)
     secrets, _ = extract_secrets(env_file)
     return secrets
 

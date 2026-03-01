@@ -2,6 +2,9 @@
 """Tests for config module - Config dataclass."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
 
 
 class TestConfigDefaults:
@@ -119,41 +122,153 @@ class TestConfigPaths:
 class TestConfigValidate:
     """Test Config.validate method."""
 
-    def test_validate_is_noop(self, tmp_path):
-        """Should not raise even when config files are missing (validate is a no-op)."""
+    def test_validate_accepts_defaults(self, monkeypatch):
+        """Should not raise with default image and @current sentinel tag."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        cfg.validate()  # Should not raise
+
+    def test_validate_accepts_valid_tag(self, monkeypatch):
+        """Should accept a well-formed OCI tag."""
+        monkeypatch.setenv("TAG", "v1.2.3-rc1")
+        monkeypatch.delenv("IMAGE", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        cfg.validate()  # Should not raise
+
+    def test_validate_accepts_sentinel_current(self, monkeypatch):
+        """Should accept the @current sentinel tag."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.tag == "@current"
+        cfg.validate()  # Should not raise
+
+    def test_validate_accepts_sentinel_rollback(self, monkeypatch):
+        """Should accept the @rollback sentinel tag."""
+        monkeypatch.setenv("TAG", "@rollback")
+        monkeypatch.delenv("IMAGE", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        cfg.validate()  # Should not raise
+
+    def test_validate_rejects_tag_with_shell_metacharacters(self, monkeypatch):
+        """Should reject tags containing shell metacharacters."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        from ots_containers.config import Config
+
+        with pytest.raises(ValueError, match="Invalid tag"):
+            Config(tag="; rm -rf /")
+
+    def test_validate_rejects_tag_with_spaces(self, monkeypatch):
+        """Should reject tags containing whitespace."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        from ots_containers.config import Config
+
+        with pytest.raises(ValueError, match="Invalid tag"):
+            Config(tag="v1 2")
+
+    def test_validate_rejects_empty_tag(self, monkeypatch):
+        """Should reject empty string as tag."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        from ots_containers.config import Config
+
+        with pytest.raises(ValueError, match="Invalid tag"):
+            Config(tag="")
+
+    def test_validate_rejects_image_with_shell_metacharacters(self, monkeypatch):
+        """Should reject image names with shell injection attempts."""
+        monkeypatch.delenv("TAG", raising=False)
+        from ots_containers.config import Config
+
+        with pytest.raises(ValueError, match="Invalid image"):
+            Config(image="$(whoami)")
+
+    def test_validate_rejects_image_with_spaces(self, monkeypatch):
+        """Should reject image names containing whitespace."""
+        monkeypatch.delenv("TAG", raising=False)
+        from ots_containers.config import Config
+
+        with pytest.raises(ValueError, match="Invalid image"):
+            Config(image="my image")
+
+    def test_validate_rejects_empty_image(self, monkeypatch):
+        """Should reject empty string as image name."""
+        monkeypatch.delenv("TAG", raising=False)
+        from ots_containers.config import Config
+
+        with pytest.raises(ValueError, match="Invalid image"):
+            Config(image="")
+
+    def test_validate_accepts_ghcr_image(self, monkeypatch):
+        """Should accept standard ghcr.io image path."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config(image="ghcr.io/onetimesecret/onetimesecret")
+        cfg.validate()  # Should not raise
+
+    def test_validate_accepts_tag_with_dots_and_hyphens(self, monkeypatch):
+        """Should accept tags with dots, hyphens, and underscores."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config(tag="v0.19.0-beta_1")
+        cfg.validate()  # Should not raise
+
+    def test_validate_config_files_optional(self, tmp_path, monkeypatch):
+        """Should not raise even when config files are missing."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
         from ots_containers.config import Config
 
         cfg = Config(config_dir=tmp_path)
         cfg.validate()  # Should not raise
 
-    def test_validate_with_all_files(self, tmp_path):
-        """Should not raise when all required files exist."""
+    def test_validate_rejects_tag_with_colon(self, monkeypatch):
+        """Should reject tags containing colons (would break image:tag format)."""
+        monkeypatch.delenv("IMAGE", raising=False)
         from ots_containers.config import Config
 
-        # Only config.yaml is required now (secrets via Podman, infra env in /etc/default)
-        (tmp_path / "config.yaml").touch()
+        with pytest.raises(ValueError, match="Invalid tag"):
+            Config(tag="v1:latest")
 
-        cfg = Config(config_dir=tmp_path)
-        cfg.validate()  # Should not raise
+    def test_validate_rejects_image_with_backtick(self, monkeypatch):
+        """Should reject image names with backtick command substitution."""
+        monkeypatch.delenv("TAG", raising=False)
+        from ots_containers.config import Config
+
+        with pytest.raises(ValueError, match="Invalid image"):
+            Config(image="`whoami`/image")
 
 
 class TestConfigFiles:
     """Test CONFIG_FILES module-level constant."""
 
     def test_config_files_contains_expected_files(self):
-        """CONFIG_FILES should list the four known config files."""
+        """CONFIG_FILES should list the six known config files."""
         from ots_containers.config import CONFIG_FILES
 
         assert "config.yaml" in CONFIG_FILES
         assert "auth.yaml" in CONFIG_FILES
         assert "logging.yaml" in CONFIG_FILES
         assert "billing.yaml" in CONFIG_FILES
+        assert "Caddyfile.template" in CONFIG_FILES
+        assert "puma.rb" in CONFIG_FILES
 
     def test_config_files_length(self):
-        """CONFIG_FILES should contain exactly 4 entries."""
+        """CONFIG_FILES should contain exactly 6 entries."""
         from ots_containers.config import CONFIG_FILES
 
-        assert len(CONFIG_FILES) == 4
+        assert len(CONFIG_FILES) == 6
 
     def test_config_files_is_tuple(self):
         """CONFIG_FILES should be a tuple (immutable)."""
@@ -277,6 +392,75 @@ class TestHasCustomConfig:
         assert cfg.has_custom_config is True
 
 
+class TestGetExistingConfigFilesRemote:
+    """Test Config.get_existing_config_files() with remote executor."""
+
+    def test_delegates_to_property_when_no_executor(self, tmp_path):
+        """Should use local Path.exists() when executor is None."""
+        from ots_containers.config import Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "config.yaml").touch()
+
+        cfg = Config(config_dir=config_dir)
+        result = cfg.get_existing_config_files(executor=None)
+        assert len(result) == 1
+        assert config_dir / "config.yaml" in result
+
+    def test_delegates_to_property_for_local_executor(self, tmp_path):
+        """Should use local Path.exists() when executor is LocalExecutor."""
+        from ots_shared.ssh import LocalExecutor
+
+        from ots_containers.config import Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "config.yaml").touch()
+        (config_dir / "auth.yaml").touch()
+
+        cfg = Config(config_dir=config_dir)
+        result = cfg.get_existing_config_files(executor=LocalExecutor())
+        assert len(result) == 2
+
+    def test_probes_remote_filesystem_for_ssh_executor(self):
+        """Should use 'test -f' via executor for each config file on remote hosts."""
+        from pathlib import Path
+        from unittest.mock import MagicMock
+
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+        from ots_shared.ssh.executor import Result
+
+        from ots_containers.config import Config
+
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        ex = SSHExecutor(mock_client)
+
+        # config.yaml exists, all others do not
+        ex.run = MagicMock(
+            side_effect=[
+                Result(command="test", returncode=0, stdout="", stderr=""),  # config.yaml
+                Result(command="test", returncode=1, stdout="", stderr=""),  # auth.yaml
+                Result(command="test", returncode=1, stdout="", stderr=""),  # logging.yaml
+                Result(command="test", returncode=1, stdout="", stderr=""),  # billing.yaml
+                Result(command="test", returncode=1, stdout="", stderr=""),  # Caddyfile.template
+                Result(command="test", returncode=1, stdout="", stderr=""),  # puma.rb
+            ]
+        )
+
+        cfg = Config(config_dir=Path("/etc/onetimesecret"))
+        result = cfg.get_existing_config_files(executor=ex)
+
+        assert len(result) == 1
+        assert result[0] == Path("/etc/onetimesecret/config.yaml")
+        assert ex.run.call_count == 6
+
+
 class TestConfigRegistry:
     """Test Config.registry field from OTS_REGISTRY env var."""
 
@@ -362,6 +546,90 @@ class TestConfigRegistryAuthFile:
         if sys.platform == "darwin":
             expected = Path.home() / ".config" / "containers" / "auth.json"
             assert cfg.registry_auth_file == expected
+
+
+class TestGetRegistryAuthFile:
+    """Test Config.get_registry_auth_file(executor) method."""
+
+    def test_none_executor_delegates_to_property(self, monkeypatch):
+        """get_registry_auth_file(None) should return same as registry_auth_file property."""
+        monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.get_registry_auth_file(None) == cfg.registry_auth_file
+
+    def test_local_executor_delegates_to_property(self, monkeypatch):
+        """get_registry_auth_file(LocalExecutor()) should return same as registry_auth_file."""
+        monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
+        from ots_shared.ssh import LocalExecutor
+
+        from ots_containers.config import Config
+
+        cfg = Config()
+        ex = LocalExecutor()
+        assert cfg.get_registry_auth_file(ex) == cfg.registry_auth_file
+
+    def test_remote_executor_with_override_returns_override(self):
+        """get_registry_auth_file with _registry_auth_file override should return it."""
+        from ots_containers.config import Config
+
+        override = Path("/custom/auth.json")
+        mock_executor = MagicMock()
+        cfg = Config(_registry_auth_file=override)
+        assert cfg.get_registry_auth_file(mock_executor) == override
+
+    def test_remote_executor_with_env_var(self, monkeypatch):
+        """get_registry_auth_file should use REGISTRY_AUTH_FILE env var for remote."""
+        monkeypatch.setenv("REGISTRY_AUTH_FILE", "/env/auth.json")
+        from ots_containers.config import Config
+
+        mock_executor = MagicMock()
+        cfg = Config()
+        assert cfg.get_registry_auth_file(mock_executor) == Path("/env/auth.json")
+
+    def test_remote_executor_probes_remote_paths(self, monkeypatch):
+        """get_registry_auth_file should probe remote filesystem for known paths."""
+        monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
+        from ots_shared.ssh.executor import Result
+
+        from ots_containers.config import Config
+
+        mock_executor = MagicMock()
+        # First candidate (/run/containers/0/auth.json) exists
+        mock_executor.run.return_value = Result(command="test", returncode=0, stdout="", stderr="")
+        cfg = Config()
+        result = cfg.get_registry_auth_file(mock_executor)
+        assert result == Path("/run/containers/0/auth.json")
+
+    def test_remote_executor_falls_through_to_etc_path(self, monkeypatch):
+        """When first candidate doesn't exist, should try /etc/containers/auth.json."""
+        monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
+        from ots_shared.ssh.executor import Result
+
+        from ots_containers.config import Config
+
+        mock_executor = MagicMock()
+        mock_executor.run.side_effect = [
+            Result(command="test", returncode=1, stdout="", stderr=""),  # /run/... not found
+            Result(command="test", returncode=0, stdout="", stderr=""),  # /etc/... found
+        ]
+        cfg = Config()
+        result = cfg.get_registry_auth_file(mock_executor)
+        assert result == Path("/etc/containers/auth.json")
+
+    def test_remote_executor_defaults_when_no_paths_exist(self, monkeypatch):
+        """When no remote paths exist, should default to /etc/containers/auth.json."""
+        monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
+        from ots_shared.ssh.executor import Result
+
+        from ots_containers.config import Config
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(command="test", returncode=1, stdout="", stderr="")
+        cfg = Config()
+        result = cfg.get_registry_auth_file(mock_executor)
+        assert result == Path("/etc/containers/auth.json")
 
 
 class TestConfigPrivateImage:
@@ -620,3 +888,725 @@ class TestConfigResourceLimits:
 
         cfg = Config(cpu_quota="90%")
         assert cfg.cpu_quota == "90%"
+
+
+class TestSystemDbPath:
+    """Test Config.system_db_path property."""
+
+    def test_system_db_path_is_var_dir_plus_filename(self):
+        """system_db_path should always be var_dir / deployments.db."""
+        from ots_containers.config import Config
+
+        cfg = Config(var_dir=Path("/var/lib/onetimesecret"))
+        assert cfg.system_db_path == Path("/var/lib/onetimesecret/deployments.db")
+
+    def test_system_db_path_with_custom_var_dir(self, tmp_path):
+        """system_db_path should use the configured var_dir."""
+        from ots_containers.config import Config
+
+        cfg = Config(var_dir=tmp_path)
+        assert cfg.system_db_path == tmp_path / "deployments.db"
+
+
+class TestGetDbPath:
+    """Test Config.get_db_path(executor) method."""
+
+    def test_get_db_path_none_falls_through_to_db_path(self, tmp_path):
+        """get_db_path(None) should return the same as db_path property."""
+        from ots_containers.config import Config
+
+        cfg = Config(var_dir=tmp_path)
+        assert cfg.get_db_path(None) == cfg.db_path
+
+    def test_get_db_path_local_executor_falls_through_to_db_path(self, tmp_path):
+        """get_db_path(LocalExecutor()) should return the same as db_path."""
+        from ots_shared.ssh import LocalExecutor
+
+        from ots_containers.config import Config
+
+        cfg = Config(var_dir=tmp_path)
+        ex = LocalExecutor()
+        assert cfg.get_db_path(ex) == cfg.db_path
+
+    def test_get_db_path_remote_executor_returns_system_db_path(self, tmp_path):
+        """get_db_path with a non-local executor should return system_db_path."""
+        from ots_containers.config import Config
+
+        # Use a mock executor that is not a LocalExecutor
+        mock_executor = MagicMock()
+        cfg = Config(var_dir=tmp_path)
+        assert cfg.get_db_path(mock_executor) == cfg.system_db_path
+
+    def test_get_db_path_ssh_executor_returns_system_db_path(self, mocker):
+        """get_db_path(SSHExecutor) should return system_db_path."""
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+
+        from ots_containers.config import Config
+
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        ssh_ex = SSHExecutor(mock_client)
+        cfg = Config()
+        assert cfg.get_db_path(ssh_ex) == cfg.system_db_path
+
+    def test_get_db_path_system_vs_local_difference(self):
+        """system_db_path and db_path should differ when var_dir is not writable."""
+        from ots_containers.config import Config
+
+        cfg = Config(var_dir=Path("/nonexistent/path"))
+        # system_db_path always returns var_dir / deployments.db
+        assert cfg.system_db_path == Path("/nonexistent/path/deployments.db")
+        # db_path falls back to user space since /nonexistent/path is not writable
+        assert cfg.db_path != cfg.system_db_path
+
+
+class TestCloseSSHCache:
+    """Test _close_ssh_cache() atexit cleanup function."""
+
+    def test_close_ssh_cache_closes_all_clients(self):
+        """Should call close() on every cached client."""
+        from ots_containers.config import _close_ssh_cache, _ssh_cache
+
+        mock_client_a = MagicMock()
+        mock_client_b = MagicMock()
+        _ssh_cache["host-a.example.com"] = mock_client_a
+        _ssh_cache["host-b.example.com"] = mock_client_b
+
+        _close_ssh_cache()
+
+        mock_client_a.close.assert_called_once()
+        mock_client_b.close.assert_called_once()
+        assert len(_ssh_cache) == 0
+
+    def test_close_ssh_cache_clears_cache(self):
+        """After running, the cache dict should be empty."""
+        from ots_containers.config import _close_ssh_cache, _ssh_cache
+
+        _ssh_cache["host-c.example.com"] = MagicMock()
+
+        _close_ssh_cache()
+
+        assert _ssh_cache == {}
+
+    def test_close_ssh_cache_ignores_close_errors(self):
+        """Should not raise if client.close() throws."""
+        from ots_containers.config import _close_ssh_cache, _ssh_cache
+
+        mock_client = MagicMock()
+        mock_client.close.side_effect = RuntimeError("already closed")
+        _ssh_cache["host-d.example.com"] = mock_client
+
+        _close_ssh_cache()  # should not raise
+
+        assert len(_ssh_cache) == 0
+
+    def test_close_ssh_cache_noop_when_empty(self):
+        """Should not raise when the cache is already empty."""
+        from ots_containers.config import _close_ssh_cache, _ssh_cache
+
+        _ssh_cache.clear()
+
+        _close_ssh_cache()  # should not raise
+
+        assert len(_ssh_cache) == 0
+
+
+class TestMetaHostFlagRouting:
+    """Test that _meta() routes --host flag through context.host_var."""
+
+    def test_meta_sets_host_var_when_host_provided(self, mocker):
+        """_meta(host='myhost') should set context.host_var."""
+        from ots_containers import context
+        from ots_containers.cli import _meta
+
+        mocker.patch("ots_containers.cli._configure_logging")
+        mocker.patch("ots_containers.cli.app")
+
+        # Save state so we can restore after the test
+        token = context.host_var.set(None)
+        try:
+            _meta("version", verbose=False, host="eu1.example.com")
+            assert context.host_var.get(None) == "eu1.example.com"
+        finally:
+            context.host_var.reset(token)
+
+    def test_meta_does_not_set_host_var_when_host_none(self, mocker):
+        """_meta(host=None) should leave context.host_var at default (None)."""
+        from ots_containers import context
+        from ots_containers.cli import _meta
+
+        mocker.patch("ots_containers.cli._configure_logging")
+        mocker.patch("ots_containers.cli.app")
+
+        # Reset to known state
+        token = context.host_var.set(None)
+        try:
+            _meta("version", verbose=False, host=None)
+            assert context.host_var.get(None) is None
+        finally:
+            context.host_var.reset(token)
+
+    def test_host_var_default_is_none(self):
+        """context.host_var should be defined with default=None."""
+        # The ContextVar was created with default=None — verify by
+        # inspecting the ContextVar itself rather than reading the current
+        # context (which may be modified by earlier tests in the same process).
+        import contextvars
+
+        from ots_containers import context
+
+        # Create a truly empty context and read the var there
+        empty_ctx = contextvars.Context()
+        result = empty_ctx.run(context.host_var.get, None)
+        assert result is None
+
+
+class TestGetExecutorSSHErrors:
+    """Test that SSH exceptions in get_executor produce user-friendly SystemExit messages."""
+
+    def _clear_cache(self, hostname: str):
+        """Ensure hostname is not in the SSH cache so get_executor tries to connect."""
+        from ots_containers.config import _ssh_cache
+
+        _ssh_cache.pop(hostname, None)
+
+    def test_authentication_exception_gives_friendly_message(self, mocker, monkeypatch):
+        """AuthenticationException should produce a SystemExit mentioning 'Authentication'."""
+        from paramiko.ssh_exception import AuthenticationException
+
+        from ots_containers.config import Config
+
+        hostname = "test-auth-failure.example.com"
+        self._clear_cache(hostname)
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mocker.patch(
+            "ots_shared.ssh.ssh_connect",
+            side_effect=AuthenticationException("Auth failed"),
+        )
+
+        cfg = Config()
+        with pytest.raises(SystemExit) as exc_info:
+            cfg.get_executor(host=hostname)
+
+        msg = str(exc_info.value)
+        assert "Authentication" in msg
+        assert hostname in msg
+
+    def test_no_valid_connections_gives_friendly_message(self, mocker, monkeypatch):
+        """NoValidConnectionsError should produce a SystemExit with the host name."""
+        from paramiko.ssh_exception import NoValidConnectionsError
+
+        from ots_containers.config import Config
+
+        hostname = "test-no-conn.example.com"
+        self._clear_cache(hostname)
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mocker.patch(
+            "ots_shared.ssh.ssh_connect",
+            side_effect=NoValidConnectionsError({("::1", 22): OSError("refused")}),
+        )
+
+        cfg = Config()
+        with pytest.raises(SystemExit) as exc_info:
+            cfg.get_executor(host=hostname)
+
+        msg = str(exc_info.value)
+        # NoValidConnectionsError is an OSError subclass, caught by the OSError handler
+        assert hostname in msg
+
+    def test_socket_timeout_gives_friendly_message(self, mocker, monkeypatch):
+        """socket.timeout should produce a SystemExit mentioning 'timed out'."""
+        from ots_containers.config import Config
+
+        hostname = "test-timeout.example.com"
+        self._clear_cache(hostname)
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mocker.patch(
+            "ots_shared.ssh.ssh_connect",
+            side_effect=TimeoutError("Connection timed out"),
+        )
+
+        cfg = Config()
+        with pytest.raises(SystemExit) as exc_info:
+            cfg.get_executor(host=hostname)
+
+        msg = str(exc_info.value)
+        assert "timed out" in msg
+        assert hostname in msg
+
+    def test_import_error_gives_install_hint(self, mocker, monkeypatch):
+        """ImportError (no paramiko) should tell the user how to install it."""
+        from ots_containers.config import Config
+
+        hostname = "test-import.example.com"
+        self._clear_cache(hostname)
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mocker.patch(
+            "ots_shared.ssh.ssh_connect",
+            side_effect=ImportError("No module named 'paramiko'"),
+        )
+
+        cfg = Config()
+        with pytest.raises(SystemExit) as exc_info:
+            cfg.get_executor(host=hostname)
+
+        msg = str(exc_info.value)
+        assert "paramiko" in msg
+
+    def test_local_executor_returned_when_host_is_none(self, mocker):
+        """When resolve_host returns None, get_executor should return a LocalExecutor."""
+        from ots_shared.ssh import LocalExecutor
+
+        from ots_containers.config import Config
+
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=None)
+
+        cfg = Config()
+        ex = cfg.get_executor(host=None)
+        assert isinstance(ex, LocalExecutor)
+
+
+class TestGetExecutorResolutionChain:
+    """Test Config.get_executor() host resolution chain and executor type returned."""
+
+    def _clear_cache(self, hostname: str):
+        """Remove hostname from SSH cache so get_executor attempts a new connection."""
+        from ots_containers.config import _ssh_cache
+
+        _ssh_cache.pop(hostname, None)
+
+    def test_returns_local_executor_when_no_host(self, mocker):
+        """get_executor(host=None) with no OTS_HOST or .otsinfra.env returns LocalExecutor."""
+        from ots_shared.ssh import LocalExecutor
+
+        from ots_containers.config import Config
+
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=None)
+
+        cfg = Config()
+        ex = cfg.get_executor(host=None)
+        assert isinstance(ex, LocalExecutor)
+
+    def test_returns_ssh_executor_when_host_flag_set(self, mocker):
+        """get_executor(host='myhost') should connect via SSH and return SSHExecutor."""
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+
+        from ots_containers.config import Config
+
+        hostname = "test-host-flag.example.com"
+        self._clear_cache(hostname)
+
+        # resolve_host returns the explicit flag
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        # ssh_connect returns a mock SSHClient
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        mocker.patch("ots_shared.ssh.ssh_connect", return_value=mock_client)
+
+        cfg = Config()
+        ex = cfg.get_executor(host=hostname)
+        assert isinstance(ex, SSHExecutor)
+
+        # Clean up
+        self._clear_cache(hostname)
+
+    def test_returns_ssh_executor_when_ots_host_env_set(self, mocker, monkeypatch):
+        """get_executor(host=None) with OTS_HOST env var should return SSHExecutor."""
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+
+        from ots_containers.config import Config
+
+        hostname = "test-env-host.example.com"
+        self._clear_cache(hostname)
+
+        # resolve_host returns the env-derived host
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        mocker.patch("ots_shared.ssh.ssh_connect", return_value=mock_client)
+
+        cfg = Config()
+        ex = cfg.get_executor(host=None)
+        assert isinstance(ex, SSHExecutor)
+
+        # Clean up
+        self._clear_cache(hostname)
+
+    def test_returns_ssh_executor_when_otsinfra_env_found(self, mocker):
+        """get_executor(host=None) with .otsinfra.env providing host should return SSHExecutor."""
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+
+        from ots_containers.config import Config
+
+        hostname = "test-otsinfra.example.com"
+        self._clear_cache(hostname)
+
+        # resolve_host discovers host from .otsinfra.env
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        mocker.patch("ots_shared.ssh.ssh_connect", return_value=mock_client)
+
+        cfg = Config()
+        ex = cfg.get_executor(host=None)
+        assert isinstance(ex, SSHExecutor)
+
+        # Clean up
+        self._clear_cache(hostname)
+
+    def test_ssh_cache_reuses_connection(self, mocker):
+        """Multiple get_executor calls for the same host should reuse the SSH connection."""
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+
+        from ots_containers.config import Config
+
+        hostname = "test-cache.example.com"
+        self._clear_cache(hostname)
+
+        mocker.patch("ots_shared.ssh.resolve_host", return_value=hostname)
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        mock_connect = mocker.patch("ots_shared.ssh.ssh_connect", return_value=mock_client)
+
+        cfg = Config()
+        ex1 = cfg.get_executor(host=hostname)
+        ex2 = cfg.get_executor(host=hostname)
+
+        # ssh_connect should only be called once (cached)
+        mock_connect.assert_called_once()
+        assert isinstance(ex1, SSHExecutor)
+        assert isinstance(ex2, SSHExecutor)
+
+        # Clean up
+        self._clear_cache(hostname)
+
+    def test_resolve_host_receives_host_flag(self, mocker):
+        """get_executor should pass the host parameter to resolve_host."""
+        from ots_containers.config import Config
+
+        mock_resolve = mocker.patch("ots_shared.ssh.resolve_host", return_value=None)
+
+        cfg = Config()
+        cfg.get_executor(host="explicit-host.example.com")
+
+        mock_resolve.assert_called_once_with(host_flag="explicit-host.example.com")
+
+
+class TestConfigValidateResourceLimits:
+    """Test Config.validate() for memory_max and cpu_quota fields."""
+
+    def _make_config(self, monkeypatch, **overrides):
+        """Create a Config with valid defaults, applying overrides."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("MEMORY_MAX", raising=False)
+        monkeypatch.delenv("CPU_QUOTA", raising=False)
+        monkeypatch.delenv("OTS_VALKEY_SERVICE", raising=False)
+
+        from ots_containers.config import Config
+
+        return Config(**overrides)
+
+    # --- memory_max positive tests ---
+
+    @pytest.mark.parametrize("value", ["512M", "1G", "2G", "100K", "4T", "infinity", "1024"])
+    def test_validate_accepts_valid_memory_max(self, monkeypatch, value):
+        """Valid memory_max values should pass validation."""
+        cfg = self._make_config(monkeypatch, memory_max=value)
+        cfg.validate()  # should not raise
+
+    # --- memory_max negative tests ---
+
+    def test_validate_rejects_memory_max_with_newline(self, monkeypatch):
+        """memory_max containing newline (directive injection) should fail."""
+        with pytest.raises(ValueError, match="MEMORY_MAX"):
+            self._make_config(monkeypatch, memory_max="512M\nExecStart=/evil")
+
+    def test_validate_rejects_memory_max_with_shell_chars(self, monkeypatch):
+        """memory_max with shell metacharacters should fail."""
+        with pytest.raises(ValueError, match="MEMORY_MAX"):
+            self._make_config(monkeypatch, memory_max="512M; rm -rf /")
+
+    def test_validate_rejects_memory_max_empty_string(self, monkeypatch):
+        """Empty string memory_max is falsy so skipped; non-matching string should fail."""
+        # Empty string is falsy, so validate() skips it -- that's fine.
+        self._make_config(monkeypatch, memory_max="")
+        # But a non-matching string should fail:
+        with pytest.raises(ValueError, match="MEMORY_MAX"):
+            self._make_config(monkeypatch, memory_max="not-a-size")
+
+    def test_validate_rejects_memory_max_with_spaces(self, monkeypatch):
+        """memory_max with spaces should fail."""
+        with pytest.raises(ValueError, match="MEMORY_MAX"):
+            self._make_config(monkeypatch, memory_max="512 M")
+
+    # --- cpu_quota positive tests ---
+
+    @pytest.mark.parametrize("value", ["80%", "150%", "1%", "99999%"])
+    def test_validate_accepts_valid_cpu_quota(self, monkeypatch, value):
+        """Valid cpu_quota values should pass validation."""
+        cfg = self._make_config(monkeypatch, cpu_quota=value)
+        cfg.validate()  # should not raise
+
+    # --- cpu_quota negative tests ---
+
+    def test_validate_rejects_cpu_quota_with_newline(self, monkeypatch):
+        """cpu_quota containing newline (directive injection) should fail."""
+        with pytest.raises(ValueError, match="CPU_QUOTA"):
+            self._make_config(monkeypatch, cpu_quota="80%\nExecStart=/evil")
+
+    def test_validate_rejects_cpu_quota_without_percent(self, monkeypatch):
+        """cpu_quota without % sign should fail."""
+        with pytest.raises(ValueError, match="CPU_QUOTA"):
+            self._make_config(monkeypatch, cpu_quota="80")
+
+    def test_validate_rejects_cpu_quota_with_letters(self, monkeypatch):
+        """cpu_quota with letters should fail."""
+        with pytest.raises(ValueError, match="CPU_QUOTA"):
+            self._make_config(monkeypatch, cpu_quota="eighty%")
+
+    # --- None values (skipped) ---
+
+    def test_validate_skips_none_memory_max(self, monkeypatch):
+        """memory_max=None should be valid (not set)."""
+        cfg = self._make_config(monkeypatch, memory_max=None)
+        cfg.validate()  # should not raise
+
+    def test_validate_skips_none_cpu_quota(self, monkeypatch):
+        """cpu_quota=None should be valid (not set)."""
+        cfg = self._make_config(monkeypatch, cpu_quota=None)
+        cfg.validate()  # should not raise
+
+
+class TestConfigValidateValkeyService:
+    """Test Config.validate() for valkey_service field."""
+
+    def _make_config(self, monkeypatch, **overrides):
+        """Create a Config with valid defaults, applying overrides."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("MEMORY_MAX", raising=False)
+        monkeypatch.delenv("CPU_QUOTA", raising=False)
+        monkeypatch.delenv("OTS_VALKEY_SERVICE", raising=False)
+
+        from ots_containers.config import Config
+
+        return Config(**overrides)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "valkey-server@6379.service",
+            "redis.service",
+            "nginx.service",
+            "my-app@80.service",
+        ],
+    )
+    def test_validate_accepts_valid_valkey_service(self, monkeypatch, value):
+        """Valid systemd unit names should pass validation."""
+        cfg = self._make_config(monkeypatch, valkey_service=value)
+        cfg.validate()  # should not raise
+
+    def test_validate_rejects_valkey_service_with_newline(self, monkeypatch):
+        """valkey_service with newline injection should fail."""
+        with pytest.raises(ValueError, match="OTS_VALKEY_SERVICE"):
+            self._make_config(monkeypatch, valkey_service="valkey.service\nExecStart=/malicious")
+
+    def test_validate_rejects_valkey_service_with_space(self, monkeypatch):
+        """valkey_service with spaces should fail."""
+        with pytest.raises(ValueError, match="OTS_VALKEY_SERVICE"):
+            self._make_config(monkeypatch, valkey_service="valkey .service")
+
+    def test_validate_skips_none_valkey_service(self, monkeypatch):
+        """valkey_service=None should be valid (not set)."""
+        cfg = self._make_config(monkeypatch, valkey_service=None)
+        cfg.validate()  # should not raise
+
+
+class TestConfigResolveImageTagWithOverride:
+    """Test the dataclasses.replace pattern for image reference overrides.
+
+    Verifies that creating a new Config via dataclasses.replace(cfg, image=..., tag=...)
+    correctly resolves through resolve_image_tag(). This is the pattern used by commands
+    that accept a positional image reference argument.
+    """
+
+    def test_replace_with_concrete_tag_skips_alias_lookup(self, monkeypatch, mocker):
+        """A concrete tag (not @current/@rollback) should pass through without DB lookup."""
+        import dataclasses
+
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+
+        from ots_containers.config import Config
+
+        cfg = Config()
+        new_cfg = dataclasses.replace(cfg, image="custom/image", tag="v1.0.0")
+
+        # Mock the db module so we can verify it's not called for concrete tags
+        mock_get_alias = mocker.patch("ots_containers.db.get_alias")
+
+        image, tag = new_cfg.resolve_image_tag()
+        assert image == "custom/image"
+        assert tag == "v1.0.0"
+        mock_get_alias.assert_not_called()
+
+    def test_replace_preserves_default_tag_alias_resolution(self, monkeypatch, mocker):
+        """Replacing only image preserves @current tag, which triggers alias lookup."""
+        import dataclasses
+
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+
+        from ots_containers.config import DEFAULT_TAG, Config
+
+        cfg = Config()
+        assert cfg.tag == DEFAULT_TAG  # @current
+
+        new_cfg = dataclasses.replace(cfg, image="custom/image")
+        assert new_cfg.tag == DEFAULT_TAG
+
+        # Mock alias lookup to return a resolved value
+        mock_alias = mocker.MagicMock()
+        mock_alias.image = "custom/image"
+        mock_alias.tag = "v0.23.0"
+        mocker.patch("ots_containers.db.get_alias", return_value=mock_alias)
+
+        image, tag = new_cfg.resolve_image_tag()
+        assert image == "custom/image"
+        assert tag == "v0.23.0"
+
+    def test_replace_does_not_mutate_original(self, monkeypatch):
+        """dataclasses.replace should create a new Config without modifying the original."""
+        import dataclasses
+
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+
+        from ots_containers.config import DEFAULT_IMAGE, DEFAULT_TAG, Config
+
+        cfg = Config()
+        new_cfg = dataclasses.replace(cfg, image="new/image", tag="new-tag")
+
+        assert cfg.image == DEFAULT_IMAGE
+        assert cfg.tag == DEFAULT_TAG
+        assert new_cfg.image == "new/image"
+        assert new_cfg.tag == "new-tag"
+
+    def test_replace_with_env_image_then_positional_override(self, monkeypatch, mocker):
+        """Positional ref image should override IMAGE env via replace."""
+        import dataclasses
+
+        monkeypatch.setenv("IMAGE", "env/image")
+        monkeypatch.setenv("TAG", "env-tag")
+
+        from ots_containers.config import Config
+
+        cfg = Config()
+        assert cfg.image == "env/image"
+        assert cfg.tag == "env-tag"
+
+        # Simulate positional override
+        new_cfg = dataclasses.replace(cfg, image="pos/image", tag="pos-tag")
+
+        mock_get_alias = mocker.patch("ots_containers.db.get_alias")
+        image, tag = new_cfg.resolve_image_tag()
+        assert image == "pos/image"
+        assert tag == "pos-tag"
+        mock_get_alias.assert_not_called()
+
+    def test_replace_with_alias_not_set_returns_literal_tag(self, monkeypatch, mocker):
+        """When @current alias is not set, resolve_image_tag returns the literal tag."""
+        import dataclasses
+
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+
+        from ots_containers.config import Config
+
+        cfg = Config()
+        new_cfg = dataclasses.replace(cfg, image="custom/image")
+
+        # Alias lookup returns None (no alias set)
+        mocker.patch("ots_containers.db.get_alias", return_value=None)
+
+        image, tag = new_cfg.resolve_image_tag()
+        assert image == "custom/image"
+        assert tag == "@current"  # literal sentinel returned when no alias
+
+
+class TestConfigDataclassesReplace:
+    """Verify validate() fires on dataclasses.replace(), not just construction."""
+
+    def test_replace_rejects_bad_tag(self, monkeypatch):
+        import dataclasses
+
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+        from ots_containers.config import Config
+
+        cfg = Config()
+        with pytest.raises(ValueError, match="Invalid tag"):
+            dataclasses.replace(cfg, tag="$(whoami)")
+
+    def test_replace_rejects_bad_image(self, monkeypatch):
+        import dataclasses
+
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+        from ots_containers.config import Config
+
+        cfg = Config()
+        with pytest.raises(ValueError, match="Invalid image"):
+            dataclasses.replace(cfg, image="../evil")
+
+    def test_replace_rejects_bad_registry(self, monkeypatch):
+        import dataclasses
+
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+        from ots_containers.config import Config
+
+        cfg = Config()
+        with pytest.raises(ValueError, match="Invalid OTS_REGISTRY"):
+            dataclasses.replace(cfg, registry="reg/../evil")
+
+    def test_replace_accepts_valid_overrides(self, monkeypatch):
+        import dataclasses
+
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+        from ots_containers.config import Config
+
+        cfg = Config()
+        new_cfg = dataclasses.replace(cfg, image="ghcr.io/other/image", tag="v2.0")
+        assert new_cfg.image == "ghcr.io/other/image"
+        assert new_cfg.tag == "v2.0"

@@ -3,6 +3,9 @@
 
 import subprocess
 
+import pytest
+from ots_shared.ssh.executor import CommandError, Result
+
 from ots_containers.podman import Podman, podman
 
 
@@ -35,6 +38,20 @@ class TestPodmanWrapper:
         """Module should export a ready-to-use podman instance."""
         assert isinstance(podman, Podman)
         assert podman.executable == "podman"
+        assert podman._executor is None
+
+    def test_default_executor_is_none(self):
+        """Default executor should be None (subprocess path)."""
+        p = Podman()
+        assert p._executor is None
+
+    def test_custom_executor(self):
+        """Should accept an executor parameter."""
+        from ots_shared.ssh.executor import LocalExecutor
+
+        ex = LocalExecutor()
+        p = Podman(executor=ex)
+        assert p._executor is ex
 
 
 class TestPodmanCommandBuilding:
@@ -198,3 +215,115 @@ class TestPodmanNestedCommands:
 
         call_args = mock_run.call_args[0][0]
         assert call_args == ["podman", "system", "connection", "list"]
+
+
+class TestPodmanExecutorSupport:
+    """Test executor-based command dispatch."""
+
+    def test_executor_propagates_through_getattr(self):
+        """Executor should propagate through subcommand chaining."""
+        from ots_shared.ssh.executor import LocalExecutor
+
+        ex = LocalExecutor()
+        p = Podman(executor=ex)
+        volume_create = p.volume.create
+        assert volume_create._executor is ex
+
+    def test_executor_propagates_through_deep_chain(self):
+        """Executor should propagate through three-level nesting."""
+        from ots_shared.ssh.executor import LocalExecutor
+
+        ex = LocalExecutor()
+        p = Podman(executor=ex)
+        deep = p.system.connection.list
+        assert deep._executor is ex
+
+    def test_call_delegates_to_executor(self, mocker):
+        """When executor is set, __call__ should use executor.run()."""
+        mock_executor = mocker.Mock()
+        mock_executor.run.return_value = Result(
+            command="podman ps", returncode=0, stdout="CONTAINER ID\n", stderr=""
+        )
+
+        p = Podman(executor=mock_executor)
+        result = p.ps()
+
+        mock_executor.run.assert_called_once()
+        call_args = mock_executor.run.call_args
+        assert call_args[0][0] == ["podman", "ps"]
+        assert result.returncode == 0
+
+    def test_executor_receives_check_flag(self, mocker):
+        """check=True should be forwarded to executor.run()."""
+        mock_executor = mocker.Mock()
+        mock_executor.run.return_value = Result(
+            command="podman ps", returncode=0, stdout="", stderr=""
+        )
+
+        p = Podman(executor=mock_executor)
+        p.ps(check=True)
+
+        call_kwargs = mock_executor.run.call_args[1]
+        assert call_kwargs["check"] is True
+
+    def test_executor_receives_timeout(self, mocker):
+        """timeout kwarg should be forwarded to executor.run()."""
+        mock_executor = mocker.Mock()
+        mock_executor.run.return_value = Result(
+            command="podman ps", returncode=0, stdout="", stderr=""
+        )
+
+        p = Podman(executor=mock_executor)
+        p.ps(timeout=30)
+
+        call_kwargs = mock_executor.run.call_args[1]
+        assert call_kwargs["timeout"] == 30
+
+    def test_executor_raises_command_error_on_check_failure(self, mocker):
+        """When executor is set and check=True, CommandError should be raised on failure."""
+        mock_executor = mocker.Mock()
+        mock_executor.run.side_effect = CommandError(
+            Result(command="podman ps", returncode=1, stdout="", stderr="error")
+        )
+
+        p = Podman(executor=mock_executor)
+        with pytest.raises(CommandError) as exc_info:
+            p.ps(check=True)
+        assert exc_info.value.result.returncode == 1
+
+    def test_no_executor_uses_subprocess(self, mocker):
+        """Without executor, should use subprocess.run (backward compat)."""
+        mock_run = mocker.patch("subprocess.run")
+        mock_run.return_value = subprocess.CompletedProcess([], 0)
+
+        p = Podman()
+        p.ps(capture_output=True, text=True)
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args[1]["capture_output"] is True
+
+    def test_executor_builds_flags_correctly(self, mocker):
+        """Executor path should still convert kwargs to flags."""
+        mock_executor = mocker.Mock()
+        mock_executor.run.return_value = Result(
+            command="podman volume create myvol", returncode=0, stdout="", stderr=""
+        )
+
+        p = Podman(executor=mock_executor)
+        p.volume.create("myvol", label="app=ots")
+
+        cmd = mock_executor.run.call_args[0][0]
+        assert cmd == ["podman", "volume", "create", "--label", "app=ots", "myvol"]
+
+    def test_timeout_not_added_as_flag(self, mocker):
+        """timeout should not become a --timeout flag."""
+        mock_executor = mocker.Mock()
+        mock_executor.run.return_value = Result(
+            command="podman ps", returncode=0, stdout="", stderr=""
+        )
+
+        p = Podman(executor=mock_executor)
+        p.ps(timeout=15)
+
+        cmd = mock_executor.run.call_args[0][0]
+        assert "--timeout" not in cmd

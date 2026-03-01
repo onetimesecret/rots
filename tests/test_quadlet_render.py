@@ -16,7 +16,7 @@ def _make_cfg(mocker, tmp_path, image="ghcr.io/test/image", tag="v1.0.0"):
     cfg.cpu_quota = None
     cfg.valkey_service = None
     cfg.config_dir = tmp_path / "etc"
-    cfg.resolved_image_with_tag = f"{image}:{tag}"
+    cfg.resolved_image_with_tag.return_value = f"{image}:{tag}"
     return cfg
 
 
@@ -242,7 +242,7 @@ class TestBuildFmtVars:
         from ots_containers import quadlet
 
         cfg = _make_cfg(mocker, tmp_path)
-        cfg.resolved_image_with_tag = "custom.registry/app:v9.9.9"
+        cfg.resolved_image_with_tag.return_value = "custom.registry/app:v9.9.9"
         result = quadlet._build_fmt_vars(quadlet.WORKER_TEMPLATE, cfg, None, force=True)
         assert result["image"] == "custom.registry/app:v9.9.9"
 

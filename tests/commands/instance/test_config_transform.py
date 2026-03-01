@@ -8,6 +8,7 @@ transformation with proper backup and apply workflow.
 import subprocess
 
 import pytest
+from ots_shared.ssh import LocalExecutor
 
 from ots_containers.commands import instance
 
@@ -20,12 +21,59 @@ class TestConfigTransformCommand:
         assert hasattr(instance, "config_transform")
         assert callable(instance.config_transform)
 
+    def test_config_transform_passes_host_to_get_executor(self, mocker, tmp_path):
+        """config_transform should pass host from context to get_executor."""
+        from ots_containers import context
+
+        mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
+        mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
+        mock_config.config_dir = tmp_path / "etc"
+        mock_config.config_dir.mkdir()
+        (mock_config.config_dir / "config.yaml").write_text("key: value\n")
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+
+        # Mock env file not existing
+        mocker.patch(
+            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            tmp_path / "nonexistent",
+        )
+
+        def mock_run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if "volume" in cmd:
+                return subprocess.CompletedProcess(cmd, 0)
+            if "/bin/cp" in cmd:
+                return subprocess.CompletedProcess(cmd, 0)
+            if "/bin/cat" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="key: value\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        mocker.patch("subprocess.run", side_effect=mock_run_side_effect)
+
+        # Set host context var to simulate --host flag
+        token = context.host_var.set("web1.example.com")
+        try:
+            instance.config_transform(command="echo test", quiet=True)
+        finally:
+            context.host_var.reset(token)
+
+        # Verify get_executor was called with the host argument
+        mock_config.get_executor.assert_called_once_with(host="web1.example.com")
+
     def test_config_transform_rejects_path_traversal(self, mocker, tmp_path):
         """config_transform should reject path traversal attempts."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
+        mock_config.get_executor.return_value = LocalExecutor()
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
 
         with pytest.raises(SystemExit) as exc_info:
@@ -36,6 +84,7 @@ class TestConfigTransformCommand:
         """config_transform should reject absolute file paths."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
@@ -48,6 +97,7 @@ class TestConfigTransformCommand:
         """config_transform should verify config file exists."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
@@ -60,7 +110,13 @@ class TestConfigTransformCommand:
         """config_transform should create temporary volume."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -94,7 +150,13 @@ class TestConfigTransformCommand:
         """config_transform should cleanup volume after success."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -132,7 +194,13 @@ class TestConfigTransformCommand:
         """config_transform should cleanup volume even on error."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -175,7 +243,13 @@ class TestConfigTransformCommand:
         """config_transform dry-run should show diff without changes."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: old_value\n")
@@ -216,7 +290,13 @@ class TestConfigTransformCommand:
         """config_transform --apply should create backup file."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         config_file = mock_config.config_dir / "config.yaml"
@@ -253,7 +333,13 @@ class TestConfigTransformCommand:
         """config_transform --apply should update the config file."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         config_file = mock_config.config_dir / "config.yaml"
@@ -288,7 +374,13 @@ class TestConfigTransformCommand:
         """config_transform should report when no changes detected."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         config_file = mock_config.config_dir / "config.yaml"
@@ -325,7 +417,13 @@ class TestConfigTransformCommand:
         """config_transform should fail when migration command fails."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -361,7 +459,13 @@ class TestConfigTransformCommand:
         """config_transform should fail when no .new file is produced."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -399,7 +503,13 @@ class TestConfigTransformCommand:
         """config_transform -f should use specified file."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "auth.yaml").write_text("auth: config\n")
@@ -438,7 +548,13 @@ class TestConfigTransformCommand:
 
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -489,7 +605,13 @@ class TestConfigTransformCommand:
         """config_transform should create numbered backups if needed."""
         # Mock Config
         mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         config_file = mock_config.config_dir / "config.yaml"
@@ -545,6 +667,329 @@ class TestConfigTransformHelp:
         assert "command" in captured.out.lower()
         assert "apply" in captured.out.lower()
         assert "file" in captured.out.lower()
+
+
+class TestConfigTransformRemote:
+    """Test config-transform command with remote executor.
+
+    The config_transform command uses isinstance(ex, LocalExecutor) to
+    detect remote mode. When remote, it uses executor.run() for file
+    existence checks, content reads, backups, and writes instead of
+    local Path operations.
+    """
+
+    def _make_remote_executor(self, mocker):
+        """Create a mock executor that is NOT a LocalExecutor (triggers remote mode)."""
+        from unittest.mock import MagicMock
+
+        mock_ex = MagicMock()
+        # Not a LocalExecutor -> is_remote = True
+        mock_ex.__class__ = type("SSHExecutor", (), {})
+        return mock_ex
+
+    def test_config_transform_remote_checks_file_via_executor(self, mocker, tmp_path):
+        """config_transform remote should use executor 'test -f' to check file exists."""
+        from unittest.mock import MagicMock
+
+        mock_config = mocker.MagicMock()
+        mock_ex = self._make_remote_executor(mocker)
+        mock_config.get_executor.return_value = mock_ex
+        mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
+        mock_config.config_dir = tmp_path / "etc"
+        mock_config.config_dir.mkdir()
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+
+        # Simulate file not found on remote
+        test_result = MagicMock()
+        test_result.ok = False
+        mock_ex.run.return_value = test_result
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.config_transform(command="echo test", quiet=True)
+
+        assert "not found" in str(exc_info.value).lower()
+        # Verify 'test -f' was called
+        first_call = mock_ex.run.call_args_list[0]
+        cmd = first_call[0][0]
+        assert cmd[0] == "test"
+        assert cmd[1] == "-f"
+
+    def test_config_transform_remote_reads_original_via_cat(self, mocker, tmp_path):
+        """config_transform remote should read original config via 'cat'."""
+        from unittest.mock import MagicMock
+
+        mock_config = mocker.MagicMock()
+        mock_ex = self._make_remote_executor(mocker)
+        mock_config.get_executor.return_value = mock_ex
+        mock_config.tag = "current"
+        mock_config.image = "ghcr.io/test/img"
+        mock_config.resolve_image_tag.return_value = ("ghcr.io/test/img", "current")
+        mock_config.config_dir = tmp_path / "etc"
+        mock_config.config_dir.mkdir()
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch(
+            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            tmp_path / "nonexistent",
+        )
+
+        call_log = []
+
+        def mock_run(cmd, **kwargs):
+            call_log.append(cmd)
+            result = MagicMock()
+            # 'test -f' succeeds
+            if cmd[0] == "test":
+                result.ok = True
+                return result
+            # env file check fails
+            if cmd[0] == "test" and "-f" in cmd:
+                result.ok = False
+                return result
+            # podman volume create
+            if "volume" in cmd and "create" in cmd:
+                result.ok = True
+                result.returncode = 0
+                return result
+            # podman run (copy, transform, read)
+            if "podman" in cmd:
+                result.ok = True
+                result.returncode = 0
+                if "/bin/cat" in cmd:
+                    result.stdout = "key: new_value\n"
+                else:
+                    result.stdout = ""
+                result.stderr = ""
+                return result
+            # cat for original content
+            if cmd[0] == "cat":
+                result.ok = True
+                result.stdout = "key: new_value\n"  # same content = no diff
+                result.returncode = 0
+                return result
+            result.ok = True
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            return result
+
+        mock_ex.run.side_effect = mock_run
+
+        instance.config_transform(command="echo test", quiet=True)
+
+        # Verify 'cat' was used to read original content (remote path)
+        cat_calls = [c for c in call_log if c and c[0] == "cat"]
+        assert len(cat_calls) >= 1
+
+    def test_config_transform_remote_apply_uses_cp_and_tee(self, mocker, tmp_path, capsys):
+        """config_transform remote --apply should use cp for backup and tee for write."""
+        from unittest.mock import MagicMock
+
+        mock_config = mocker.MagicMock()
+        mock_ex = self._make_remote_executor(mocker)
+        mock_config.get_executor.return_value = mock_ex
+        mock_config.tag = "current"
+        mock_config.image = "ghcr.io/test/img"
+        mock_config.resolve_image_tag.return_value = ("ghcr.io/test/img", "current")
+        mock_config.config_dir = tmp_path / "etc"
+        mock_config.config_dir.mkdir()
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch(
+            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            tmp_path / "nonexistent",
+        )
+
+        call_log = []
+
+        def mock_run(cmd, **kwargs):
+            call_log.append((cmd, kwargs))
+            result = MagicMock()
+            result.ok = True
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            if cmd[0] == "test":
+                return result
+            if "podman" in cmd:
+                if "/bin/cat" in cmd:
+                    result.stdout = "key: new_value\n"
+                return result
+            if cmd[0] == "cat":
+                result.stdout = "key: old_value\n"
+                return result
+            return result
+
+        mock_ex.run.side_effect = mock_run
+
+        instance.config_transform(command="echo test", apply=True, quiet=True)
+
+        # Verify 'cp -p' was used for backup (remote path)
+        cp_calls = [c for c, kw in call_log if c and c[0] == "cp"]
+        assert len(cp_calls) >= 1
+        assert "-p" in cp_calls[0]
+
+        # Verify 'tee' was used to write new content (remote path)
+        tee_calls = [c for c, kw in call_log if c and c[0] == "tee"]
+        assert len(tee_calls) >= 1
+
+
+class TestConfigTransformPositionalReference:
+    """config_transform() accepts positional image reference."""
+
+    def test_reference_overrides_image_and_tag(self, mocker, tmp_path):
+        """config_transform with positional reference should override image and tag."""
+        mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
+        mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = ("custom/image", "v2.0")
+        mock_config.config_dir = tmp_path / "etc"
+        mock_config.config_dir.mkdir()
+        (mock_config.config_dir / "config.yaml").write_text("key: value\n")
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch(
+            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            tmp_path / "nonexistent",
+        )
+
+        # Track dataclasses.replace calls
+        replace_calls = []
+
+        def tracking_replace(obj, **kwargs):
+            replace_calls.append(kwargs)
+            for k, v in kwargs.items():
+                setattr(obj, k, v)
+            new_image = kwargs.get("image", obj.image)
+            new_tag = kwargs.get("tag", obj.tag)
+            obj.resolve_image_tag.return_value = (new_image, new_tag)
+            return obj
+
+        mocker.patch(
+            "ots_containers.commands.instance.app.dataclasses.replace",
+            side_effect=tracking_replace,
+        )
+
+        def mock_run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if "volume" in cmd:
+                return subprocess.CompletedProcess(cmd, 0)
+            if "/bin/cp" in cmd:
+                return subprocess.CompletedProcess(cmd, 0)
+            if "/bin/cat" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="key: value\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        mocker.patch("subprocess.run", side_effect=mock_run_side_effect)
+
+        instance.config_transform(reference="custom/image:v2.0", command="echo test", quiet=True)
+
+        assert len(replace_calls) == 1
+        assert replace_calls[0]["image"] == "custom/image"
+        assert replace_calls[0]["tag"] == "v2.0"
+
+    def test_reference_tag_beats_flag_tag(self, mocker, tmp_path):
+        """Positional ref tag takes precedence over --tag flag."""
+        mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
+        mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = ("img", "ref-tag")
+        mock_config.config_dir = tmp_path / "etc"
+        mock_config.config_dir.mkdir()
+        (mock_config.config_dir / "config.yaml").write_text("key: value\n")
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch(
+            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            tmp_path / "nonexistent",
+        )
+
+        replace_calls = []
+
+        def tracking_replace(obj, **kwargs):
+            replace_calls.append(kwargs)
+            for k, v in kwargs.items():
+                setattr(obj, k, v)
+            new_image = kwargs.get("image", obj.image)
+            new_tag = kwargs.get("tag", obj.tag)
+            obj.resolve_image_tag.return_value = (new_image, new_tag)
+            return obj
+
+        mocker.patch(
+            "ots_containers.commands.instance.app.dataclasses.replace",
+            side_effect=tracking_replace,
+        )
+
+        def mock_run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if "volume" in cmd:
+                return subprocess.CompletedProcess(cmd, 0)
+            if "/bin/cp" in cmd:
+                return subprocess.CompletedProcess(cmd, 0)
+            if "/bin/cat" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="key: value\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        mocker.patch("subprocess.run", side_effect=mock_run_side_effect)
+
+        instance.config_transform(
+            reference="img:ref-tag", command="echo test", tag="flag-tag", quiet=True
+        )
+
+        assert len(replace_calls) == 1
+        # Reference tag should win over flag tag
+        assert replace_calls[0]["tag"] == "ref-tag"
+
+    def test_no_reference_no_replace(self, mocker, tmp_path):
+        """config_transform without reference or tag should not call replace."""
+        mock_config = mocker.MagicMock()
+        mock_config.get_executor.return_value = LocalExecutor()
+        mock_config.tag = "current"
+        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
+        mock_config.resolve_image_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret",
+            "current",
+        )
+        mock_config.config_dir = tmp_path / "etc"
+        mock_config.config_dir.mkdir()
+        (mock_config.config_dir / "config.yaml").write_text("key: value\n")
+        mocker.patch("ots_containers.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch(
+            "ots_containers.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
+            tmp_path / "nonexistent",
+        )
+
+        replace_calls = []
+
+        def tracking_replace(obj, **kwargs):
+            replace_calls.append(kwargs)
+            for k, v in kwargs.items():
+                setattr(obj, k, v)
+            return obj
+
+        mocker.patch(
+            "ots_containers.commands.instance.app.dataclasses.replace",
+            side_effect=tracking_replace,
+        )
+
+        def mock_run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if "volume" in cmd:
+                return subprocess.CompletedProcess(cmd, 0)
+            if "/bin/cp" in cmd:
+                return subprocess.CompletedProcess(cmd, 0)
+            if "/bin/cat" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="key: value\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        mocker.patch("subprocess.run", side_effect=mock_run_side_effect)
+
+        instance.config_transform(command="echo test", quiet=True)
+
+        assert len(replace_calls) == 0
 
 
 class TestConfigTransformCLI:

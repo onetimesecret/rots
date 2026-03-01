@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from ots_containers.commands.image.app import build
+from ots_containers.commands.image.app import _load_oci_build_config, build
 
 
 class TestBuildVersionDetection:
@@ -45,8 +45,10 @@ class TestBuildVersionDetection:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -91,8 +93,10 @@ class TestBuildVersionDetection:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -174,8 +178,10 @@ class TestBuildPodmanInvocation:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -215,8 +221,10 @@ class TestBuildPodmanInvocation:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,  # No registry configured
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -252,8 +260,10 @@ class TestBuildPodmanInvocation:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry="registry.example.com",
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -290,8 +300,10 @@ class TestBuildPodmanInvocation:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -331,8 +343,10 @@ class TestBuildPodmanInvocation:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -380,8 +394,10 @@ class TestBuildDefaultBehavior:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -416,8 +432,10 @@ class TestBuildDefaultBehavior:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -458,8 +476,10 @@ class TestBuildDefaultBehavior:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -497,8 +517,10 @@ class TestBuildErrorHandling:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -571,8 +593,10 @@ class TestBuildVariants:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -623,8 +647,10 @@ class TestBuildVariants:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -691,8 +717,10 @@ class TestBuildVariants:
             "ots_containers.commands.image.app.Config",
             return_value=mocker.Mock(
                 db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
                 registry="registry.example.com",
                 registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
             ),
         )
         mocker.patch("ots_containers.commands.image.app.db.record_deployment")
@@ -709,3 +737,538 @@ class TestBuildVariants:
         push_calls = [c for c in calls if "push" in c]
         assert len(push_calls) >= 1
         assert any("onetimesecret-lite" in c for c in push_calls)
+
+
+# --- .oci-build.json aware build tests ---
+
+
+def _make_project(tmp_path, *, oci_config=None, version="0.25.0"):
+    """Helper: create minimal project dir with optional .oci-build.json."""
+    project_dir = tmp_path / "onetimesecret"
+    project_dir.mkdir()
+
+    (project_dir / "package.json").write_text(json.dumps({"version": version}))
+    (project_dir / "Containerfile").write_text("FROM ruby:3.2\n")
+
+    if oci_config is not None:
+        (project_dir / ".oci-build.json").write_text(json.dumps(oci_config))
+
+    return project_dir
+
+
+def _mock_build_env(mocker, tmp_path):
+    """Helper: set up common mocks for build tests. Returns mock_run."""
+    var_dir = tmp_path / "var"
+    var_dir.mkdir(exist_ok=True)
+
+    def mock_run_factory(cmd, *args, **kwargs):
+        if "git" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="abc12345\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
+
+    mocker.patch(
+        "ots_containers.commands.image.app.Config",
+        return_value=mocker.Mock(
+            db_path=var_dir / "deployments.db",
+            image="ghcr.io/onetimesecret/onetimesecret",
+            registry=None,
+            registry_auth_file=tmp_path / "auth.json",
+            get_executor=lambda host=None: None,
+        ),
+    )
+    mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+
+    return mock_run
+
+
+class TestOciBuildConfig:
+    """Test .oci-build.json loading."""
+
+    def test_load_returns_config_when_present(self, tmp_path):
+        config_data = {"image_name": "onetimesecret", "variants": []}
+        project_dir = _make_project(tmp_path, oci_config=config_data)
+        result = _load_oci_build_config(project_dir)
+        assert result == config_data
+
+    def test_load_returns_none_when_absent(self, tmp_path):
+        project_dir = _make_project(tmp_path)
+        result = _load_oci_build_config(project_dir)
+        assert result is None
+
+    def test_load_raises_on_invalid_json(self, tmp_path):
+        project_dir = _make_project(tmp_path)
+        (project_dir / ".oci-build.json").write_text("{ invalid json }")
+        with pytest.raises(json.JSONDecodeError):
+            _load_oci_build_config(project_dir)
+
+
+class TestBuildWithBase:
+    """Test that base image is built first and --build-context is injected."""
+
+    def test_base_built_before_variant(self, mocker, tmp_path):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "platforms": ["linux/amd64"],
+            "base": {"dockerfile": "docker/Dockerfile.base"},
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile", "target": "final"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+
+        # Create the base dockerfile
+        (project_dir / "docker").mkdir()
+        (project_dir / "docker" / "Dockerfile.base").write_text("FROM ruby:3.2\n")
+
+        mock_run = _mock_build_env(mocker, tmp_path)
+
+        build(project_dir=project_dir, quiet=True)
+
+        # Collect all buildx calls
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        assert len(buildx_calls) == 2  # base + 1 variant
+
+        # First buildx call should be the base (uses Dockerfile.base)
+        base_call = str(buildx_calls[0])
+        assert "Dockerfile.base" in base_call
+        assert "ots-base:" in base_call
+
+        # Second buildx call should have --build-context
+        variant_call = str(buildx_calls[1])
+        assert "--build-context" in variant_call
+        assert "base=container-image://ots-base:" in variant_call
+
+    def test_build_context_uses_container_image_protocol(self, mocker, tmp_path):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "base": {"dockerfile": "docker/Dockerfile.base"},
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+        (project_dir / "docker").mkdir()
+        (project_dir / "docker" / "Dockerfile.base").write_text("FROM ruby:3.2\n")
+
+        mock_run = _mock_build_env(mocker, tmp_path)
+
+        build(project_dir=project_dir, quiet=True)
+
+        # Find the variant buildx call
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        variant_call_args = buildx_calls[-1][0][0]  # The cmd list
+
+        # Find --build-context value
+        idx = variant_call_args.index("--build-context")
+        ctx_value = variant_call_args[idx + 1]
+        assert ctx_value.startswith("base=container-image://")
+
+
+class TestBuildAllVariants:
+    """Test building all variants when no CLI variant flags are given."""
+
+    def test_all_variants_built_in_order(self, mocker, tmp_path):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile", "target": "final"},
+                {"suffix": "-lite", "dockerfile": "docker/lite.dockerfile"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+        (project_dir / "docker").mkdir()
+        (project_dir / "docker" / "lite.dockerfile").write_text("FROM ruby:3.2-slim\n")
+
+        mock_run = _mock_build_env(mocker, tmp_path)
+
+        build(project_dir=project_dir, quiet=True)
+
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        assert len(buildx_calls) == 2
+
+        # First variant: main (no suffix)
+        assert "onetimesecret:v0.25.0" in str(buildx_calls[0])
+        # Second variant: lite
+        assert "onetimesecret-lite:v0.25.0" in str(buildx_calls[1])
+
+    def test_records_deployment_for_each_variant(self, mocker, tmp_path):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile"},
+                {"suffix": "-lite", "dockerfile": "docker/lite.dockerfile"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+        (project_dir / "docker").mkdir()
+        (project_dir / "docker" / "lite.dockerfile").write_text("FROM ruby:3.2-slim\n")
+
+        _mock_build_env(mocker, tmp_path)
+        mock_record = mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+
+        build(project_dir=project_dir, quiet=True)
+
+        # Should record once per variant
+        assert mock_record.call_count == 2
+        recorded_images = [call.kwargs["image"] for call in mock_record.call_args_list]
+        assert "onetimesecret" in recorded_images
+        assert "onetimesecret-lite" in recorded_images
+
+
+class TestBuildSingleVariantFromConfig:
+    """Test building a single variant via --suffix matching."""
+
+    def test_suffix_matches_config_variant(self, mocker, tmp_path):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile"},
+                {"suffix": "-lite", "dockerfile": "docker/lite.dockerfile"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+        (project_dir / "docker").mkdir()
+        (project_dir / "docker" / "lite.dockerfile").write_text("FROM ruby:3.2-slim\n")
+
+        mock_run = _mock_build_env(mocker, tmp_path)
+
+        build(project_dir=project_dir, suffix="-lite", quiet=True)
+
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        # Only 1 variant should be built (no base since no base config)
+        assert len(buildx_calls) == 1
+        assert "onetimesecret-lite:v0.25.0" in str(buildx_calls[0])
+
+    def test_empty_suffix_matches_main_variant(self, mocker, tmp_path):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile"},
+                {"suffix": "-lite", "dockerfile": "docker/lite.dockerfile"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+
+        mock_run = _mock_build_env(mocker, tmp_path)
+
+        build(project_dir=project_dir, suffix="", quiet=True)
+
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        assert len(buildx_calls) == 1
+        assert "onetimesecret:v0.25.0" in str(buildx_calls[0])
+
+
+class TestBuildCustomSuffixWithBase:
+    """Test custom suffix still gets base context injection."""
+
+    def test_unmatched_suffix_uses_cli_flags_with_base(self, mocker, tmp_path):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "base": {"dockerfile": "docker/Dockerfile.base"},
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+        (project_dir / "docker").mkdir()
+        (project_dir / "docker" / "Dockerfile.base").write_text("FROM ruby:3.2\n")
+
+        custom_df = project_dir / "docker" / "custom.dockerfile"
+        custom_df.write_text("FROM base\n")
+
+        mock_run = _mock_build_env(mocker, tmp_path)
+
+        build(
+            project_dir=project_dir,
+            suffix="_custom",
+            dockerfile="docker/custom.dockerfile",
+            quiet=True,
+        )
+
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        # base + custom variant
+        assert len(buildx_calls) == 2
+
+        # Custom variant should have base context and custom suffix
+        variant_call = str(buildx_calls[1])
+        assert "onetimesecret_custom:v0.25.0" in variant_call
+        assert "--build-context" in variant_call
+        assert "base=container-image://ots-base:" in variant_call
+
+
+class TestBuildBaseCleanup:
+    """Test that base image is cleaned up after build."""
+
+    def test_base_removed_after_successful_build(self, mocker, tmp_path):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "base": {"dockerfile": "docker/Dockerfile.base"},
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+        (project_dir / "docker").mkdir()
+        (project_dir / "docker" / "Dockerfile.base").write_text("FROM ruby:3.2\n")
+
+        mock_run = _mock_build_env(mocker, tmp_path)
+
+        build(project_dir=project_dir, quiet=True)
+
+        # Find the rmi call for the base image
+        rmi_calls = [c for c in mock_run.call_args_list if "rmi" in str(c)]
+        assert len(rmi_calls) == 1
+        assert "ots-base:" in str(rmi_calls[0])
+
+    def test_base_removed_even_on_variant_failure(self, mocker, tmp_path, capsys):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "base": {"dockerfile": "docker/Dockerfile.base"},
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+        (project_dir / "docker").mkdir()
+        (project_dir / "docker" / "Dockerfile.base").write_text("FROM ruby:3.2\n")
+
+        call_count = {"n": 0}
+
+        def mock_run_factory(cmd, *args, **kwargs):
+            if "git" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="abc12345\n", stderr="")
+            if "buildx" in cmd and "build" in cmd:
+                call_count["n"] += 1
+                if call_count["n"] == 2:
+                    # Variant build fails
+                    raise subprocess.CalledProcessError(1, cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
+
+        var_dir = tmp_path / "var"
+        var_dir.mkdir(exist_ok=True)
+        mocker.patch(
+            "ots_containers.commands.image.app.Config",
+            return_value=mocker.Mock(
+                db_path=var_dir / "deployments.db",
+                image="ghcr.io/onetimesecret/onetimesecret",
+                registry=None,
+                registry_auth_file=tmp_path / "auth.json",
+                get_executor=lambda host=None: None,
+            ),
+        )
+        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+
+        with pytest.raises(SystemExit):
+            build(project_dir=project_dir, quiet=True)
+
+        # Base cleanup should still have been called
+        rmi_calls = [c for c in mock_run.call_args_list if "rmi" in str(c)]
+        assert len(rmi_calls) == 1
+        assert "ots-base:" in str(rmi_calls[0])
+
+
+class TestBuildInterVariantContexts:
+    """Test inter-variant build context dependencies."""
+
+    def test_lite_gets_main_as_build_context(self, mocker, tmp_path):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile"},
+                {
+                    "suffix": "-lite",
+                    "dockerfile": "docker/lite.dockerfile",
+                    "build_context": {"main": "target:"},
+                },
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+        (project_dir / "docker").mkdir()
+        (project_dir / "docker" / "lite.dockerfile").write_text("FROM ruby:3.2-slim\n")
+
+        mock_run = _mock_build_env(mocker, tmp_path)
+
+        build(project_dir=project_dir, quiet=True)
+
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        assert len(buildx_calls) == 2
+
+        # The lite variant should have --build-context main=container-image://onetimesecret:v0.25.0
+        lite_call = str(buildx_calls[1])
+        assert "--build-context" in lite_call
+        assert "main=container-image://onetimesecret:v0.25.0" in lite_call
+
+
+class TestBuildConfigPlatformResolution:
+    """Test platform resolution from .oci-build.json."""
+
+    def test_config_platform_used_when_cli_is_default(self, mocker, tmp_path):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "platforms": ["linux/arm64"],
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+        mock_run = _mock_build_env(mocker, tmp_path)
+
+        # Don't pass --platform, so it uses the default
+        build(project_dir=project_dir, quiet=True)
+
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        # Should use config platform
+        variant_call_args = buildx_calls[0][0][0]
+        platform_idx = variant_call_args.index("--platform")
+        assert variant_call_args[platform_idx + 1] == "linux/arm64"
+
+    def test_cli_platform_overrides_config(self, mocker, tmp_path):
+        oci_config = {
+            "image_name": "onetimesecret",
+            "platforms": ["linux/arm64"],
+            "variants": [
+                {"suffix": "", "dockerfile": "Dockerfile"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+        mock_run = _mock_build_env(mocker, tmp_path)
+
+        build(project_dir=project_dir, platform="linux/amd64", quiet=True)
+
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        variant_call_args = buildx_calls[0][0][0]
+        platform_idx = variant_call_args.index("--platform")
+        assert variant_call_args[platform_idx + 1] == "linux/amd64"
+
+
+class TestBuildLegacyPathUnchanged:
+    """Ensure builds without .oci-build.json still work identically."""
+
+    def test_no_config_uses_legacy_path(self, mocker, tmp_path):
+        project_dir = _make_project(tmp_path)  # No oci_config
+        mock_run = _mock_build_env(mocker, tmp_path)
+
+        build(project_dir=project_dir, quiet=True)
+
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        assert len(buildx_calls) == 1
+        assert "onetimesecret:v0.25.0" in str(buildx_calls[0])
+        # No --build-context should be present
+        assert "--build-context" not in str(buildx_calls[0])
+
+
+class TestBuildImageNameFallback:
+    """Test that build commands derive image_name from cfg.image when not specified."""
+
+    def _mock_build_env_with_image(self, mocker, tmp_path, image="ghcr.io/org/myimage"):
+        """Like _mock_build_env but sets cfg.image to a custom value."""
+        var_dir = tmp_path / "var"
+        var_dir.mkdir(exist_ok=True)
+
+        def mock_run_factory(cmd, *args, **kwargs):
+            if "git" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="abc12345\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        mock_run = mocker.patch("subprocess.run", side_effect=mock_run_factory)
+
+        mocker.patch(
+            "ots_containers.commands.image.app.Config",
+            return_value=mocker.Mock(
+                db_path=var_dir / "deployments.db",
+                registry=None,
+                registry_auth_file=tmp_path / "auth.json",
+                image=image,
+                get_executor=lambda host=None: None,
+            ),
+        )
+        mocker.patch("ots_containers.commands.image.app.db.record_deployment")
+
+        return mock_run
+
+    def test_oci_config_without_image_name_uses_cfg_basename(self, mocker, tmp_path):
+        """When .oci-build.json omits image_name, build should use cfg.image basename."""
+        oci_config = {
+            # No "image_name" key
+            "platforms": ["linux/amd64"],
+            "variants": [
+                {"suffix": "", "dockerfile": "Containerfile", "target": "final"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+
+        mock_run = self._mock_build_env_with_image(mocker, tmp_path, image="ghcr.io/org/myimage")
+
+        build(project_dir=project_dir, quiet=True)
+
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        assert len(buildx_calls) >= 1
+        # Should use "myimage" (basename of cfg.image), not "onetimesecret"
+        call_str = str(buildx_calls[0])
+        assert "myimage:" in call_str
+        assert "onetimesecret:" not in call_str
+
+    def test_legacy_build_uses_cfg_image_basename(self, mocker, tmp_path):
+        """Legacy build (no .oci-build.json) should use cfg.image basename."""
+        project_dir = _make_project(tmp_path)  # No oci_config
+
+        mock_run = self._mock_build_env_with_image(mocker, tmp_path, image="ghcr.io/org/customapp")
+
+        build(project_dir=project_dir, quiet=True)
+
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        assert len(buildx_calls) == 1
+        call_str = str(buildx_calls[0])
+        assert "customapp:v0.25.0" in call_str
+        assert "onetimesecret:" not in call_str
+
+    def test_oci_config_with_image_name_uses_config_value(self, mocker, tmp_path):
+        """When .oci-build.json has image_name, build should use that, not cfg.image."""
+        oci_config = {
+            "image_name": "explicit-name",
+            "platforms": ["linux/amd64"],
+            "variants": [
+                {"suffix": "", "dockerfile": "Containerfile", "target": "final"},
+            ],
+        }
+        project_dir = _make_project(tmp_path, oci_config=oci_config)
+
+        mock_run = self._mock_build_env_with_image(mocker, tmp_path, image="ghcr.io/org/myimage")
+
+        build(project_dir=project_dir, quiet=True)
+
+        buildx_calls = [
+            c for c in mock_run.call_args_list if "buildx" in str(c) and "build" in str(c)
+        ]
+        assert len(buildx_calls) >= 1
+        call_str = str(buildx_calls[0])
+        # Should use "explicit-name" from .oci-build.json, not "myimage" from cfg
+        assert "explicit-name:" in call_str
