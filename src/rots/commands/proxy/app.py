@@ -335,7 +335,9 @@ def trace(
     ],
     url: Annotated[
         str,
-        cyclopts.Parameter(help="host/path to request (e.g. us.onetime.co/api/v2/status)"),
+        cyclopts.Parameter(
+            help="URL to request (e.g. https://us.onetime.co/api/v2/status or us.onetime.co/path)"
+        ),
     ],
     header: Annotated[
         tuple[str, ...],
@@ -362,13 +364,14 @@ def trace(
     Local only — rejects --host.
 
     Examples:
-        rots proxy trace Caddyfile us.onetime.co/api/v2/status
+        rots proxy trace Caddyfile https://us.onetime.co/api/v2/status
         rots proxy trace Caddyfile us.onetime.co/.env
-        rots proxy trace Caddyfile us.onetime.co/api/v2/secret/conceal \\
+        rots proxy trace Caddyfile https://us.onetime.co/api/v2/secret/conceal \\
             -H "Origin: https://onetimesecret.com"
     """
     import json
     import urllib.error
+    import urllib.parse
     import urllib.request
 
     from ots_shared.ssh import is_remote
@@ -382,10 +385,16 @@ def trace(
     if not config_file.exists():
         raise SystemExit(f"Config file not found: {config_file}")
 
-    # Parse url → host + path
-    parts = url.split("/", 1)
-    host_header = parts[0]
-    request_path = "/" + parts[1] if len(parts) > 1 else "/"
+    # Parse url — accept bare host/path or full URLs
+    if "://" not in url:
+        url = f"https://{url}"
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.hostname:
+        raise SystemExit(f"Invalid URL (no hostname): {url}")
+    host_header = parsed.hostname
+    request_path = parsed.path or "/"
+    if parsed.query:
+        request_path = f"{request_path}?{parsed.query}"
 
     # Adapt Caddyfile → JSON, then patch for local use
     try:
