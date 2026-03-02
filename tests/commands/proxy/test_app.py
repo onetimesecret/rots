@@ -425,7 +425,7 @@ class TestValidateCommand:
 
         validate(config_file=config)
 
-        mock_validate.assert_called_once_with("localhost { }", executor=ANY)
+        mock_validate.assert_called_once_with("localhost { }", executor=ANY, source_dir=tmp_path)
         captured = capsys.readouterr()
         assert "[ok]" in captured.out
 
@@ -452,7 +452,7 @@ class TestValidateCommand:
 
         validate(config_file=None)
 
-        mock_validate.assert_called_once_with("localhost { }", executor=ANY)
+        mock_validate.assert_called_once_with("localhost { }", executor=ANY, source_dir=tmp_path)
 
     def test_validate_success_with_output(self, tmp_path, mocker, capsys):
         """Should print [ok] when validation succeeds."""

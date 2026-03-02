@@ -88,12 +88,21 @@ def render_template(template_path: Path, *, executor: Executor | None = None) ->
         raise ProxyError("envsubst not found - install gettext package") from e
 
 
-def validate_caddy_config(content: str, *, executor: Executor | None = None) -> None:
+def validate_caddy_config(
+    content: str,
+    *,
+    executor: Executor | None = None,
+    source_dir: Path | None = None,
+) -> None:
     """Validate Caddy configuration syntax.
 
     Args:
         content: Caddyfile content to validate.
         executor: Executor for command dispatch.
+        source_dir: Directory to create the temp file in, so Caddy can
+            resolve relative ``import`` paths.  When *None*, uses the
+            system temp directory (imports will fail if the Caddyfile
+            uses relative paths).
 
     Raises:
         ProxyError: If validation fails.
@@ -124,8 +133,10 @@ def validate_caddy_config(content: str, *, executor: Executor | None = None) -> 
             executor.run(["rm", "-f", tmp_remote], timeout=10)  # type: ignore[union-attr]
         return
 
-    # Local execution
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".Caddyfile", delete=False) as f:
+    # Local execution — write temp file into source_dir so relative imports resolve
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".Caddyfile", dir=source_dir, delete=False
+    ) as f:
         f.write(content)
         temp_path = f.name
 

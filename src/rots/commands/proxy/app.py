@@ -258,10 +258,12 @@ def validate(
             if not result.ok:
                 raise SystemExit(f"Failed to read {file_path}: {result.stderr}")
             content = result.stdout
+            source_dir = None
         else:
             content = file_path.read_text()
+            source_dir = file_path.parent
 
-        validate_caddy_config(content, executor=ex)
+        validate_caddy_config(content, executor=ex, source_dir=source_dir)
         print(f"[ok] {file_path} is valid")
 
     except ProxyError as e:
