@@ -491,6 +491,12 @@ def deploy(
 
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
 
+    # Disambiguate positional args: a bare value like "7043" is an identifier,
+    # not an image reference.  Image references contain "/" or ":" or "@".
+    if reference and not any(c in reference for c in "/:@"):
+        identifiers = (reference, *identifiers)
+        reference = None
+
     # Deploy requires identifiers AND type
     if not identifiers:
         raise SystemExit(
@@ -813,6 +819,12 @@ def redeploy(
     import json as json_mod
 
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
+
+    # Disambiguate positional args (same as deploy)
+    if reference and not any(c in reference for c in "/:@"):
+        identifiers = (reference, *identifiers)
+        reference = None
+
     cfg = Config()
 
     # Apply image reference overrides (positional ref > --tag flag > env/config)
