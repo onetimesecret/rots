@@ -5,6 +5,7 @@ import json
 import socket
 import subprocess
 import urllib.request
+from datetime import UTC
 
 import pytest
 
@@ -901,6 +902,50 @@ class TestBuildCurlArgs:
         assert args[h_indices[0] + 1] == "Origin: https://example.com"
         assert args[h_indices[1] + 1] == "X-Custom: test"
 
+    def test_method_flag(self):
+        """Should add -X when method is specified."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", method="HEAD")
+        assert "-X" in args
+        idx = args.index("-X")
+        assert args[idx + 1] == "HEAD"
+
+    def test_method_default_omits_x(self):
+        """Should not include -X when method is None."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com")
+        assert "-X" not in args
+
+    def test_insecure_flag(self):
+        """Should add -k when insecure is True."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", insecure=True)
+        assert "-k" in args
+
+    def test_insecure_false_omits_k(self):
+        """Should not include -k when insecure is False."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com")
+        assert "-k" not in args
+
+    def test_follow_flag(self):
+        """Should add -L when follow_redirects is True."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", follow_redirects=True)
+        assert "-L" in args
+
+    def test_follow_default_no_L(self):
+        """Should not include -L when follow_redirects is False."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com")
+        assert "-L" not in args
+
 
 class TestParseCurlOutput:
     """Test parse_curl_output function."""
@@ -953,6 +998,42 @@ class TestParseCurlOutput:
         bad_output = "HTTP/2 200\r\n\n%%CURL_JSON%%\n{not valid json"
         with pytest.raises(ProxyError, match="JSON output malformed"):
             parse_curl_output(bad_output)
+
+
+class TestParseCertExpiryDays:
+    """Test _parse_cert_expiry_days helper."""
+
+    def test_valid_future_date(self):
+        """Should return positive days for future cert."""
+        from datetime import datetime, timedelta
+
+        from rots.commands.proxy._helpers import _parse_cert_expiry_days
+
+        future = datetime.now(UTC) + timedelta(days=90)
+        date_str = future.strftime("%b %d %H:%M:%S %Y GMT")
+        result = _parse_cert_expiry_days(date_str)
+        assert result is not None
+        assert 89 <= result <= 90
+
+    def test_expired_cert(self):
+        """Should return negative days for expired cert."""
+        from rots.commands.proxy._helpers import _parse_cert_expiry_days
+
+        result = _parse_cert_expiry_days("Jan 01 00:00:00 2020 GMT")
+        assert result is not None
+        assert result < 0
+
+    def test_empty_string_returns_none(self):
+        """Should return None for empty cert expiry."""
+        from rots.commands.proxy._helpers import _parse_cert_expiry_days
+
+        assert _parse_cert_expiry_days("") is None
+
+    def test_malformed_date_returns_none(self):
+        """Should return None for unparseable date."""
+        from rots.commands.proxy._helpers import _parse_cert_expiry_days
+
+        assert _parse_cert_expiry_days("not a date") is None
 
 
 class TestEvaluateAssertions:
@@ -1049,6 +1130,47 @@ class TestEvaluateAssertions:
         result = self._make_result()
         checks = evaluate_assertions(result)
         assert checks == []
+
+    def test_cert_days_pass(self):
+        """Should pass when cert has enough days remaining."""
+        from datetime import datetime, timedelta
+
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        future = datetime.now(UTC) + timedelta(days=90)
+        cert_expiry = future.strftime("%b %d %H:%M:%S %Y GMT")
+        result = self._make_result(cert_expiry=cert_expiry)
+        checks = evaluate_assertions(result, expect_cert_days=30)
+        cert_check = [c for c in checks if c["check"] == "cert-expiry"]
+        assert len(cert_check) == 1
+        assert cert_check[0]["passed"] is True
+        assert cert_check[0]["expected"] == ">= 30 days"
+
+    def test_cert_days_fail(self):
+        """Should fail when cert has fewer days than threshold."""
+        from datetime import datetime, timedelta
+
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        future = datetime.now(UTC) + timedelta(days=15)
+        cert_expiry = future.strftime("%b %d %H:%M:%S %Y GMT")
+        result = self._make_result(cert_expiry=cert_expiry)
+        checks = evaluate_assertions(result, expect_cert_days=30)
+        cert_check = [c for c in checks if c["check"] == "cert-expiry"]
+        assert len(cert_check) == 1
+        assert cert_check[0]["passed"] is False
+        assert "days" in cert_check[0]["actual"]
+
+    def test_cert_days_empty_expiry(self):
+        """Should fail gracefully when cert_expiry is empty."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result(cert_expiry="")
+        checks = evaluate_assertions(result, expect_cert_days=30)
+        cert_check = [c for c in checks if c["check"] == "cert-expiry"]
+        assert len(cert_check) == 1
+        assert cert_check[0]["passed"] is False
+        assert cert_check[0]["actual"] == "(no expiry date available)"
 
 
 class TestRunProbe:

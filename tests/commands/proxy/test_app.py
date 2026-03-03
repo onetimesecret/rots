@@ -1052,3 +1052,155 @@ class TestProbeCommand:
         captured = capsys.readouterr()
         assert "[ok] header X-Frame-Options" in captured.out
         assert "[FAIL] header X-Missing" in captured.out
+
+    def test_method_passthrough(self, mocker):
+        """Should pass --method to run_probe."""
+        from rots.commands.proxy.app import probe
+
+        mock_run = mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            return_value=self._make_probe_result(),
+        )
+
+        probe(url="https://example.com/", method="HEAD")
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args[1]["method"] == "HEAD"
+
+    def test_insecure_passthrough(self, mocker):
+        """Should pass --insecure to run_probe."""
+        from rots.commands.proxy.app import probe
+
+        mock_run = mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            return_value=self._make_probe_result(),
+        )
+
+        probe(url="https://example.com/", insecure=True)
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args[1]["insecure"] is True
+
+    def test_follow_passthrough(self, mocker):
+        """Should pass --follow to run_probe."""
+        from rots.commands.proxy.app import probe
+
+        mock_run = mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            return_value=self._make_probe_result(),
+        )
+
+        probe(url="https://example.com/", follow_redirects=True)
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args[1]["follow_redirects"] is True
+
+    def test_retry_succeeds_after_probe_failure(self, mocker, capsys):
+        """Should succeed when run_probe fails first then succeeds on retry."""
+        from rots.commands.proxy._helpers import ProxyError
+        from rots.commands.proxy.app import probe
+
+        mock_run = mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            side_effect=[
+                ProxyError("connection refused"),
+                self._make_probe_result(),
+            ],
+        )
+        mocker.patch("rots.commands.proxy.app.time.sleep")
+
+        # Should not raise
+        probe(url="https://example.com/api/v2/status", retries=1)
+
+        assert mock_run.call_count == 2
+        captured = capsys.readouterr()
+        assert "status: 200" in captured.out
+
+    def test_retry_exhausted_exits(self, mocker):
+        """Should raise SystemExit when all retry attempts fail."""
+        from rots.commands.proxy._helpers import ProxyError
+        from rots.commands.proxy.app import probe
+
+        mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            side_effect=ProxyError("connection refused"),
+        )
+        mocker.patch("rots.commands.proxy.app.time.sleep")
+
+        with pytest.raises(SystemExit) as exc_info:
+            probe(url="https://example.com/api/v2/status", retries=2)
+
+        assert "connection refused" in str(exc_info.value)
+
+    def test_retry_assertion_failure_then_pass(self, mocker, capsys):
+        """Should retry when assertions fail and succeed on next attempt."""
+        from rots.commands.proxy.app import probe
+
+        mock_run = mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            side_effect=[
+                self._make_probe_result(http_code=503),
+                self._make_probe_result(http_code=200),
+            ],
+        )
+        mocker.patch("rots.commands.proxy.app.time.sleep")
+
+        # Should not raise — second attempt returns 200
+        probe(
+            url="https://example.com/api/v2/status",
+            expect_status=200,
+            retries=1,
+        )
+
+        assert mock_run.call_count == 2
+        captured = capsys.readouterr()
+        assert "[ok] status" in captured.out
+
+    def test_retry_delay_called(self, mocker):
+        """Should sleep with the configured delay between retries."""
+        from rots.commands.proxy._helpers import ProxyError
+        from rots.commands.proxy.app import probe
+
+        mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            side_effect=[
+                ProxyError("timeout"),
+                self._make_probe_result(),
+            ],
+        )
+        mock_sleep = mocker.patch("rots.commands.proxy.app.time.sleep")
+
+        probe(url="https://example.com/", retries=1, retry_delay=2.5)
+
+        mock_sleep.assert_called_once_with(2.5)
+
+    def test_no_retry_default(self, mocker, capsys):
+        """With retries=0 (default), run_probe should be called exactly once."""
+        from rots.commands.proxy.app import probe
+
+        mock_run = mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            return_value=self._make_probe_result(),
+        )
+
+        probe(url="https://example.com/api/v2/status")
+
+        mock_run.assert_called_once()
+
+    def test_cert_days_passthrough(self, mocker, capsys):
+        """Should pass expect_cert_days to evaluate_assertions."""
+        from rots.commands.proxy.app import probe
+
+        mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            return_value=self._make_probe_result(),
+        )
+        mock_eval = mocker.patch(
+            "rots.commands.proxy.app.evaluate_assertions",
+            return_value=[],
+        )
+
+        probe(url="https://example.com/api/v2/status", expect_cert_days=30)
+
+        mock_eval.assert_called_once()
+        assert mock_eval.call_args[1]["expect_cert_days"] == 30

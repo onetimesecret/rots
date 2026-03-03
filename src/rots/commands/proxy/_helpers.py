@@ -22,6 +22,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+from datetime import UTC
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -533,6 +534,9 @@ def build_curl_args(
     cert_status: bool = False,
     extra_headers: tuple[str, ...] = (),
     timeout: int = 30,
+    method: str | None = None,
+    insecure: bool = False,
+    follow_redirects: bool = False,
 ) -> list[str]:
     """Build the curl command list for probing *url*.
 
@@ -562,6 +566,12 @@ def build_curl_args(
         cmd.append("--cert-status")
     for h in extra_headers:
         cmd.extend(["-H", h])
+    if method is not None:
+        cmd.extend(["-X", method])
+    if insecure:
+        cmd.append("-k")
+    if follow_redirects:
+        cmd.append("-L")
 
     cmd.append(url)
     return cmd
@@ -628,11 +638,33 @@ def parse_curl_output(stdout: str) -> ProbeResult:
     )
 
 
+def _parse_cert_expiry_days(cert_expiry: str) -> int | None:
+    """Parse cert expiry string and return days remaining.
+
+    The format comes from curl's ``%{json}`` output, e.g.,
+    ``"Aug 17 23:59:59 2026 GMT"``.
+
+    Returns None on empty string or parse failure.
+    """
+    if not cert_expiry:
+        return None
+    try:
+        from datetime import datetime
+
+        expiry = datetime.strptime(cert_expiry, "%b %d %H:%M:%S %Y %Z")
+        expiry = expiry.replace(tzinfo=UTC)
+        now = datetime.now(UTC)
+        return (expiry - now).days
+    except (ValueError, OverflowError):
+        return None
+
+
 def evaluate_assertions(
     result: ProbeResult,
     *,
     expect_status: int | None = None,
     expect_headers: tuple[str, ...] = (),
+    expect_cert_days: int | None = None,
 ) -> list[dict]:
     """Evaluate assertions against a probe result.
 
@@ -670,6 +702,27 @@ def evaluate_assertions(
             }
         )
 
+    if expect_cert_days is not None:
+        days = _parse_cert_expiry_days(result.cert_expiry)
+        if days is None:
+            checks.append(
+                {
+                    "check": "cert-expiry",
+                    "passed": False,
+                    "expected": f">= {expect_cert_days} days",
+                    "actual": "(no expiry date available)",
+                }
+            )
+        else:
+            checks.append(
+                {
+                    "check": "cert-expiry",
+                    "passed": days >= expect_cert_days,
+                    "expected": f">= {expect_cert_days} days",
+                    "actual": f"{days} days",
+                }
+            )
+
     return checks
 
 
@@ -682,6 +735,9 @@ def run_probe(
     cert_status: bool = False,
     extra_headers: tuple[str, ...] = (),
     timeout: int = 30,
+    method: str | None = None,
+    insecure: bool = False,
+    follow_redirects: bool = False,
     executor: Executor | None = None,
 ) -> ProbeResult:
     """Execute curl and return parsed probe results.
@@ -700,6 +756,9 @@ def run_probe(
         cert_status=cert_status,
         extra_headers=extra_headers,
         timeout=timeout,
+        method=method,
+        insecure=insecure,
+        follow_redirects=follow_redirects,
     )
 
     # Give subprocess a bit more than curl's --max-time to avoid racing

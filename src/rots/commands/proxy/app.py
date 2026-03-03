@@ -12,6 +12,7 @@ All commands support remote execution via the global ``--host`` flag.
 import contextlib
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -557,6 +558,18 @@ def probe(
         bool,
         cyclopts.Parameter(name="--cert-status", help="Check OCSP stapling"),
     ] = False,
+    method: Annotated[
+        str | None,
+        cyclopts.Parameter(name="--method", help="HTTP method (e.g., HEAD, OPTIONS)"),
+    ] = None,
+    insecure: Annotated[
+        bool,
+        cyclopts.Parameter(name="--insecure", help="Skip TLS verification (-k)"),
+    ] = False,
+    follow_redirects: Annotated[
+        bool,
+        cyclopts.Parameter(name="--follow", help="Follow redirects (-L)"),
+    ] = False,
     header: Annotated[
         tuple[str, ...],
         cyclopts.Parameter(name="--header", help="Extra header (repeatable)"),
@@ -569,7 +582,21 @@ def probe(
         tuple[str, ...],
         cyclopts.Parameter(name="--expect-header", help="Assert header (repeatable)"),
     ] = (),
+    expect_cert_days: Annotated[
+        int | None,
+        cyclopts.Parameter(
+            name="--expect-cert-days-remaining", help="Assert minimum days until cert expiry"
+        ),
+    ] = None,
     json_output: JsonOutput = False,
+    retries: Annotated[
+        int,
+        cyclopts.Parameter(name="--retries", help="Number of retry attempts (0 = no retries)"),
+    ] = 0,
+    retry_delay: Annotated[
+        float,
+        cyclopts.Parameter(name="--retry-delay", help="Seconds between retries"),
+    ] = 1.0,
 ) -> None:
     """Probe a live URL with curl and report TLS, headers, and timing.
 
@@ -578,44 +605,66 @@ def probe(
 
     Supports DNS-independent staging tests via --resolve and --connect-to.
     When assertions (--expect-status, --expect-header) are provided, exits
-    non-zero on failure for CI use.
+    non-zero on failure for CI use.  Use --retries to wait for a service to
+    become ready (retries both connection errors and assertion failures).
 
     Examples:
         rots proxy probe https://us.onetime.co/api/v2/status
         rots proxy probe https://us.onetime.co/api/v2/status --expect-status 200
         rots proxy probe https://us.onetime.co/api/v2/status \\
             --resolve us.onetime.co:443:10.0.0.5
+        rots proxy probe https://us.onetime.co/api/v2/status \\
+            --expect-status 200 --retries 5 --retry-delay 2.0
         rots --host eu-web-01 proxy probe https://localhost:7043/health
     """
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
 
-    try:
-        result = run_probe(
-            url,
-            resolve=resolve,
-            connect_to=connect_to,
-            cacert=cacert,
-            cert_status=cert_status,
-            extra_headers=header,
-            executor=ex,
-        )
-    except ProxyError as e:
-        raise SystemExit(str(e)) from e
+    last_result: ProbeResult | None = None
+    last_assertions: list[dict] = []
 
-    assertions = evaluate_assertions(
-        result,
-        expect_status=expect_status,
-        expect_headers=expect_header,
-    )
+    for attempt in range(retries + 1):
+        try:
+            last_result = run_probe(
+                url,
+                resolve=resolve,
+                connect_to=connect_to,
+                cacert=cacert,
+                cert_status=cert_status,
+                extra_headers=header,
+                method=method,
+                insecure=insecure,
+                follow_redirects=follow_redirects,
+                executor=ex,
+            )
+        except ProxyError as e:
+            if attempt < retries:
+                time.sleep(retry_delay)
+                continue
+            raise SystemExit(str(e)) from e
+
+        last_assertions = evaluate_assertions(
+            last_result,
+            expect_status=expect_status,
+            expect_headers=expect_header,
+            expect_cert_days=expect_cert_days,
+        )
+
+        all_passed = not last_assertions or all(a["passed"] for a in last_assertions)
+        if all_passed or attempt == retries:
+            break
+
+        time.sleep(retry_delay)
+
+    assert last_result is not None  # loop always sets or raises
 
     if json_output:
-        _print_probe_json(result, assertions)
+        _print_probe_json(last_result, last_assertions)
     else:
-        _print_probe_human(result, assertions)
+        _print_probe_human(last_result, last_assertions)
 
     # Exit code: 0 if no assertions or all pass, 1 if any fail
-    if assertions and not all(a["passed"] for a in assertions):
+    if last_assertions and not all(a["passed"] for a in last_assertions):
         raise SystemExit(1)
 
 
