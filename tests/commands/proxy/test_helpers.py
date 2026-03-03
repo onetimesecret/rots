@@ -1247,3 +1247,105 @@ class TestRunProbe:
 
         with pytest.raises(ProxyError, match="curl timed out"):
             run_probe("https://example.com")
+
+
+class TestCollectLocalFiles:
+    """Test collect_local_files function."""
+
+    def test_collects_files_recursively(self, tmp_path):
+        """Should collect all files including nested directories."""
+        from rots.commands.proxy._helpers import collect_local_files
+
+        (tmp_path / "a.txt").write_text("a")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "b.txt").write_text("b")
+        deep = sub / "deep"
+        deep.mkdir()
+        (deep / "c.txt").write_text("c")
+
+        result = collect_local_files(tmp_path)
+
+        rel_paths = [str(r) for _, r in result]
+        assert "a.txt" in rel_paths
+        assert "sub/b.txt" in rel_paths
+        assert "sub/deep/c.txt" in rel_paths
+
+    def test_skips_hidden_files(self, tmp_path):
+        """Should skip files and directories starting with '.'."""
+        from rots.commands.proxy._helpers import collect_local_files
+
+        (tmp_path / "visible.txt").write_text("yes")
+        (tmp_path / ".hidden").write_text("no")
+        hidden_dir = tmp_path / ".git"
+        hidden_dir.mkdir()
+        (hidden_dir / "config").write_text("no")
+
+        result = collect_local_files(tmp_path)
+
+        rel_paths = [str(r) for _, r in result]
+        assert rel_paths == ["visible.txt"]
+
+    def test_sorted_output(self, tmp_path):
+        """Should return files sorted by relative path."""
+        from rots.commands.proxy._helpers import collect_local_files
+
+        (tmp_path / "z.txt").write_text("z")
+        (tmp_path / "a.txt").write_text("a")
+        sub = tmp_path / "m"
+        sub.mkdir()
+        (sub / "b.txt").write_text("b")
+
+        result = collect_local_files(tmp_path)
+
+        rel_paths = [str(r) for _, r in result]
+        assert rel_paths == ["a.txt", "m/b.txt", "z.txt"]
+
+    def test_empty_dir_returns_empty(self, tmp_path):
+        """Should return empty list for empty directory."""
+        from rots.commands.proxy._helpers import collect_local_files
+
+        result = collect_local_files(tmp_path)
+
+        assert result == []
+
+
+class TestFindTemplateInDir:
+    """Test find_template_in_dir function."""
+
+    def test_single_template_found(self, tmp_path):
+        """Should return the single *.template file."""
+        from rots.commands.proxy._helpers import find_template_in_dir
+
+        tpl = tmp_path / "Caddyfile.template"
+        tpl.write_text("content")
+        (tmp_path / "other.txt").write_text("not a template")
+
+        result = find_template_in_dir(tmp_path)
+
+        assert result == tpl
+
+    def test_no_template_returns_none(self, tmp_path):
+        """Should return None when no *.template files exist."""
+        from rots.commands.proxy._helpers import find_template_in_dir
+
+        (tmp_path / "Caddyfile").write_text("not a template")
+
+        result = find_template_in_dir(tmp_path)
+
+        assert result is None
+
+    def test_multiple_templates_raises(self, tmp_path):
+        """Should raise ProxyError with names when multiple found."""
+        from rots.commands.proxy._helpers import ProxyError, find_template_in_dir
+
+        (tmp_path / "A.template").write_text("a")
+        (tmp_path / "B.template").write_text("b")
+
+        with pytest.raises(ProxyError) as exc_info:
+            find_template_in_dir(tmp_path)
+
+        msg = str(exc_info.value)
+        assert "A.template" in msg
+        assert "B.template" in msg
+        assert "--template" in msg
