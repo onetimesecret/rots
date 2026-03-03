@@ -491,6 +491,12 @@ def deploy(
 
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
 
+    # Disambiguate positional args: a bare value like "7043" is an identifier,
+    # not an image reference.  Image references contain "/" or ":" or "@".
+    if reference and not any(c in reference for c in "/:@"):
+        identifiers = (reference, *identifiers)
+        reference = None
+
     # Deploy requires identifiers AND type
     if not identifiers:
         raise SystemExit(
@@ -813,6 +819,12 @@ def redeploy(
     import json as json_mod
 
     itype = resolve_instance_type(instance_type, web, worker, scheduler)
+
+    # Disambiguate positional args (same as deploy)
+    if reference and not any(c in reference for c in "/:@"):
+        identifiers = (reference, *identifiers)
+        reference = None
+
     cfg = Config()
 
     # Apply image reference overrides (positional ref > --tag flag > env/config)
@@ -1720,6 +1732,16 @@ def shell(
 
     # Resolve image/tag (handles @current/@rollback aliases)
     image, resolved_tag = cfg.resolve_image_tag(executor=ex)
+    if resolved_tag.startswith("@"):
+        print(f"Error: tag '{resolved_tag}' is a sentinel (no deploy recorded).")
+        print("Use --tag to specify an image tag, e.g.: rots instance shell --tag v0.24.0")
+        raise SystemExit(1)
+
+    # Use private registry when OTS_REGISTRY is set
+    if cfg.registry:
+        image_basename = image.split("/")[-1]
+        image = f"{cfg.registry}/{image_basename}"
+
     full_image = f"{image}:{resolved_tag}"
 
     # Build podman run command
