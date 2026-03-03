@@ -6,6 +6,8 @@ without attribute errors or import failures. They use mocking to avoid
 requiring actual podman/systemd infrastructure.
 """
 
+import contextlib
+
 import pytest
 
 from rots.commands import instance
@@ -1022,6 +1024,10 @@ class TestDeployEnvVarResolution:
         mocker.patch("rots.commands.instance.app.assets.update")
         mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
         mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch(
+            "rots.commands.instance.app.deploy_lock",
+            return_value=contextlib.nullcontext(),
+        )
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.deploy(identifiers=("7043",), web=True)
@@ -2141,6 +2147,10 @@ class TestListInstancesJsonOutput:
         mocker.patch(
             "rots.commands.instance.app.systemd.is_active",
             return_value="active",
+        )
+        mocker.patch(
+            "rots.commands.instance.app.systemd.get_container_health_map",
+            return_value={},
         )
 
         mock_config = mocker.Mock()
