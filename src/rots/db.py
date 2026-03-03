@@ -111,6 +111,34 @@ CREATE INDEX IF NOT EXISTS idx_service_instances_package ON service_instances(pa
 CREATE INDEX IF NOT EXISTS idx_service_actions_timestamp ON service_actions(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_service_actions_pkg_inst
     ON service_actions(package, instance);
+
+-- DNS record audit trail
+CREATE TABLE IF NOT EXISTS dns_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    hostname TEXT NOT NULL,
+    record_type TEXT NOT NULL,
+    value TEXT NOT NULL,
+    ttl INTEGER,
+    provider TEXT NOT NULL,
+    action TEXT NOT NULL,
+    success INTEGER NOT NULL DEFAULT 1,
+    notes TEXT
+);
+
+-- DNS current state (last-known record per hostname)
+CREATE TABLE IF NOT EXISTS dns_current (
+    hostname TEXT PRIMARY KEY,
+    record_type TEXT NOT NULL,
+    value TEXT NOT NULL,
+    ttl INTEGER,
+    provider TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_dns_records_timestamp ON dns_records(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_dns_records_hostname ON dns_records(hostname);
+CREATE INDEX IF NOT EXISTS idx_dns_current_provider ON dns_current(provider);
 """
 
 
@@ -863,3 +891,248 @@ def get_service_actions(
             )
             for row in rows
         ]
+
+
+# =============================================================================
+# DNS Record Management
+# =============================================================================
+
+
+@dataclass
+class DnsRecord:
+    """A DNS action audit record."""
+
+    id: int
+    timestamp: str
+    hostname: str
+    record_type: str
+    value: str
+    ttl: int | None
+    provider: str
+    action: str
+    success: bool
+    notes: str | None = None
+
+
+@dataclass
+class DnsCurrent:
+    """Current DNS state for a hostname."""
+
+    hostname: str
+    record_type: str
+    value: str
+    ttl: int | None
+    provider: str
+    updated_at: str
+
+
+def record_dns_action(
+    db_path: Path,
+    hostname: str,
+    record_type: str,
+    value: str,
+    ttl: int | None,
+    provider: str,
+    action: str,
+    success: bool = True,
+    notes: str | None = None,
+    *,
+    executor: Executor | None = None,
+) -> int:
+    """Record a DNS action to the audit trail. Returns the record ID."""
+    sql = """
+        INSERT INTO dns_records
+            (hostname, record_type, value, ttl, provider, action, success, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    params = (hostname, record_type, value, ttl, provider, action, 1 if success else 0, notes)
+    if _is_remote(executor):
+        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        return 0  # Remote doesn't return lastrowid
+    with get_connection(db_path) as conn:
+        cursor = conn.execute(sql, params)
+        conn.commit()
+        return cursor.lastrowid or 0
+
+
+def upsert_dns_current(
+    db_path: Path,
+    hostname: str,
+    record_type: str,
+    value: str,
+    ttl: int | None,
+    provider: str,
+    *,
+    executor: Executor | None = None,
+) -> None:
+    """Update or insert the current DNS state for a hostname."""
+    sql = """
+        INSERT INTO dns_current (hostname, record_type, value, ttl, provider, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(hostname) DO UPDATE SET
+            record_type = excluded.record_type,
+            value = excluded.value,
+            ttl = excluded.ttl,
+            provider = excluded.provider,
+            updated_at = datetime('now')
+    """
+    params = (hostname, record_type, value, ttl, provider)
+    if _is_remote(executor):
+        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        return
+    with get_connection(db_path) as conn:
+        conn.execute(sql, params)
+        conn.commit()
+
+
+def get_dns_current(
+    db_path: Path,
+    hostname: str,
+    *,
+    executor: Executor | None = None,
+) -> DnsCurrent | None:
+    """Get the current DNS record for a hostname."""
+    sql = """
+        SELECT hostname, record_type, value, ttl, provider, updated_at
+        FROM dns_current
+        WHERE hostname = ?
+    """
+    params = (hostname,)
+    if _is_remote(executor):
+        rows = _remote_query(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        if rows:
+            row = rows[0]
+            return DnsCurrent(
+                hostname=row["hostname"],
+                record_type=row["record_type"],
+                value=row["value"],
+                ttl=row.get("ttl"),
+                provider=row["provider"],
+                updated_at=row["updated_at"],
+            )
+        return None
+    with get_connection(db_path) as conn:
+        row = conn.execute(sql, params).fetchone()
+        if row:
+            return DnsCurrent(
+                hostname=row["hostname"],
+                record_type=row["record_type"],
+                value=row["value"],
+                ttl=row["ttl"],
+                provider=row["provider"],
+                updated_at=row["updated_at"],
+            )
+        return None
+
+
+def get_all_dns_current(
+    db_path: Path,
+    *,
+    executor: Executor | None = None,
+) -> list[DnsCurrent]:
+    """Get all current DNS records."""
+    sql = """
+        SELECT hostname, record_type, value, ttl, provider, updated_at
+        FROM dns_current
+        ORDER BY hostname
+    """
+    if _is_remote(executor):
+        rows = _remote_query(db_path, sql, executor=executor)  # type: ignore[arg-type]
+        return [
+            DnsCurrent(
+                hostname=row["hostname"],
+                record_type=row["record_type"],
+                value=row["value"],
+                ttl=row.get("ttl"),
+                provider=row["provider"],
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
+    with get_connection(db_path) as conn:
+        rows = conn.execute(sql).fetchall()
+        return [
+            DnsCurrent(
+                hostname=row["hostname"],
+                record_type=row["record_type"],
+                value=row["value"],
+                ttl=row["ttl"],
+                provider=row["provider"],
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
+
+
+def get_dns_history(
+    db_path: Path,
+    hostname: str,
+    limit: int = 50,
+    *,
+    executor: Executor | None = None,
+) -> list[DnsRecord]:
+    """Get DNS action history for a hostname."""
+    sql = """
+        SELECT id, timestamp, hostname, record_type, value, ttl, provider, action, success, notes
+        FROM dns_records
+        WHERE hostname = ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+    """
+    params = (hostname, limit)
+    if _is_remote(executor):
+        rows = _remote_query(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        return [
+            DnsRecord(
+                id=row["id"],
+                timestamp=row["timestamp"],
+                hostname=row["hostname"],
+                record_type=row["record_type"],
+                value=row["value"],
+                ttl=row.get("ttl"),
+                provider=row["provider"],
+                action=row["action"],
+                success=bool(row["success"]),
+                notes=row.get("notes"),
+            )
+            for row in rows
+        ]
+    with get_connection(db_path) as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [
+            DnsRecord(
+                id=row["id"],
+                timestamp=row["timestamp"],
+                hostname=row["hostname"],
+                record_type=row["record_type"],
+                value=row["value"],
+                ttl=row["ttl"],
+                provider=row["provider"],
+                action=row["action"],
+                success=bool(row["success"]),
+                notes=row["notes"],
+            )
+            for row in rows
+        ]
+
+
+def delete_dns_current(
+    db_path: Path,
+    hostname: str,
+    *,
+    executor: Executor | None = None,
+) -> bool:
+    """Delete a DNS current record. Returns True if deleted."""
+    sql = "DELETE FROM dns_current WHERE hostname = ?"
+    params = (hostname,)
+    if _is_remote(executor):
+        check_sql = "SELECT COUNT(*) as cnt FROM dns_current WHERE hostname = ?"
+        rows = _remote_query(db_path, check_sql, params, executor=executor)  # type: ignore[arg-type]
+        if not rows or rows[0].get("cnt", 0) == 0:
+            return False
+        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        return True
+    with get_connection(db_path) as conn:
+        cursor = conn.execute(sql, params)
+        conn.commit()
+        return cursor.rowcount > 0

@@ -90,6 +90,8 @@ repos:
         files: ^src/
         additional_dependencies:
           - cyclopts>=3.9
+          - dns-lexicon>=3.17
+          - ots-shared>=0.1.0
           - pytest>=8.0
 
   # Ruff - fast linting and formatting

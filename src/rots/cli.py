@@ -25,7 +25,7 @@ import cyclopts
 
 from . import __version__
 from .commands import assets as assets_cmd
-from .commands import cloudinit, env, host, image, init, instance, proxy, service
+from .commands import cloudinit, dns, env, host, image, init, instance, proxy, service
 from .commands import db as db_cmd
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ app.command(assets_cmd.app)
 app.command(proxy.app)
 app.command(host.app)
 app.command(service.app)
+app.command(dns.app)
 app.command(cloudinit.app)
 app.command(env.app)
 app.command(db_cmd.app)
