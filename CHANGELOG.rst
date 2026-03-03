@@ -25,9 +25,9 @@ Added
 - Add ``proxy push`` command for remote Caddyfile template deployment
 - Add ``_path_exists`` and ``_copy_template`` helpers in init module
 
-- Unified image reference parsing with ``parse_image_reference()`` supporting registry ports and digest refs
-- Positional ``reference: ImageRef`` parameter on deploy, redeploy, run, shell, and config-transform commands
-- Precedence chain: positional ref > --tag flag > IMAGE/TAG env vars > @current alias > defaults
+- Unify image reference parsing with ``parse_image_reference()`` supporting registry ports and digest refs
+- Add positional ``reference: ImageRef`` parameter on deploy, redeploy, run, shell, and config-transform commands
+- Define precedence chain: positional ref > --tag flag > IMAGE/TAG env vars > @current alias > defaults
 
 Changed
 -------
@@ -70,4 +70,4 @@ Documentation
 AI Assistance
 -------------
 
-- Security analysis, test coverage development, and implementation for image reference overhaul
+- Leverage AI for security analysis, test coverage development, and implementation for image reference overhaul
