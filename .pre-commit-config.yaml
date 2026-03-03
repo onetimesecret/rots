@@ -110,6 +110,6 @@ repos:
         name: pytest-cov
         entry: .venv/bin/pytest tests/ -x -q --ff --cov=rots --cov-report=term-missing --cov-fail-under=70
         language: system
-        pass_filenames: true
+        pass_filenames: false
         files: ^(src/|tests/).*\.py$
         stages: [pre-push]
