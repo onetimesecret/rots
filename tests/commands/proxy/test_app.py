@@ -897,3 +897,158 @@ class TestTraceCommand:
         assert "response: 200" in captured.out
         assert "body: OK" in captured.out
         assert "forwarded request:" not in captured.out
+
+
+class TestProbeCommand:
+    """Test probe command."""
+
+    def _make_probe_result(self, **kwargs):
+        """Build a ProbeResult with sensible defaults."""
+        from rots.commands.proxy._helpers import ProbeResult
+
+        defaults = {
+            "url": "https://example.com/api/v2/status",
+            "http_code": 200,
+            "ssl_verify_result": 0,
+            "ssl_verify_ok": True,
+            "cert_issuer": "R11",
+            "cert_subject": "CN=example.com",
+            "cert_expiry": "Aug 17 23:59:59 2026 GMT",
+            "http_version": "2",
+            "time_namelookup": 0.005,
+            "time_connect": 0.020,
+            "time_appconnect": 0.080,
+            "time_starttransfer": 0.150,
+            "time_total": 0.180,
+            "response_headers": {
+                "X-Frame-Options": "DENY",
+                "O-Via": "B76s2",
+                "Strict-Transport-Security": "max-age=63072000",
+            },
+            "curl_json": {},
+        }
+        defaults.update(kwargs)
+        return ProbeResult(**defaults)
+
+    def test_human_output(self, mocker, capsys):
+        """Should print human-readable probe output."""
+        from rots.commands.proxy.app import probe
+
+        mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            return_value=self._make_probe_result(),
+        )
+
+        probe(url="https://example.com/api/v2/status")
+
+        captured = capsys.readouterr()
+        assert "https://example.com/api/v2/status" in captured.out
+        assert "[ok] verified" in captured.out
+        assert "issuer:  R11" in captured.out
+        assert "status: 200" in captured.out
+        assert "dns:" in captured.out
+        assert "X-Frame-Options: DENY" in captured.out
+
+    def test_json_output(self, mocker, capsys):
+        """Should print JSON probe output."""
+        from rots.commands.proxy.app import probe
+
+        mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            return_value=self._make_probe_result(),
+        )
+
+        probe(url="https://example.com/api/v2/status", json_output=True)
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["http_code"] == 200
+        assert output["tls"]["verified"] is True
+        assert output["tls"]["issuer"] == "R11"
+        assert "dns_ms" in output["timing"]
+        assert output["headers"]["X-Frame-Options"] == "DENY"
+
+    def test_assertion_pass_no_exit(self, mocker, capsys):
+        """Should not raise SystemExit when assertions pass."""
+        from rots.commands.proxy.app import probe
+
+        mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            return_value=self._make_probe_result(),
+        )
+
+        # Should not raise
+        probe(
+            url="https://example.com/api/v2/status",
+            expect_status=200,
+            expect_header=("O-Via: B76s2",),
+        )
+
+        captured = capsys.readouterr()
+        assert "[ok] status" in captured.out
+        assert "[ok] header O-Via" in captured.out
+
+    def test_assertion_fail_exits_1(self, mocker):
+        """Should raise SystemExit(1) when assertions fail."""
+        from rots.commands.proxy.app import probe
+
+        mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            return_value=self._make_probe_result(http_code=404),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            probe(url="https://example.com/api/v2/status", expect_status=200)
+
+        assert exc_info.value.code == 1
+
+    def test_proxy_error_exits(self, mocker):
+        """Should exit with error message on ProxyError."""
+        from rots.commands.proxy._helpers import ProxyError
+        from rots.commands.proxy.app import probe
+
+        mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            side_effect=ProxyError("curl not found in PATH"),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            probe(url="https://example.com/api/v2/status")
+
+        assert "curl not found" in str(exc_info.value)
+
+    def test_resolve_passthrough(self, mocker):
+        """Should pass --resolve to run_probe."""
+        from rots.commands.proxy.app import probe
+
+        mock_run = mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            return_value=self._make_probe_result(),
+        )
+
+        probe(url="https://example.com/", resolve="example.com:443:10.0.0.5")
+
+        mock_run.assert_called_once()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs[1]["resolve"] == "example.com:443:10.0.0.5"
+
+    def test_expect_header_evaluation(self, mocker, capsys):
+        """Should evaluate header assertions and show results."""
+        from rots.commands.proxy.app import probe
+
+        mocker.patch(
+            "rots.commands.proxy.app.run_probe",
+            return_value=self._make_probe_result(),
+        )
+
+        # X-Frame-Options: DENY should pass, X-Missing: value should fail
+        with pytest.raises(SystemExit) as exc_info:
+            probe(
+                url="https://example.com/api/v2/status",
+                expect_header=("X-Frame-Options: DENY", "X-Missing: value"),
+            )
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "[ok] header X-Frame-Options" in captured.out
+        assert "[FAIL] header X-Missing" in captured.out

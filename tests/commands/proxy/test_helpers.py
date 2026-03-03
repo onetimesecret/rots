@@ -834,3 +834,293 @@ class TestRunEchoServer:
         # After exiting, port should be unbound (server shut down)
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", port))  # should not raise
+
+
+class TestBuildCurlArgs:
+    """Test build_curl_args function."""
+
+    def test_minimal_url(self):
+        """Should produce base curl command with just the URL."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com")
+        assert args[0] == "curl"
+        assert "-s" in args
+        assert "-D" in args
+        assert args[-1] == "https://example.com"
+        assert "--max-time" in args
+        idx = args.index("--max-time")
+        assert args[idx + 1] == "30"
+
+    def test_resolve_flag(self):
+        """Should add --resolve when specified."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", resolve="example.com:443:10.0.0.5")
+        assert "--resolve" in args
+        idx = args.index("--resolve")
+        assert args[idx + 1] == "example.com:443:10.0.0.5"
+
+    def test_connect_to_flag(self):
+        """Should add --connect-to when specified."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", connect_to="example.com:443:staging:443")
+        assert "--connect-to" in args
+        idx = args.index("--connect-to")
+        assert args[idx + 1] == "example.com:443:staging:443"
+
+    def test_cacert_flag(self):
+        """Should add --cacert with path."""
+        from pathlib import Path
+
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", cacert=Path("/tmp/ca.pem"))
+        assert "--cacert" in args
+        idx = args.index("--cacert")
+        assert args[idx + 1] == "/tmp/ca.pem"
+
+    def test_cert_status_flag(self):
+        """Should add --cert-status when True."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", cert_status=True)
+        assert "--cert-status" in args
+
+    def test_extra_headers(self):
+        """Should add -H for each extra header."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args(
+            "https://example.com",
+            extra_headers=("Origin: https://example.com", "X-Custom: test"),
+        )
+        h_indices = [i for i, a in enumerate(args) if a == "-H"]
+        assert len(h_indices) == 2
+        assert args[h_indices[0] + 1] == "Origin: https://example.com"
+        assert args[h_indices[1] + 1] == "X-Custom: test"
+
+
+class TestParseCurlOutput:
+    """Test parse_curl_output function."""
+
+    def _make_output(self, headers: str = "", curl_json: dict | None = None) -> str:
+        """Build fake curl stdout with sentinel-separated sections."""
+        if curl_json is None:
+            curl_json = {
+                "http_code": 200,
+                "ssl_verify_result": 0,
+                "http_version": "2",
+                "url_effective": "https://example.com/",
+                "time_namelookup": 0.005,
+                "time_connect": 0.020,
+                "time_appconnect": 0.080,
+                "time_starttransfer": 0.150,
+                "time_total": 0.180,
+                "certs": (
+                    "Issuer: R11\nSubject: CN=example.com\nExpire date: Aug 17 23:59:59 2026 GMT\n"
+                ),
+            }
+        if not headers:
+            headers = "HTTP/2 200\r\ncontent-type: text/html\r\nx-frame-options: DENY\r\n"
+        return f"{headers}\n%%CURL_JSON%%\n{json.dumps(curl_json)}"
+
+    def test_parses_headers_and_json(self):
+        """Should parse response headers and curl JSON blob."""
+        from rots.commands.proxy._helpers import parse_curl_output
+
+        result = parse_curl_output(self._make_output())
+        assert result.http_code == 200
+        assert result.ssl_verify_ok is True
+        assert result.cert_issuer == "R11"
+        assert result.cert_subject == "CN=example.com"
+        assert result.cert_expiry == "Aug 17 23:59:59 2026 GMT"
+        assert result.response_headers["x-frame-options"] == "DENY"
+        assert result.time_total == pytest.approx(0.180)
+
+    def test_missing_sentinel_raises(self):
+        """Should raise ProxyError when sentinel is missing."""
+        from rots.commands.proxy._helpers import ProxyError, parse_curl_output
+
+        with pytest.raises(ProxyError, match="missing sentinel"):
+            parse_curl_output("just some text without sentinel")
+
+    def test_malformed_json_raises(self):
+        """Should raise ProxyError when JSON section is malformed."""
+        from rots.commands.proxy._helpers import ProxyError, parse_curl_output
+
+        bad_output = "HTTP/2 200\r\n\n%%CURL_JSON%%\n{not valid json"
+        with pytest.raises(ProxyError, match="JSON output malformed"):
+            parse_curl_output(bad_output)
+
+
+class TestEvaluateAssertions:
+    """Test evaluate_assertions function."""
+
+    def _make_result(self, **kwargs):
+        """Build a ProbeResult with sensible defaults."""
+        from rots.commands.proxy._helpers import ProbeResult
+
+        defaults = {
+            "url": "https://example.com/",
+            "http_code": 200,
+            "ssl_verify_result": 0,
+            "ssl_verify_ok": True,
+            "cert_issuer": "R11",
+            "cert_subject": "CN=example.com",
+            "cert_expiry": "Aug 17 23:59:59 2026 GMT",
+            "http_version": "2",
+            "time_namelookup": 0.005,
+            "time_connect": 0.020,
+            "time_appconnect": 0.080,
+            "time_starttransfer": 0.150,
+            "time_total": 0.180,
+            "response_headers": {
+                "X-Frame-Options": "DENY",
+                "O-Via": "B76s2",
+                "Strict-Transport-Security": "max-age=63072000",
+            },
+            "curl_json": {},
+        }
+        defaults.update(kwargs)
+        return ProbeResult(**defaults)
+
+    def test_status_pass(self):
+        """Should pass when status matches."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result(http_code=200)
+        checks = evaluate_assertions(result, expect_status=200)
+        assert len(checks) == 1
+        assert checks[0]["passed"] is True
+
+    def test_status_fail(self):
+        """Should fail when status does not match."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result(http_code=404)
+        checks = evaluate_assertions(result, expect_status=200)
+        assert len(checks) == 1
+        assert checks[0]["passed"] is False
+        assert checks[0]["actual"] == "404"
+
+    def test_header_pass(self):
+        """Should pass when header value matches."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result()
+        checks = evaluate_assertions(result, expect_headers=("O-Via: B76s2",))
+        assert len(checks) == 1
+        assert checks[0]["passed"] is True
+
+    def test_header_fail(self):
+        """Should fail when header value does not match."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result()
+        checks = evaluate_assertions(result, expect_headers=("O-Via: wrong",))
+        assert len(checks) == 1
+        assert checks[0]["passed"] is False
+
+    def test_header_missing(self):
+        """Should fail when expected header is missing."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result()
+        checks = evaluate_assertions(result, expect_headers=("X-Missing: value",))
+        assert len(checks) == 1
+        assert checks[0]["passed"] is False
+        assert checks[0]["actual"] == "(missing)"
+
+    def test_header_case_insensitive(self):
+        """Should match header keys case-insensitively."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result()
+        checks = evaluate_assertions(result, expect_headers=("x-frame-options: DENY",))
+        assert len(checks) == 1
+        assert checks[0]["passed"] is True
+
+    def test_empty_assertions(self):
+        """Should return empty list when no assertions specified."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result()
+        checks = evaluate_assertions(result)
+        assert checks == []
+
+
+class TestRunProbe:
+    """Test run_probe function."""
+
+    def _make_curl_stdout(self) -> str:
+        """Build realistic curl output for mock subprocess."""
+        headers = "HTTP/2 200\r\ncontent-type: text/html\r\n"
+        curl_json = {
+            "http_code": 200,
+            "ssl_verify_result": 0,
+            "http_version": "2",
+            "url_effective": "https://example.com/",
+            "time_namelookup": 0.005,
+            "time_connect": 0.020,
+            "time_appconnect": 0.080,
+            "time_starttransfer": 0.150,
+            "time_total": 0.180,
+            "certs": "",
+        }
+        return f"{headers}\n%%CURL_JSON%%\n{json.dumps(curl_json)}"
+
+    def test_success(self, mocker):
+        """Should return ProbeResult on successful curl execution."""
+        from rots.commands.proxy._helpers import run_probe
+
+        mocker.patch(
+            "subprocess.run",
+            return_value=mocker.Mock(
+                returncode=0,
+                stdout=self._make_curl_stdout(),
+                stderr="",
+            ),
+        )
+
+        result = run_probe("https://example.com")
+        assert result.http_code == 200
+        assert result.url == "https://example.com/"
+
+    def test_curl_not_found(self, mocker):
+        """Should raise ProxyError when curl is not installed."""
+        from rots.commands.proxy._helpers import ProxyError, run_probe
+
+        mocker.patch("subprocess.run", side_effect=FileNotFoundError("curl not found"))
+
+        with pytest.raises(ProxyError, match="curl not found"):
+            run_probe("https://example.com")
+
+    def test_curl_failure(self, mocker):
+        """Should raise ProxyError on non-zero curl exit."""
+        from rots.commands.proxy._helpers import ProxyError, run_probe
+
+        mocker.patch(
+            "subprocess.run",
+            return_value=mocker.Mock(
+                returncode=7,
+                stdout="",
+                stderr="Failed to connect",
+            ),
+        )
+
+        with pytest.raises(ProxyError, match="curl failed.*exit 7"):
+            run_probe("https://example.com")
+
+    def test_curl_timeout(self, mocker):
+        """Should raise ProxyError when curl times out."""
+        from rots.commands.proxy._helpers import ProxyError, run_probe
+
+        mocker.patch(
+            "subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="curl", timeout=35),
+        )
+
+        with pytest.raises(ProxyError, match="curl timed out"):
+            run_probe("https://example.com")

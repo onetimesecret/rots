@@ -10,6 +10,7 @@ All commands support remote execution via the global ``--host`` flag.
 """
 
 import contextlib
+import json
 import logging
 from pathlib import Path
 from typing import Annotated
@@ -19,10 +20,12 @@ import cyclopts
 from rots import context
 from rots.config import Config
 
-from ..common import DryRun
+from ..common import DryRun, JsonOutput
 from ._helpers import (
+    ProbeResult,
     ProxyError,
     adapt_to_json,
+    evaluate_assertions,
     find_free_port,
     parse_trace_url,
     patch_caddy_json,
@@ -30,6 +33,7 @@ from ._helpers import (
     render_template,
     run_caddy,
     run_echo_server,
+    run_probe,
     validate_caddy_config,
 )
 
@@ -532,3 +536,153 @@ def trace(
 
     except ProxyError as e:
         raise SystemExit(str(e)) from e
+
+
+@app.command
+def probe(
+    url: Annotated[str, cyclopts.Parameter(help="URL to probe")],
+    resolve: Annotated[
+        str | None,
+        cyclopts.Parameter(name="--resolve", help="DNS override: host:port:addr"),
+    ] = None,
+    connect_to: Annotated[
+        str | None,
+        cyclopts.Parameter(name="--connect-to", help="Reroute: host:port:host2:port2"),
+    ] = None,
+    cacert: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--cacert", help="CA cert for verification"),
+    ] = None,
+    cert_status: Annotated[
+        bool,
+        cyclopts.Parameter(name="--cert-status", help="Check OCSP stapling"),
+    ] = False,
+    header: Annotated[
+        tuple[str, ...],
+        cyclopts.Parameter(name="--header", help="Extra header (repeatable)"),
+    ] = (),
+    expect_status: Annotated[
+        int | None,
+        cyclopts.Parameter(name="--expect-status", help="Assert HTTP status"),
+    ] = None,
+    expect_header: Annotated[
+        tuple[str, ...],
+        cyclopts.Parameter(name="--expect-header", help="Assert header (repeatable)"),
+    ] = (),
+    json_output: JsonOutput = False,
+) -> None:
+    """Probe a live URL with curl and report TLS, headers, and timing.
+
+    Verifies deployed behaviour — does the live endpoint return the right
+    TLS cert, security headers, and status code?
+
+    Supports DNS-independent staging tests via --resolve and --connect-to.
+    When assertions (--expect-status, --expect-header) are provided, exits
+    non-zero on failure for CI use.
+
+    Examples:
+        rots proxy probe https://us.onetime.co/api/v2/status
+        rots proxy probe https://us.onetime.co/api/v2/status --expect-status 200
+        rots proxy probe https://us.onetime.co/api/v2/status \\
+            --resolve us.onetime.co:443:10.0.0.5
+        rots --host eu-web-01 proxy probe https://localhost:7043/health
+    """
+    cfg = Config()
+    ex = cfg.get_executor(host=context.host_var.get(None))
+
+    try:
+        result = run_probe(
+            url,
+            resolve=resolve,
+            connect_to=connect_to,
+            cacert=cacert,
+            cert_status=cert_status,
+            extra_headers=header,
+            executor=ex,
+        )
+    except ProxyError as e:
+        raise SystemExit(str(e)) from e
+
+    assertions = evaluate_assertions(
+        result,
+        expect_status=expect_status,
+        expect_headers=expect_header,
+    )
+
+    if json_output:
+        _print_probe_json(result, assertions)
+    else:
+        _print_probe_human(result, assertions)
+
+    # Exit code: 0 if no assertions or all pass, 1 if any fail
+    if assertions and not all(a["passed"] for a in assertions):
+        raise SystemExit(1)
+
+
+def _print_probe_human(result: ProbeResult, assertions: list[dict]) -> None:
+    """Print human-readable probe output."""
+    print(result.url)
+
+    # TLS section
+    if result.url.startswith("https"):
+        tag = "[ok]" if result.ssl_verify_ok else "[FAIL]"
+        label = (
+            "verified" if result.ssl_verify_ok else (f"verify failed ({result.ssl_verify_result})")
+        )
+        print(f"\n  tls: {tag} {label}")
+        if result.cert_issuer:
+            print(f"       issuer:  {result.cert_issuer}")
+        if result.cert_expiry:
+            print(f"       expiry:  {result.cert_expiry}")
+
+    # Status
+    print(f"\n  status: {result.http_code}")
+
+    # Headers
+    if result.response_headers:
+        print("\n  headers:")
+        for k, v in sorted(result.response_headers.items()):
+            print(f"    {k}: {v}")
+
+    # Timing
+    print("\n  timing:")
+    print(f"    dns:       {result.time_namelookup * 1000:7.1f} ms")
+    print(f"    connect:   {result.time_connect * 1000:7.1f} ms")
+    print(f"    tls:       {result.time_appconnect * 1000:7.1f} ms")
+    print(f"    ttfb:      {result.time_starttransfer * 1000:7.1f} ms")
+    print(f"    total:     {result.time_total * 1000:7.1f} ms")
+
+    # Assertions
+    if assertions:
+        print()
+        for a in assertions:
+            tag = "[ok]" if a["passed"] else "[FAIL]"
+            if a["passed"]:
+                print(f"  {tag} {a['check']} {a['expected']}")
+            else:
+                print(f"  {tag} {a['check']}: expected {a['expected']}, got {a['actual']}")
+
+
+def _print_probe_json(result: ProbeResult, assertions: list[dict]) -> None:
+    """Print JSON probe output."""
+    output = {
+        "url": result.url,
+        "http_code": result.http_code,
+        "tls": {
+            "verified": result.ssl_verify_ok,
+            "verify_result": result.ssl_verify_result,
+            "issuer": result.cert_issuer,
+            "subject": result.cert_subject,
+            "expiry": result.cert_expiry,
+        },
+        "timing": {
+            "dns_ms": round(result.time_namelookup * 1000, 1),
+            "connect_ms": round(result.time_connect * 1000, 1),
+            "tls_ms": round(result.time_appconnect * 1000, 1),
+            "ttfb_ms": round(result.time_starttransfer * 1000, 1),
+            "total_ms": round(result.time_total * 1000, 1),
+        },
+        "headers": result.response_headers,
+        "assertions": assertions,
+    }
+    print(json.dumps(output, indent=2))
