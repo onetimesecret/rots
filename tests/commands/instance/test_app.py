@@ -554,6 +554,10 @@ class TestListInstancesCommand:
             "rots.commands.instance.app.systemd.is_active",
             return_value="active",
         )
+        mocker.patch(
+            "rots.commands.instance.app.systemd.get_container_health_map",
+            return_value={},
+        )
 
         # Mock Config and db
         mock_config = mocker.Mock()
