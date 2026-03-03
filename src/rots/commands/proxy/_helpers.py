@@ -22,7 +22,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
-from datetime import UTC
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -56,7 +56,7 @@ class ProbeResult:
     time_appconnect: float  # TLS handshake complete
     time_starttransfer: float  # TTFB
     time_total: float
-    response_headers: dict[str, str]
+    response_headers: dict[str, list[str]]
     curl_json: dict  # raw write-out for --json passthrough
 
 
@@ -545,7 +545,7 @@ def build_curl_args(
     """
     cmd = [
         "curl",
-        "-s",
+        "-sS",
         "-o",
         "/dev/null",
         "-D",
@@ -573,6 +573,7 @@ def build_curl_args(
     if follow_redirects:
         cmd.append("-L")
 
+    cmd.append("--")
     cmd.append(url)
     return cmd
 
@@ -592,12 +593,19 @@ def parse_curl_output(stdout: str) -> ProbeResult:
 
     header_section, json_section = stdout.split(_CURL_SENTINEL, 1)
 
-    # Parse response headers (skip status line)
-    response_headers: dict[str, str] = {}
-    for line in header_section.strip().splitlines():
+    # When curl follows redirects (-L), -D - emits multiple header blocks
+    # (one per hop) separated by blank lines.  Only parse the final block
+    # so assertions and output reflect the terminal response.
+    normalized = header_section.replace("\r\n", "\n")
+    header_blocks = [b for b in normalized.split("\n\n") if b.strip()]
+    final_block = header_blocks[-1] if header_blocks else ""
+
+    response_headers: dict[str, list[str]] = {}
+    for line in final_block.splitlines():
         if ":" in line and not line.startswith("HTTP/"):
             key, _, value = line.partition(":")
-            response_headers[key.strip()] = value.strip()
+            key = key.strip()
+            response_headers.setdefault(key, []).append(value.strip())
 
     try:
         curl_json = json.loads(json_section.strip())
@@ -649,8 +657,6 @@ def _parse_cert_expiry_days(cert_expiry: str) -> int | None:
     if not cert_expiry:
         return None
     try:
-        from datetime import datetime
-
         expiry = datetime.strptime(cert_expiry, "%b %d %H:%M:%S %Y %Z")
         expiry = expiry.replace(tzinfo=UTC)
         now = datetime.now(UTC)
@@ -685,20 +691,22 @@ def evaluate_assertions(
         )
 
     # Build a case-insensitive lookup of response headers
-    lower_headers = {k.lower(): (k, v) for k, v in result.response_headers.items()}
+    lower_headers = {k.lower(): (k, vs) for k, vs in result.response_headers.items()}
 
     for header_spec in expect_headers:
         key, _, expected_value = header_spec.partition(":")
         key = key.strip()
         expected_value = expected_value.strip()
 
-        orig_key, actual_value = lower_headers.get(key.lower(), (key, ""))
+        orig_key, actual_values = lower_headers.get(key.lower(), (key, []))
         checks.append(
             {
                 "check": f"header {key}",
-                "passed": actual_value == expected_value,
+                "passed": expected_value in actual_values,
                 "expected": f"{key}: {expected_value}",
-                "actual": f"{orig_key}: {actual_value}" if actual_value else "(missing)",
+                "actual": (
+                    f"{orig_key}: {', '.join(actual_values)}" if actual_values else "(missing)"
+                ),
             }
         )
 

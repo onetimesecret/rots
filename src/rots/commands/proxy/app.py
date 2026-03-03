@@ -620,6 +620,11 @@ def probe(
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
 
+    try:
+        parse_trace_url(url)
+    except ProxyError as e:
+        raise SystemExit(str(e)) from e
+
     last_result: ProbeResult | None = None
     last_assertions: list[dict] = []
 
@@ -690,8 +695,9 @@ def _print_probe_human(result: ProbeResult, assertions: list[dict]) -> None:
     # Headers
     if result.response_headers:
         print("\n  headers:")
-        for k, v in sorted(result.response_headers.items()):
-            print(f"    {k}: {v}")
+        for k, vs in sorted(result.response_headers.items()):
+            for v in vs:
+                print(f"    {k}: {v}")
 
     # Timing
     print("\n  timing:")

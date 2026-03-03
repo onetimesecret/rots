@@ -846,8 +846,9 @@ class TestBuildCurlArgs:
 
         args = build_curl_args("https://example.com")
         assert args[0] == "curl"
-        assert "-s" in args
+        assert "-sS" in args
         assert "-D" in args
+        assert args[-2] == "--"
         assert args[-1] == "https://example.com"
         assert "--max-time" in args
         idx = args.index("--max-time")
@@ -981,7 +982,7 @@ class TestParseCurlOutput:
         assert result.cert_issuer == "R11"
         assert result.cert_subject == "CN=example.com"
         assert result.cert_expiry == "Aug 17 23:59:59 2026 GMT"
-        assert result.response_headers["x-frame-options"] == "DENY"
+        assert result.response_headers["x-frame-options"] == ["DENY"]
         assert result.time_total == pytest.approx(0.180)
 
     def test_missing_sentinel_raises(self):
@@ -1058,9 +1059,9 @@ class TestEvaluateAssertions:
             "time_starttransfer": 0.150,
             "time_total": 0.180,
             "response_headers": {
-                "X-Frame-Options": "DENY",
-                "O-Via": "B76s2",
-                "Strict-Transport-Security": "max-age=63072000",
+                "X-Frame-Options": ["DENY"],
+                "O-Via": ["B76s2"],
+                "Strict-Transport-Security": ["max-age=63072000"],
             },
             "curl_json": {},
         }

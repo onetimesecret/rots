@@ -921,9 +921,9 @@ class TestProbeCommand:
             "time_starttransfer": 0.150,
             "time_total": 0.180,
             "response_headers": {
-                "X-Frame-Options": "DENY",
-                "O-Via": "B76s2",
-                "Strict-Transport-Security": "max-age=63072000",
+                "X-Frame-Options": ["DENY"],
+                "O-Via": ["B76s2"],
+                "Strict-Transport-Security": ["max-age=63072000"],
             },
             "curl_json": {},
         }
@@ -966,7 +966,7 @@ class TestProbeCommand:
         assert output["tls"]["verified"] is True
         assert output["tls"]["issuer"] == "R11"
         assert "dns_ms" in output["timing"]
-        assert output["headers"]["X-Frame-Options"] == "DENY"
+        assert output["headers"]["X-Frame-Options"] == ["DENY"]
 
     def test_assertion_pass_no_exit(self, mocker, capsys):
         """Should not raise SystemExit when assertions pass."""
