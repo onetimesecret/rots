@@ -102,7 +102,7 @@ repos:
         args: [--fix]
       - id: ruff-format
 
-  # pytest - fast smoke test on commit, full suite with coverage on push
+  # pytest - fast smoke test on commit, full suite on push (coverage in CI)
   - repo: local
     hooks:
       - id: pytest-quick
@@ -112,9 +112,9 @@ repos:
         pass_filenames: false
         files: ^(src/|tests/).*\.py$
         stages: [pre-commit]
-      - id: pytest-cov
-        name: pytest-cov
-        entry: .venv/bin/pytest tests/ -x -q --ff --cov=rots --cov-report=term-missing --cov-fail-under=70
+      - id: pytest-push
+        name: pytest-push
+        entry: .venv/bin/pytest tests/ -x -q --ff --no-cov
         language: system
         pass_filenames: false
         files: ^(src/|tests/).*\.py$
