@@ -492,3 +492,4 @@ def run_caddy(config: dict, port: int) -> Generator[subprocess.Popen, None, None
                 proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                proc.wait(timeout=3)
