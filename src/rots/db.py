@@ -1126,10 +1126,6 @@ def delete_dns_current(
     sql = "DELETE FROM dns_current WHERE hostname = ?"
     params = (hostname,)
     if _is_remote(executor):
-        check_sql = "SELECT COUNT(*) as cnt FROM dns_current WHERE hostname = ?"
-        rows = _remote_query(db_path, check_sql, params, executor=executor)  # type: ignore[arg-type]
-        if not rows or rows[0].get("cnt", 0) == 0:
-            return False
         _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
         return True
     with get_connection(db_path) as conn:

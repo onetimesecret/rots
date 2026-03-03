@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import urllib.error
 import urllib.request
 
 logger = logging.getLogger(__name__)
@@ -80,8 +81,8 @@ def get_public_ip() -> str | None:
             ip = resp.read().decode("ascii").strip()
             logger.debug("Detected public IP: %s", ip)
             return ip
-    except Exception:
-        logger.warning("Failed to detect public IP")
+    except (urllib.error.URLError, OSError) as exc:
+        logger.warning("Failed to detect public IP: %s", exc)
         return None
 
 
