@@ -246,6 +246,19 @@ class Config:
         return join_image_tag(self.image, self.tag)
 
     @property
+    def effective_image(self) -> str:
+        """Image path with OTS_REGISTRY override applied when set.
+
+        When OTS_REGISTRY is configured, replaces the registry hostname
+        of the image path with the configured registry, preserving the
+        full image path. When not set, returns self.image unchanged.
+        """
+        if self.registry:
+            image_path = _strip_registry_prefix(self.image)
+            return f"{self.registry}/{image_path}"
+        return self.image
+
+    @property
     def registry_auth_file(self) -> Path:
         """Container registry auth file path.
 
@@ -325,8 +338,7 @@ class Config:
         """Image path for private registry (requires OTS_REGISTRY env var)."""
         if not self.registry:
             return None
-        image_path = _strip_registry_prefix(self.image)
-        return f"{self.registry}/{image_path}"
+        return self.effective_image
 
     @property
     def private_image_with_tag(self) -> str | None:
@@ -584,12 +596,14 @@ class Config:
                 # over the alias image.  The alias only supplies the image
                 # when no explicit override was given.
                 image = self.image if self._image_explicit else alias.image
+                if self.registry:
+                    image = f"{self.registry}/{_strip_registry_prefix(image)}"
                 return (image, alias.tag)
 
         # Not an alias (or alias not set) — return as-is.
         # Callers that need a real tag (e.g. pull) should check for the
         # sentinel '@current' / '@rollback' and raise an appropriate error.
-        return (self.image, self.tag)
+        return (self.effective_image, self.tag)
 
     def resolved_image_with_tag(self, *, executor: Executor | None = None) -> str:
         """Operational image:tag string for podman pull/run.
