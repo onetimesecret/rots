@@ -132,6 +132,87 @@ def render_template(template_path: Path, *, executor: Executor | None = None) ->
         raise ProxyError("envsubst not found - install gettext package") from e
 
 
+def collect_local_files(source_dir: Path) -> list[tuple[Path, Path]]:
+    """Walk *source_dir* recursively and return ``(absolute, relative)`` pairs.
+
+    Skips hidden files and directories (any path component starting with
+    ``.``).  Results are sorted by relative path for deterministic output.
+    """
+    results: list[tuple[Path, Path]] = []
+    for abs_path in source_dir.rglob("*"):
+        if not abs_path.is_file():
+            continue
+        rel_path = abs_path.relative_to(source_dir)
+        if any(part.startswith(".") for part in rel_path.parts):
+            continue
+        results.append((abs_path, rel_path))
+    return sorted(results, key=lambda pair: pair[1])
+
+
+def push_files_to_remote(
+    source_dir: Path,
+    remote_base: Path,
+    *,
+    executor: Executor,
+    dry_run: bool = False,
+) -> list[tuple[Path, Path]]:
+    """Push all files under *source_dir* to *remote_base* on the remote host.
+
+    Uses ``tee`` via the executor (which supports ``sudo``) rather than
+    SFTP ``put_file``, so writes to root-owned directories like
+    ``/etc/onetimesecret/`` succeed without extra privilege escalation.
+
+    Creates remote parent directories via ``mkdir -p`` before transfers.
+    Returns the list of ``(local_path, remote_path)`` pairs transferred.
+
+    Note: reads files with ``read_text()`` — intended for text-based
+    config files (Caddy templates, snippets, etc.), not binary content.
+    """
+    files = collect_local_files(source_dir)
+    transferred: list[tuple[Path, Path]] = []
+
+    if dry_run:
+        for local, rel in files:
+            remote_path = remote_base / rel
+            print(f"  {rel} -> {remote_path}")
+        return [(local, remote_base / rel) for local, rel in files]
+
+    # Collect unique remote parent directories
+    remote_dirs: set[Path] = set()
+    for _, rel in files:
+        remote_dirs.add((remote_base / rel).parent)
+
+    for d in sorted(remote_dirs):
+        executor.run(["mkdir", "-p", str(d)], timeout=15)
+
+    for local, rel in files:
+        remote_path = remote_base / rel
+        content = local.read_text()
+        result = executor.run(["tee", str(remote_path)], input=content, timeout=15)
+        if not result.ok:
+            raise ProxyError(f"Failed to write {remote_path}: {result.stderr}")
+        print(f"  {rel} -> {remote_path}")
+        transferred.append((local, remote_path))
+
+    return transferred
+
+
+def find_template_in_dir(source_dir: Path) -> Path | None:
+    """Find ``*.template`` files at the top level of *source_dir*.
+
+    Returns the single template path, ``None`` when none are found,
+    or raises :class:`ProxyError` when multiple are found (suggests
+    ``--template`` to disambiguate).
+    """
+    templates = sorted(source_dir.glob("*.template"))
+    if not templates:
+        return None
+    if len(templates) > 1:
+        names = ", ".join(t.name for t in templates)
+        raise ProxyError(f"Multiple template files found: {names}. Use --template to specify one.")
+    return templates[0]
+
+
 def validate_caddy_config(
     content: str,
     *,
@@ -152,9 +233,15 @@ def validate_caddy_config(
         ProxyError: If validation fails.
     """
     if _is_remote(executor):
-        # Create unique temp file on remote host (CWE-377: avoid predictable paths)
+        # Create unique temp file on remote host (CWE-377: avoid predictable paths).
+        # When source_dir is provided, create the temp file there so Caddy can
+        # resolve relative ``import`` paths from the same directory.
+        if source_dir:
+            mktemp_template = f"{source_dir}/ots-caddy-validate.XXXXXXXXXX"
+        else:
+            mktemp_template = "/tmp/ots-caddy-validate.XXXXXXXXXX"
         mktemp_result = executor.run(  # type: ignore[union-attr]
-            ["mktemp", "/tmp/ots-caddy-validate.XXXXXXXXXX"],
+            ["mktemp", mktemp_template],
             timeout=10,
         )
         if not mktemp_result.ok:

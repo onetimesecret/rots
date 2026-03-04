@@ -9,27 +9,35 @@ container .env files to avoid mixing host and container configurations.
 All commands support remote execution via the global ``--host`` flag.
 """
 
+from __future__ import annotations
+
 import contextlib
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import cyclopts
 
 from rots import context
 from rots.config import Config
 
+if TYPE_CHECKING:
+    from ots_shared.ssh import Executor
+
 from ..common import DryRun, JsonOutput
 from ._helpers import (
     ProbeResult,
     ProxyError,
     adapt_to_json,
+    collect_local_files,
     evaluate_assertions,
     find_free_port,
+    find_template_in_dir,
     parse_trace_url,
     patch_caddy_json,
+    push_files_to_remote,
     reload_caddy,
     render_template,
     run_caddy,
@@ -93,11 +101,13 @@ def render(
             print(rendered)
             return
 
-        # Validate before writing
-        validate_caddy_config(rendered, executor=ex)
+        # Validate before writing — pass source_dir so relative imports resolve
+        from ots_shared.ssh import is_remote
+
+        source_dir = tpl.parent
+        validate_caddy_config(rendered, executor=ex, source_dir=source_dir)
 
         # Write to output path
-        from ots_shared.ssh import is_remote
 
         if is_remote(ex):
             ex.run(["mkdir", "-p", str(out.parent)], timeout=15)
@@ -116,27 +126,53 @@ def render(
 
 @app.command
 def push(
-    template_file: Annotated[
+    source: Annotated[
         Path,
         cyclopts.Parameter(
-            help="Local Caddyfile.template to push to the remote host",
+            help="Local file or directory to push to the remote host",
         ),
     ],
     output: Output = None,
     dry_run: DryRun = False,
+    remote_dir: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            name="--remote-dir",
+            help="Override remote destination directory",
+        ),
+    ] = None,
+    template: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--template",
+            help="Template file within directory to render (auto-detected from *.template)",
+        ),
+    ] = None,
+    no_render: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name="--no-render",
+            negative=[],
+            help="Skip render/validate/reload after pushing",
+        ),
+    ] = False,
 ) -> None:
-    """Push a local Caddyfile.template, render it, and reload Caddy.
+    """Push a local file or directory, render template, and reload Caddy.
 
-    Combines three steps into one:
-      1. Push local template to remote /etc/onetimesecret/Caddyfile.template
-      2. Render with envsubst using HOST environment
-      3. Reload Caddy to apply
+    When *source* is a single file, pushes it to the remote template path,
+    renders with envsubst, validates, and reloads Caddy.
+
+    When *source* is a directory, pushes all files (recursively, skipping
+    hidden files) to the remote destination, then optionally renders a
+    ``*.template`` file found within and reloads Caddy.
 
     Requires --host (pushing to localhost is not useful).
 
     Examples:
         ots --host eu-web-01 proxy push Caddyfile.template
-        ots --host eu-web-01 proxy push Caddyfile.template --dry-run
+        ots --host eu-web-01 proxy push caddy/ --remote-dir /etc/onetimesecret/
+        ots --host eu-web-01 proxy push caddy/ --template Caddyfile.template
+        ots --host eu-web-01 proxy push caddy/ --no-render
     """
     from ots_shared.ssh import is_remote
 
@@ -146,43 +182,129 @@ def push(
     if not is_remote(ex):
         raise SystemExit("proxy push requires a remote host. Use --host to specify one.")
 
-    if not template_file.exists():
-        raise SystemExit(f"Local template not found: {template_file}")
-
-    tpl_dest = cfg.proxy_template
-    out = output or cfg.proxy_config
+    if not source.exists():
+        raise SystemExit(f"Local source not found: {source}")
 
     try:
-        content = template_file.read_text()
-
-        if dry_run:
-            print(f"Would push: {template_file} -> {tpl_dest}")
-            print(f"Would render: {tpl_dest} -> {out}")
-            print("Would reload Caddy")
-            return
-
-        # Step 1: Push template to remote
-        result = ex.run(["mkdir", "-p", str(tpl_dest.parent)], timeout=15)
-        result = ex.run(["tee", str(tpl_dest)], input=content, timeout=15)
-        if not result.ok:
-            raise ProxyError(f"Failed to write {tpl_dest}: {result.stderr}")
-        print(f"[ok] Pushed {template_file} -> {tpl_dest}")
-
-        # Step 2: Render template on remote
-        rendered = render_template(tpl_dest, executor=ex)
-        validate_caddy_config(rendered, executor=ex)
-        result = ex.run(["mkdir", "-p", str(out.parent)], timeout=15)
-        result = ex.run(["tee", str(out)], input=rendered, timeout=15)
-        if not result.ok:
-            raise ProxyError(f"Failed to write {out}: {result.stderr}")
-        print(f"[ok] Rendered {tpl_dest} -> {out}")
-
-        # Step 3: Reload Caddy
-        reload_caddy(executor=ex)
-        print("[ok] Caddy reloaded")
-
+        if source.is_dir():
+            _push_directory(
+                source,
+                cfg=cfg,
+                executor=ex,
+                output=output,
+                dry_run=dry_run,
+                remote_dir=remote_dir,
+                template_name=template,
+                no_render=no_render,
+            )
+        else:
+            _push_file(source, cfg=cfg, executor=ex, output=output, dry_run=dry_run)
     except ProxyError as e:
         raise SystemExit(str(e)) from e
+
+
+def _push_file(
+    source: Path,
+    *,
+    cfg: Config,
+    executor: Executor,
+    output: Path | None,
+    dry_run: bool,
+) -> None:
+    """Push a single template file, render, validate, and reload."""
+    tpl_dest = cfg.proxy_template
+    out = output or cfg.proxy_config
+    content = source.read_text()
+
+    if dry_run:
+        print(f"Would push: {source} -> {tpl_dest}")
+        print(f"Would render: {tpl_dest} -> {out}")
+        print("Would reload Caddy")
+        return
+
+    # Step 1: Push template to remote
+    result = executor.run(["mkdir", "-p", str(tpl_dest.parent)], timeout=15)
+    result = executor.run(["tee", str(tpl_dest)], input=content, timeout=15)
+    if not result.ok:
+        raise ProxyError(f"Failed to write {tpl_dest}: {result.stderr}")
+    print(f"[ok] Pushed {source} -> {tpl_dest}")
+
+    # Step 2: Render template on remote
+    rendered = render_template(tpl_dest, executor=executor)
+    validate_caddy_config(rendered, executor=executor, source_dir=tpl_dest.parent)
+    result = executor.run(["mkdir", "-p", str(out.parent)], timeout=15)
+    result = executor.run(["tee", str(out)], input=rendered, timeout=15)
+    if not result.ok:
+        raise ProxyError(f"Failed to write {out}: {result.stderr}")
+    print(f"[ok] Rendered {tpl_dest} -> {out}")
+
+    # Step 3: Reload Caddy
+    reload_caddy(executor=executor)
+    print("[ok] Caddy reloaded")
+
+
+def _push_directory(
+    source: Path,
+    *,
+    cfg: Config,
+    executor: Executor,
+    output: Path | None,
+    dry_run: bool,
+    remote_dir: Path | None,
+    template_name: str | None,
+    no_render: bool,
+) -> None:
+    """Push a directory of files, optionally render and reload."""
+    dest = remote_dir or cfg.proxy_template.parent
+    out = output or cfg.proxy_config
+
+    files = collect_local_files(source)
+    if not files:
+        raise ProxyError(f"No files found in {source}")
+
+    # Determine template file once for both dry_run and real execution
+    tpl_name: str | None = None
+    if not no_render:
+        if template_name:
+            tpl_name = template_name
+        else:
+            found = find_template_in_dir(source)
+            if found:
+                tpl_name = found.name
+
+    if dry_run:
+        print(f"Would push {len(files)} file(s) to {dest}:")
+        push_files_to_remote(source, dest, executor=executor, dry_run=True)
+        if tpl_name:
+            print(f"Would render: {dest / tpl_name} -> {out}")
+            print("Would reload Caddy")
+        elif not no_render:
+            print("No template found; skipping render/reload")
+        return
+
+    # Push all files
+    print(f"Pushing {len(files)} file(s) to {dest}:")
+    push_files_to_remote(source, dest, executor=executor)
+    print(f"[ok] Pushed {len(files)} file(s)")
+
+    if not tpl_name:
+        if not no_render:
+            print("No template found; skipping render/reload")
+        return
+
+    tpl_path = dest / tpl_name
+
+    # Render, validate, reload
+    rendered = render_template(tpl_path, executor=executor)
+    validate_caddy_config(rendered, executor=executor, source_dir=dest)
+    result = executor.run(["mkdir", "-p", str(out.parent)], timeout=15)
+    result = executor.run(["tee", str(out)], input=rendered, timeout=15)
+    if not result.ok:
+        raise ProxyError(f"Failed to write {out}: {result.stderr}")
+    print(f"[ok] Rendered {tpl_path} -> {out}")
+
+    reload_caddy(executor=executor)
+    print("[ok] Caddy reloaded")
 
 
 @app.command

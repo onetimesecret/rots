@@ -2,6 +2,7 @@
 """Tests for proxy app commands."""
 
 import json
+from pathlib import Path
 from unittest.mock import ANY
 
 import pytest
@@ -65,7 +66,7 @@ class TestRenderCommand:
 
         render(template=template, output=output, dry_run=False)
 
-        mock_validate.assert_called_once_with("rendered content", executor=ANY)
+        mock_validate.assert_called_once_with("rendered content", executor=ANY, source_dir=tmp_path)
 
     def test_render_error_exits(self, tmp_path, mocker):
         """Should exit with error message on ProxyError."""
@@ -132,7 +133,7 @@ class TestPushCommand:
         template.write_text("localhost { }")
 
         with pytest.raises(SystemExit) as exc_info:
-            push(template_file=template)
+            push(source=template)
 
         assert "remote host" in str(exc_info.value)
 
@@ -149,7 +150,7 @@ class TestPushCommand:
         mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
 
         with pytest.raises(SystemExit) as exc_info:
-            push(template_file=missing)
+            push(source=missing)
 
         assert "not found" in str(exc_info.value)
 
@@ -167,7 +168,7 @@ class TestPushCommand:
         mock_cfg.proxy_config.return_value = "/etc/caddy/Caddyfile"
         mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
 
-        push(template_file=template, dry_run=True)
+        push(source=template, dry_run=True)
 
         captured = capsys.readouterr()
         assert "Would push" in captured.out
@@ -197,7 +198,7 @@ class TestPushCommand:
         mock_validate = mocker.patch("rots.commands.proxy.app.validate_caddy_config")
         mock_reload = mocker.patch("rots.commands.proxy.app.reload_caddy")
 
-        push(template_file=template)
+        push(source=template)
 
         captured = capsys.readouterr()
         # Verify all three steps completed
@@ -206,7 +207,9 @@ class TestPushCommand:
         assert "[ok] Caddy reloaded" in captured.out
         # Verify render, validate, reload were called
         mock_render.assert_called_once_with(mock_cfg.proxy_template, executor=mock_ex)
-        mock_validate.assert_called_once_with("rendered content", executor=mock_ex)
+        mock_validate.assert_called_once_with(
+            "rendered content", executor=mock_ex, source_dir=mock_cfg.proxy_template.parent
+        )
         mock_reload.assert_called_once_with(executor=mock_ex)
 
     def test_push_write_failure_exits(self, tmp_path, mocker):
@@ -229,9 +232,203 @@ class TestPushCommand:
         mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
 
         with pytest.raises(SystemExit) as exc_info:
-            push(template_file=template)
+            push(source=template)
 
         assert "Failed to write" in str(exc_info.value)
+
+
+class TestPushDirectoryCommand:
+    """Test push command with directory source."""
+
+    def _mock_remote_executor(self, mocker):
+        """Create a mock remote (SSH) executor that passes is_remote() checks."""
+        mock_ex = mocker.MagicMock()
+        # Make it NOT an instance of LocalExecutor so is_remote() returns True
+        mock_ex.__class__ = type("SSHExecutor", (), {})
+        mock_result = mocker.MagicMock()
+        mock_result.ok = True
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+        mock_ex.run.return_value = mock_result
+        return mock_ex
+
+    @staticmethod
+    def _make_source_dir(tmp_path):
+        """Create a source directory with a template and snippet files."""
+        source = tmp_path / "caddy"
+        source.mkdir()
+        (source / "Caddyfile.template").write_text("import snippets/global.caddy")
+        snippets = source / "snippets"
+        snippets.mkdir()
+        (snippets / "global.caddy").write_text("(global) { log }")
+        (snippets / "tls.caddy").write_text("(tls) { tls internal }")
+        return source
+
+    def test_push_directory_dry_run_lists_files(self, tmp_path, mocker, capsys):
+        """push --dry-run with a directory should list all files."""
+        from rots.commands.proxy.app import push
+
+        source = self._make_source_dir(tmp_path)
+
+        mock_ex = self._mock_remote_executor(mocker)
+        mock_cfg = mocker.MagicMock()
+        mock_cfg.get_executor.return_value = mock_ex
+        mock_cfg.proxy_template = tmp_path / "remote" / "Caddyfile.template"
+        mock_cfg.proxy_config = tmp_path / "remote" / "Caddyfile"
+        mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
+
+        push(source=source, dry_run=True)
+
+        captured = capsys.readouterr()
+        assert "Caddyfile.template" in captured.out
+        assert "snippets/global.caddy" in captured.out
+        assert "snippets/tls.caddy" in captured.out
+        assert "Would push 3 file(s)" in captured.out
+        mock_ex.run.assert_not_called()
+        mock_ex.put_file.assert_not_called()
+
+    def test_push_directory_pushes_all_files(self, tmp_path, mocker, capsys):
+        """push with a directory should call put_file for each file."""
+        from rots.commands.proxy.app import push
+
+        source = self._make_source_dir(tmp_path)
+
+        mock_ex = self._mock_remote_executor(mocker)
+        mock_cfg = mocker.MagicMock()
+        mock_cfg.get_executor.return_value = mock_ex
+        mock_cfg.proxy_template = tmp_path / "remote" / "Caddyfile.template"
+        mock_cfg.proxy_config = tmp_path / "remote" / "Caddyfile"
+        mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
+        mocker.patch("rots.commands.proxy.app.render_template", return_value="rendered")
+        mocker.patch("rots.commands.proxy.app.validate_caddy_config")
+        mocker.patch("rots.commands.proxy.app.reload_caddy")
+
+        push(source=source)
+
+        captured = capsys.readouterr()
+        assert "[ok] Pushed 3 file(s)" in captured.out
+        # Verify all 3 source files appear in the output
+        assert "Caddyfile.template" in captured.out
+        assert "snippets/global.caddy" in captured.out
+        assert "snippets/tls.caddy" in captured.out
+
+    def test_push_directory_auto_detects_template(self, tmp_path, mocker, capsys):
+        """push with a directory should auto-detect *.template for render."""
+        from rots.commands.proxy.app import push
+
+        source = self._make_source_dir(tmp_path)
+
+        mock_ex = self._mock_remote_executor(mocker)
+        mock_cfg = mocker.MagicMock()
+        mock_cfg.get_executor.return_value = mock_ex
+        mock_cfg.proxy_template = tmp_path / "remote" / "Caddyfile.template"
+        mock_cfg.proxy_config = tmp_path / "remote" / "Caddyfile"
+        mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
+        mock_render = mocker.patch(
+            "rots.commands.proxy.app.render_template", return_value="rendered"
+        )
+        mocker.patch("rots.commands.proxy.app.validate_caddy_config")
+        mocker.patch("rots.commands.proxy.app.reload_caddy")
+
+        push(source=source)
+
+        # render_template called with the remote path for the auto-detected template
+        remote_tpl = mock_cfg.proxy_template.parent / "Caddyfile.template"
+        mock_render.assert_called_once_with(remote_tpl, executor=mock_ex)
+
+    def test_push_directory_multiple_templates_requires_flag(self, tmp_path, mocker):
+        """push should error when directory has multiple *.template files."""
+        from rots.commands.proxy.app import push
+
+        source = tmp_path / "caddy"
+        source.mkdir()
+        (source / "A.template").write_text("a")
+        (source / "B.template").write_text("b")
+
+        mock_ex = self._mock_remote_executor(mocker)
+        mock_cfg = mocker.MagicMock()
+        mock_cfg.get_executor.return_value = mock_ex
+        mock_cfg.proxy_template = tmp_path / "remote" / "Caddyfile.template"
+        mock_cfg.proxy_config = tmp_path / "remote" / "Caddyfile"
+        mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
+
+        with pytest.raises(SystemExit) as exc_info:
+            push(source=source)
+
+        assert "--template" in str(exc_info.value)
+
+    def test_push_directory_explicit_template_flag(self, tmp_path, mocker, capsys):
+        """push --template should select the specified file for render."""
+        from rots.commands.proxy.app import push
+
+        source = tmp_path / "caddy"
+        source.mkdir()
+        (source / "A.template").write_text("a")
+        (source / "B.template").write_text("b")
+
+        mock_ex = self._mock_remote_executor(mocker)
+        mock_cfg = mocker.MagicMock()
+        mock_cfg.get_executor.return_value = mock_ex
+        mock_cfg.proxy_template = tmp_path / "remote" / "Caddyfile.template"
+        mock_cfg.proxy_config = tmp_path / "remote" / "Caddyfile"
+        mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
+        mock_render = mocker.patch(
+            "rots.commands.proxy.app.render_template", return_value="rendered"
+        )
+        mocker.patch("rots.commands.proxy.app.validate_caddy_config")
+        mocker.patch("rots.commands.proxy.app.reload_caddy")
+
+        push(source=source, template="B.template")
+
+        remote_tpl = mock_cfg.proxy_template.parent / "B.template"
+        mock_render.assert_called_once_with(remote_tpl, executor=mock_ex)
+
+    def test_push_directory_no_render_skips_pipeline(self, tmp_path, mocker, capsys):
+        """push --no-render should skip render/validate/reload."""
+        from rots.commands.proxy.app import push
+
+        source = self._make_source_dir(tmp_path)
+
+        mock_ex = self._mock_remote_executor(mocker)
+        mock_cfg = mocker.MagicMock()
+        mock_cfg.get_executor.return_value = mock_ex
+        mock_cfg.proxy_template = tmp_path / "remote" / "Caddyfile.template"
+        mock_cfg.proxy_config = tmp_path / "remote" / "Caddyfile"
+        mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
+        mock_render = mocker.patch("rots.commands.proxy.app.render_template")
+        mock_validate = mocker.patch("rots.commands.proxy.app.validate_caddy_config")
+        mock_reload = mocker.patch("rots.commands.proxy.app.reload_caddy")
+
+        push(source=source, no_render=True)
+
+        captured = capsys.readouterr()
+        assert "[ok] Pushed 3 file(s)" in captured.out
+        mock_render.assert_not_called()
+        mock_validate.assert_not_called()
+        mock_reload.assert_not_called()
+
+    def test_push_directory_custom_remote_dir(self, tmp_path, mocker, capsys):
+        """push --remote-dir should override destination."""
+        from rots.commands.proxy.app import push
+
+        source = self._make_source_dir(tmp_path)
+        custom_dest = Path("/opt/caddy/config")
+
+        mock_ex = self._mock_remote_executor(mocker)
+        mock_cfg = mocker.MagicMock()
+        mock_cfg.get_executor.return_value = mock_ex
+        mock_cfg.proxy_template = tmp_path / "remote" / "Caddyfile.template"
+        mock_cfg.proxy_config = tmp_path / "remote" / "Caddyfile"
+        mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
+        mocker.patch("rots.commands.proxy.app.render_template", return_value="rendered")
+        mocker.patch("rots.commands.proxy.app.validate_caddy_config")
+        mocker.patch("rots.commands.proxy.app.reload_caddy")
+
+        push(source=source, remote_dir=custom_dest)
+
+        captured = capsys.readouterr()
+        # Verify files were pushed to the custom destination
+        assert str(custom_dest) in captured.out
 
 
 class TestDiffCommand:
