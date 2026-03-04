@@ -164,6 +164,9 @@ def push_files_to_remote(
 
     Creates remote parent directories via ``mkdir -p`` before transfers.
     Returns the list of ``(local_path, remote_path)`` pairs transferred.
+
+    Note: reads files with ``read_text()`` — intended for text-based
+    config files (Caddy templates, snippets, etc.), not binary content.
     """
     files = collect_local_files(source_dir)
     transferred: list[tuple[Path, Path]] = []
