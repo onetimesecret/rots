@@ -104,7 +104,7 @@ def render(
         # Validate before writing — pass source_dir so relative imports resolve
         from ots_shared.ssh import is_remote
 
-        source_dir = tpl.parent if not is_remote(ex) else None
+        source_dir = tpl.parent
         validate_caddy_config(rendered, executor=ex, source_dir=source_dir)
 
         # Write to output path
@@ -262,20 +262,24 @@ def _push_directory(
     if not files:
         raise ProxyError(f"No files found in {source}")
 
+    # Determine template file once for both dry_run and real execution
+    tpl_name: str | None = None
+    if not no_render:
+        if template_name:
+            tpl_name = template_name
+        else:
+            found = find_template_in_dir(source)
+            if found:
+                tpl_name = found.name
+
     if dry_run:
         print(f"Would push {len(files)} file(s) to {dest}:")
         push_files_to_remote(source, dest, executor=executor, dry_run=True)
-        if not no_render:
-            if template_name:
-                tpl_name = template_name
-            else:
-                found = find_template_in_dir(source)
-                tpl_name = found.name if found else None
-            if tpl_name:
-                print(f"Would render: {dest / tpl_name} -> {out}")
-                print("Would reload Caddy")
-            else:
-                print("No template found; skipping render/reload")
+        if tpl_name:
+            print(f"Would render: {dest / tpl_name} -> {out}")
+            print("Would reload Caddy")
+        elif not no_render:
+            print("No template found; skipping render/reload")
         return
 
     # Push all files
@@ -283,18 +287,12 @@ def _push_directory(
     push_files_to_remote(source, dest, executor=executor)
     print(f"[ok] Pushed {len(files)} file(s)")
 
-    if no_render:
+    if not tpl_name:
+        if not no_render:
+            print("No template found; skipping render/reload")
         return
 
-    # Determine template file
-    if template_name:
-        tpl_path = dest / template_name
-    else:
-        found = find_template_in_dir(source)
-        if found is None:
-            print("No template found; skipping render/reload")
-            return
-        tpl_path = dest / found.name
+    tpl_path = dest / tpl_name
 
     # Render, validate, reload
     rendered = render_template(tpl_path, executor=executor)
