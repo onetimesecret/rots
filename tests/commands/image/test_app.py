@@ -1170,9 +1170,10 @@ class TestPullPrivateRegistry:
         pull(private=True)
 
         # The podman subprocess should receive the private registry image
+        # effective_image strips ghcr.io registry, preserves onetimesecret/onetimesecret path
         cmd = mock_run.call_args[0][0]
         full_ref = " ".join(cmd)
-        assert "registry.example.com/onetimesecret:v1.0.0" in full_ref
+        assert "registry.example.com/onetimesecret/onetimesecret:v1.0.0" in full_ref
 
     def test_pull_private_without_registry_exits(self, mocker, monkeypatch, tmp_path, capsys):
         """Scenario 17: pull --private without OTS_REGISTRY should exit with error."""

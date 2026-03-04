@@ -1737,11 +1737,6 @@ def shell(
         print("Use --tag to specify an image tag, e.g.: rots instance shell --tag v0.24.0")
         raise SystemExit(1)
 
-    # Use private registry when OTS_REGISTRY is set
-    if cfg.registry:
-        image_basename = image.split("/")[-1]
-        image = f"{cfg.registry}/{image_basename}"
-
     full_image = f"{image}:{resolved_tag}"
 
     # Build podman run command

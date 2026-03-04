@@ -440,32 +440,37 @@ class TestShellSentinelRejection:
 
 
 class TestShellPrivateRegistry:
-    """shell should use private registry when OTS_REGISTRY is set."""
+    """shell should use private registry when OTS_REGISTRY is set.
+
+    Since resolve_image_tag() now applies OTS_REGISTRY centrally,
+    the mock return value includes the registry-applied image.
+    """
 
     def test_shell_uses_private_registry(self, mocker, tmp_path):
-        """shell should rewrite image to use OTS_REGISTRY."""
-        mock_config, mock_executor = _setup_shell_mocks(
+        """shell should use registry-applied image from resolve_image_tag."""
+        _mock_config, mock_executor = _setup_shell_mocks(
             mocker,
             tmp_path,
             tag="edge",
-            resolve_image_tag=(DEFAULT_IMAGE, "edge"),
+            resolve_image_tag=(
+                "container-registry.infra.onetime.co/onetimesecret/onetimesecret",
+                "edge",
+            ),
         )
-        mock_config.registry = "container-registry.infra.onetime.co"
 
         instance.shell(quiet=True)
 
         cmd = _get_cmd_from_executor(mock_executor, interactive=True)
-        assert "container-registry.infra.onetime.co/onetimesecret:edge" in cmd
+        assert "container-registry.infra.onetime.co/onetimesecret/onetimesecret:edge" in cmd
 
     def test_shell_no_registry_uses_default_image(self, mocker, tmp_path):
         """shell without OTS_REGISTRY should use default image path."""
-        mock_config, mock_executor = _setup_shell_mocks(
+        _mock_config, mock_executor = _setup_shell_mocks(
             mocker,
             tmp_path,
             tag="edge",
             resolve_image_tag=(DEFAULT_IMAGE, "edge"),
         )
-        mock_config.registry = None
 
         instance.shell(quiet=True)
 

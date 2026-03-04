@@ -85,6 +85,27 @@ def _close_ssh_cache() -> None:
 atexit.register(_close_ssh_cache)
 
 
+def _extract_image_path(image: str) -> str:
+    """Extract the path portion of an OCI image reference (strip registry hostname).
+
+    The first component is treated as a registry hostname if it contains
+    '.' or ':' (standard OCI convention).
+
+    Examples:
+        ghcr.io/onetimesecret/onetimesecret -> onetimesecret/onetimesecret
+        onetimesecret/onetimesecret          -> onetimesecret/onetimesecret
+        registry:5000/org/image              -> org/image
+        nginx                                -> nginx
+    """
+    parts = image.split("/", 1)
+    if len(parts) == 1:
+        return image
+    first, rest = parts
+    if "." in first or ":" in first:
+        return rest
+    return image
+
+
 def parse_image_reference(ref: str) -> tuple[str, str | None]:
     """Parse an OCI image reference into (image, tag_or_none).
 
@@ -198,6 +219,19 @@ class Config:
         return f"{self.image}:{self.tag}"
 
     @property
+    def effective_image(self) -> str:
+        """Image path with OTS_REGISTRY override applied when set.
+
+        When OTS_REGISTRY is configured, replaces the registry hostname
+        of the image path with the configured registry, preserving the
+        full image path. When not set, returns self.image unchanged.
+        """
+        if self.registry:
+            image_path = _extract_image_path(self.image)
+            return f"{self.registry}/{image_path}"
+        return self.image
+
+    @property
     def registry_auth_file(self) -> Path:
         """Container registry auth file path.
 
@@ -277,8 +311,7 @@ class Config:
         """Image path for private registry (requires OTS_REGISTRY env var)."""
         if not self.registry:
             return None
-        image_basename = self.image.split("/")[-1]
-        return f"{self.registry}/{image_basename}"
+        return self.effective_image
 
     @property
     def private_image_with_tag(self) -> str | None:
@@ -522,12 +555,16 @@ class Config:
         if tag_key.lower() in ("current", "rollback"):
             alias = db.get_alias(self.db_path, tag_key, executor=executor)
             if alias:
-                return (alias.image, alias.tag)
+                image = alias.image
+                if self.registry:
+                    image_path = _extract_image_path(image)
+                    image = f"{self.registry}/{image_path}"
+                return (image, alias.tag)
 
         # Not an alias (or alias not set) — return as-is.
         # Callers that need a real tag (e.g. pull) should check for the
         # sentinel '@current' / '@rollback' and raise an appropriate error.
-        return (self.image, self.tag)
+        return (self.effective_image, self.tag)
 
     def resolved_image_with_tag(self, *, executor: Executor | None = None) -> str:
         """Image with tag, resolving aliases like 'current' and 'rollback'.

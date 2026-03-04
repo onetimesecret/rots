@@ -322,3 +322,62 @@ def test_precedence_matrix(
     cfg = _apply_reference_overrides(cfg, reference=reference, tag_flag=tag_flag)
     assert cfg.image == expected_image
     assert cfg.tag == expected_tag
+
+
+class TestRegistryOverrideEndToEnd:
+    """End-to-end tests for OTS_REGISTRY override through the full resolution chain."""
+
+    def test_registry_with_explicit_image_and_tag(self, monkeypatch):
+        """OTS_REGISTRY + IMAGE (no registry prefix) + TAG -> registry/path:tag."""
+        monkeypatch.setenv("OTS_REGISTRY", "ghcr.io")
+        monkeypatch.setenv("IMAGE", "onetimesecret/onetimesecret")
+        monkeypatch.setenv("TAG", "v1")
+
+        cfg = Config()
+        assert cfg.resolved_image_with_tag() == "ghcr.io/onetimesecret/onetimesecret:v1"
+
+    def test_registry_with_default_image(self, monkeypatch):
+        """OTS_REGISTRY + default IMAGE + TAG -> replaces default registry."""
+        monkeypatch.setenv("OTS_REGISTRY", "private.registry.co")
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.setenv("TAG", "edge")
+
+        cfg = Config()
+        assert (
+            cfg.resolved_image_with_tag() == "private.registry.co/onetimesecret/onetimesecret:edge"
+        )
+
+    def test_no_registry_default_image(self, monkeypatch):
+        """No OTS_REGISTRY, default IMAGE, explicit TAG -> default registry."""
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.setenv("TAG", "v1")
+
+        cfg = Config()
+        assert cfg.resolved_image_with_tag() == "ghcr.io/onetimesecret/onetimesecret:v1"
+
+    def test_resolved_matches_effective_image_plus_tag(self, monkeypatch):
+        """resolved_image_with_tag() should equal effective_image:tag."""
+        monkeypatch.setenv("OTS_REGISTRY", "private.registry.co")
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.setenv("TAG", "v2.0.0")
+
+        cfg = Config()
+        expected = f"{cfg.effective_image}:{cfg.tag}"
+        assert cfg.resolved_image_with_tag() == expected
+
+    def test_registry_with_alias_resolution(self, monkeypatch, tmp_path):
+        """OTS_REGISTRY should apply to alias-resolved images."""
+        from rots import db
+
+        db_path = tmp_path / "deployments.db"
+        db.init_db(db_path)
+        db.set_current(db_path, "ghcr.io/onetimesecret/onetimesecret", "v1.5.0")
+
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.setenv("OTS_REGISTRY", "private.registry.co")
+        cfg = Config(var_dir=tmp_path)
+        assert (
+            cfg.resolved_image_with_tag()
+            == "private.registry.co/onetimesecret/onetimesecret:v1.5.0"
+        )
