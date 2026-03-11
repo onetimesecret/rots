@@ -136,8 +136,10 @@ class TestPullSentinelRejection:
         assert exc_info.value.code == 1
         mock_podman.pull.assert_not_called()
 
-    def test_pull_rejects_current_with_alias_hint(self, mocker, tmp_path, capsys):
+    def test_pull_rejects_current_with_alias_hint(self, mocker, tmp_path, caplog):
         """pull @current with an existing alias should print a helpful hint."""
+        import logging
+
         _mock_config, mock_podman = _setup_pull_mocks(mocker, tmp_path, tag="@current")
 
         alias_mock = mocker.MagicMock()
@@ -146,10 +148,10 @@ class TestPullSentinelRejection:
         mocker.patch("rots.commands.image.app.db.get_alias", return_value=alias_mock)
 
         with pytest.raises(SystemExit):
-            pull(quiet=False)
+            with caplog.at_level(logging.ERROR):
+                pull(quiet=False)
 
-        captured = capsys.readouterr()
-        assert "v0.23.0" in captured.out
+        assert "v0.23.0" in caplog.text
         mock_podman.pull.assert_not_called()
 
 

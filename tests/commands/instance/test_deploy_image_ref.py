@@ -49,7 +49,8 @@ def _setup_deploy_mocks(mocker, tmp_path, **config_kwargs):
         replace_calls.append(kwargs)
         # Apply the kwargs to the mock directly and return it
         for k, v in kwargs.items():
-            setattr(obj, k, v)
+            if not k.startswith("_"):
+                setattr(obj, k, v)
         # Update resolve_image_tag return value to reflect new image/tag
         new_image = kwargs.get("image", obj.image)
         new_tag = kwargs.get("tag", obj.tag)

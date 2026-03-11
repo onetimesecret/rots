@@ -2,6 +2,7 @@
 """Tests for db CLI commands (backup, restore, info, deployments)."""
 
 import json
+import logging
 
 import pytest
 
@@ -21,18 +22,18 @@ def _mock_config(mocker, db_path):
 class TestDeploymentsCommand:
     """Tests for the 'ots db deployments' command."""
 
-    def test_deployments_exits_when_db_missing(self, tmp_path, mocker, capsys):
+    def test_deployments_exits_when_db_missing(self, tmp_path, mocker, caplog):
         """Should exit with code 1 when database does not exist."""
         from rots.commands.db import deployments
 
         _mock_config(mocker, tmp_path / "missing.db")
 
         with pytest.raises(SystemExit) as exc_info:
-            deployments()
+            with caplog.at_level(logging.ERROR):
+                deployments()
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "not found" in captured.out
+        assert "not found" in caplog.text
 
     def test_deployments_exits_when_db_missing_json(self, tmp_path, mocker, capsys):
         """Should output JSON error when db is missing and --json is requested."""
@@ -202,18 +203,18 @@ class TestDeploymentsCommand:
 class TestBackupCommand:
     """Tests for the 'ots db backup' command."""
 
-    def test_backup_exits_when_db_missing(self, tmp_path, mocker, capsys):
+    def test_backup_exits_when_db_missing(self, tmp_path, mocker, caplog):
         """Should exit with code 1 when source db does not exist."""
         from rots.commands.db import backup
 
         _mock_config(mocker, tmp_path / "missing.db")
 
         with pytest.raises(SystemExit) as exc_info:
-            backup()
+            with caplog.at_level(logging.ERROR):
+                backup()
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "not found" in captured.out
+        assert "not found" in caplog.text
 
     def test_backup_exits_when_db_missing_json(self, tmp_path, mocker, capsys):
         """Should emit JSON error when db is missing and --json is requested."""
@@ -229,7 +230,7 @@ class TestBackupCommand:
         data = json.loads(captured.out)
         assert data["success"] is False
 
-    def test_backup_creates_file_at_default_location(self, tmp_path, mocker, capsys):
+    def test_backup_creates_file_at_default_location(self, tmp_path, mocker, caplog):
         """Should create a timestamped backup next to the source db."""
         from rots.commands.db import backup
 
@@ -237,15 +238,15 @@ class TestBackupCommand:
         db_module.init_db(db_path)
         _mock_config(mocker, db_path)
 
-        backup()
+        with caplog.at_level(logging.INFO):
+            backup()
 
-        captured = capsys.readouterr()
-        assert "Backup created" in captured.out
+        assert "Backup created" in caplog.text
         # Verify a backup file was actually created in tmp_path
         bak_files = list(tmp_path.glob("deploy.*.bak"))
         assert len(bak_files) == 1
 
-    def test_backup_creates_file_at_explicit_dest(self, tmp_path, mocker, capsys):
+    def test_backup_creates_file_at_explicit_dest(self, tmp_path, mocker, caplog):
         """Should create the backup at the path specified by dest."""
         from rots.commands.db import backup
 
@@ -254,11 +255,11 @@ class TestBackupCommand:
         db_module.init_db(db_path)
         _mock_config(mocker, db_path)
 
-        backup(dest=dest_path)
+        with caplog.at_level(logging.INFO):
+            backup(dest=dest_path)
 
         assert dest_path.exists()
-        captured = capsys.readouterr()
-        assert "Backup created" in captured.out
+        assert "Backup created" in caplog.text
 
     def test_backup_json_output(self, tmp_path, mocker, capsys):
         """Should emit valid JSON result when --json is specified."""
@@ -289,7 +290,7 @@ class TestBackupCommand:
 
         assert dest_path.exists()
 
-    def test_backup_sqlite_error_exits(self, tmp_path, mocker, capsys):
+    def test_backup_sqlite_error_exits(self, tmp_path, mocker, caplog):
         """Should exit with code 1 if the SQLite backup API raises an error."""
         import sqlite3
 
@@ -304,11 +305,11 @@ class TestBackupCommand:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            backup()
+            with caplog.at_level(logging.ERROR):
+                backup()
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "Backup failed" in captured.out
+        assert "Backup failed" in caplog.text
 
     def test_backup_sqlite_error_json(self, tmp_path, mocker, capsys):
         """Should emit JSON error when SQLite backup fails and --json is set."""
@@ -342,7 +343,7 @@ class TestRestoreCommand:
         db_module.record_deployment(path, image="img", tag="v1", action="deploy")
         return path
 
-    def test_restore_exits_when_src_missing(self, tmp_path, mocker, capsys):
+    def test_restore_exits_when_src_missing(self, tmp_path, mocker, caplog):
         """Should exit with code 1 when the backup file does not exist."""
         from rots.commands.db import restore
 
@@ -350,11 +351,11 @@ class TestRestoreCommand:
         _mock_config(mocker, tmp_path / "live.db")
 
         with pytest.raises(SystemExit) as exc_info:
-            restore(src=src, yes=True)
+            with caplog.at_level(logging.ERROR):
+                restore(src=src, yes=True)
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "not found" in captured.out
+        assert "not found" in caplog.text
 
     def test_restore_exits_when_src_missing_json(self, tmp_path, mocker, capsys):
         """Should emit JSON error when backup file is missing with --json."""
@@ -371,7 +372,7 @@ class TestRestoreCommand:
         data = json.loads(captured.out)
         assert data["success"] is False
 
-    def test_restore_exits_on_missing_tables(self, tmp_path, mocker, capsys):
+    def test_restore_exits_on_missing_tables(self, tmp_path, mocker, caplog):
         """Should exit with code 1 if backup lacks required tables."""
         import sqlite3
 
@@ -386,11 +387,11 @@ class TestRestoreCommand:
         _mock_config(mocker, tmp_path / "live.db")
 
         with pytest.raises(SystemExit) as exc_info:
-            restore(src=src, yes=True)
+            with caplog.at_level(logging.ERROR):
+                restore(src=src, yes=True)
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "missing required tables" in captured.out
+        assert "missing required tables" in caplog.text
 
     def test_restore_exits_on_missing_tables_json(self, tmp_path, mocker, capsys):
         """Should emit JSON error when backup is missing tables and --json is set."""
@@ -414,7 +415,7 @@ class TestRestoreCommand:
         assert data["success"] is False
         assert "missing" in data["error"].lower()
 
-    def test_restore_succeeds_with_yes_flag(self, tmp_path, mocker, capsys):
+    def test_restore_succeeds_with_yes_flag(self, tmp_path, mocker, caplog):
         """Should restore when --yes is given and skip confirmation."""
         from rots.commands.db import restore
 
@@ -423,11 +424,11 @@ class TestRestoreCommand:
         self._make_valid_backup(src)
         _mock_config(mocker, live_db)
 
-        restore(src=src, yes=True)
+        with caplog.at_level(logging.INFO):
+            restore(src=src, yes=True)
 
         assert live_db.exists()
-        captured = capsys.readouterr()
-        assert "Restored" in captured.out
+        assert "Restored" in caplog.text
 
     def test_restore_json_output_on_success(self, tmp_path, mocker, capsys):
         """Should emit JSON result on success when --json is specified."""
@@ -461,7 +462,7 @@ class TestRestoreCommand:
         assert "Aborted" in captured.out
         assert not live_db.exists()
 
-    def test_restore_accepts_y_confirmation(self, tmp_path, mocker, capsys):
+    def test_restore_accepts_y_confirmation(self, tmp_path, mocker, caplog):
         """Should proceed when user types 'y' at confirmation prompt."""
         from rots.commands.db import restore
 
@@ -471,13 +472,13 @@ class TestRestoreCommand:
         _mock_config(mocker, live_db)
         mocker.patch("builtins.input", return_value="y")
 
-        restore(src=src, yes=False)
+        with caplog.at_level(logging.INFO):
+            restore(src=src, yes=False)
 
         assert live_db.exists()
-        captured = capsys.readouterr()
-        assert "Restored" in captured.out
+        assert "Restored" in caplog.text
 
-    def test_restore_creates_pre_restore_backup(self, tmp_path, mocker, capsys):
+    def test_restore_creates_pre_restore_backup(self, tmp_path, mocker, caplog):
         """Should create a pre-restore backup of the live DB before replacing it."""
         from rots.commands.db import restore
 
@@ -488,10 +489,10 @@ class TestRestoreCommand:
         db_module.init_db(live_db)
         _mock_config(mocker, live_db)
 
-        restore(src=src, yes=True)
+        with caplog.at_level(logging.INFO):
+            restore(src=src, yes=True)
 
-        captured = capsys.readouterr()
-        assert "Pre-restore backup" in captured.out
+        assert "Pre-restore backup" in caplog.text
         # A .bak file should exist next to the live db
         bak_files = list(tmp_path.glob("live.*.bak"))
         assert len(bak_files) == 1

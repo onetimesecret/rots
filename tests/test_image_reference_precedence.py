@@ -24,7 +24,8 @@ def _apply_reference_overrides(cfg, reference=None, tag_flag=None):
         override_tag = ref_tag or tag_flag
         if ref_image or override_tag:
             cfg = dataclasses.replace(
-                cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag
+                cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag,
+                _image_explicit=bool(ref_image) or cfg._image_explicit,
             )
     """
     ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
@@ -34,6 +35,7 @@ def _apply_reference_overrides(cfg, reference=None, tag_flag=None):
             cfg,
             image=ref_image or cfg.image,
             tag=override_tag or cfg.tag,
+            _image_explicit=bool(ref_image) or cfg._image_explicit,
         )
     return cfg
 

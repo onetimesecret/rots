@@ -275,7 +275,7 @@ class TestShellCommand:
         instance.shell(quiet=False)
 
         captured = capsys.readouterr()
-        assert "podman run" in captured.out
+        assert "podman run" in captured.err
 
     def test_shell_suppresses_output_when_quiet(self, mocker, tmp_path, capsys):
         """shell --quiet should suppress output."""
@@ -306,7 +306,7 @@ class TestShellImageReference:
 
         cmd = _get_cmd_from_executor(mock_executor, interactive=True)
         assert "ghcr.io/onetimesecret/onetimesecret:v0.23.0" in cmd
-        mock_config.resolve_image_tag.assert_called_once()
+        mock_config.resolve_image_tag.assert_called()
 
     def test_shell_tag_flag_bypasses_resolve(self, mocker, tmp_path):
         """shell --tag sets the tag via replace; resolve_image_tag passes it through."""
@@ -419,8 +419,8 @@ class TestShellSentinelRejection:
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        assert "sentinel" in captured.out
-        assert "--tag" in captured.out
+        assert "sentinel" in captured.err
+        assert "--tag" in captured.err
 
     def test_shell_rejects_at_rollback_sentinel(self, mocker, tmp_path, capsys):
         """shell should exit 1 when resolve_image_tag returns @rollback."""
@@ -436,7 +436,7 @@ class TestShellSentinelRejection:
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        assert "sentinel" in captured.out
+        assert "sentinel" in captured.err
 
 
 class TestShellPrivateRegistry:

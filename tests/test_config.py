@@ -1610,3 +1610,178 @@ class TestConfigDataclassesReplace:
         new_cfg = dataclasses.replace(cfg, image="ghcr.io/other/image", tag="v2.0")
         assert new_cfg.image == "ghcr.io/other/image"
         assert new_cfg.tag == "v2.0"
+
+
+class TestImageExplicitFlag:
+    """Test _image_explicit flag through resolve_image_tag()."""
+
+    def test_no_image_env_sets_explicit_false(self, monkeypatch):
+        """Config without IMAGE env should have _image_explicit=False."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        from rots.config import Config
+
+        cfg = Config()
+        assert cfg._image_explicit is False
+
+    def test_image_env_sets_explicit_true(self, monkeypatch):
+        """Config with IMAGE env should auto-detect _image_explicit=True."""
+        monkeypatch.setenv("IMAGE", "ghcr.io/org/img")
+        monkeypatch.delenv("TAG", raising=False)
+        from rots.config import Config
+
+        cfg = Config()
+        assert cfg._image_explicit is True
+
+    def test_explicit_flag_via_replace(self, monkeypatch):
+        """dataclasses.replace with _image_explicit=True should persist."""
+        import dataclasses
+
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        from rots.config import Config
+
+        cfg = Config()
+        assert cfg._image_explicit is False
+
+        new_cfg = dataclasses.replace(cfg, image="custom/img", _image_explicit=True)
+        assert new_cfg._image_explicit is True
+
+    def test_resolve_uses_alias_image_when_not_explicit(self, monkeypatch):
+        """When _image_explicit is False, resolve_image_tag should use alias image."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        from unittest.mock import patch
+
+        from rots.config import Config
+
+        cfg = Config()
+        assert cfg._image_explicit is False
+
+        alias = MagicMock()
+        alias.image = "alias/image"
+        alias.tag = "v1.0.0"
+
+        with patch("rots.db.get_alias", return_value=alias):
+            image, tag = cfg.resolve_image_tag()
+            assert image == "alias/image"
+            assert tag == "v1.0.0"
+
+    def test_resolve_keeps_caller_image_when_explicit(self, monkeypatch):
+        """When _image_explicit is True, resolve_image_tag should keep cfg.image."""
+        monkeypatch.setenv("IMAGE", "ghcr.io/explicit/img")
+        monkeypatch.delenv("TAG", raising=False)
+        from unittest.mock import patch
+
+        from rots.config import Config
+
+        cfg = Config()
+        assert cfg._image_explicit is True
+
+        alias = MagicMock()
+        alias.image = "alias/image"
+        alias.tag = "v1.0.0"
+
+        with patch("rots.db.get_alias", return_value=alias):
+            image, tag = cfg.resolve_image_tag()
+            assert image == "ghcr.io/explicit/img"
+            assert tag == "v1.0.0"
+
+    def test_cli_positional_override_preserves_through_resolve(self, monkeypatch):
+        """CLI positional ref via replace(_image_explicit=True) should survive resolve."""
+        import dataclasses
+        from unittest.mock import patch
+
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        from rots.config import Config
+
+        cfg = Config()
+        cfg = dataclasses.replace(cfg, image="cli/image", tag="v2.0", _image_explicit=True)
+
+        alias = MagicMock()
+        alias.image = "alias/image"
+        alias.tag = "v1.0.0"
+
+        with patch("rots.db.get_alias", return_value=alias):
+            # With explicit tag "v2.0" (not an alias), resolve returns as-is
+            image, tag = cfg.resolve_image_tag()
+            assert image == "cli/image"
+            assert tag == "v2.0"
+
+
+class TestResolvedImageWithTagRegistry:
+    """Test resolved_image_with_tag() with registry prefix."""
+
+    def test_no_registry_returns_plain_image(self, monkeypatch):
+        """Without registry, returns image:tag without prefix."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        from unittest.mock import patch
+
+        from rots.config import Config
+
+        cfg = Config(tag="v1.0.0")
+
+        with patch("rots.db.get_alias", return_value=None):
+            result = cfg.resolved_image_with_tag()
+            assert result == f"{cfg.image}:v1.0.0"
+            assert "registry" not in result.lower()
+
+    def test_registry_prefixes_image(self, monkeypatch):
+        """With OTS_REGISTRY, should prefix the image basename."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+        from unittest.mock import patch
+
+        from rots.config import Config
+
+        cfg = Config(tag="v1.0.0")
+
+        with patch("rots.db.get_alias", return_value=None):
+            result = cfg.resolved_image_with_tag()
+            assert result == "registry.example.com/onetimesecret:v1.0.0"
+
+    def test_registry_extracts_basename(self, monkeypatch):
+        """Registry prefix should use only the image basename (after last /)."""
+        monkeypatch.setenv("IMAGE", "ghcr.io/custom/org/myapp")
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.setenv("OTS_REGISTRY", "private.registry.io")
+        from unittest.mock import patch
+
+        from rots.config import Config
+
+        cfg = Config(tag="v2.0.0")
+
+        with patch("rots.db.get_alias", return_value=None):
+            result = cfg.resolved_image_with_tag()
+            assert result == "private.registry.io/myapp:v2.0.0"
+
+
+class TestPodmanAuthArgs:
+    """Test podman_auth_args() helper."""
+
+    def test_no_registry_returns_empty(self, monkeypatch):
+        """Without registry, should return empty list."""
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        from rots.config import Config
+
+        cfg = Config()
+        assert cfg.podman_auth_args() == []
+
+    def test_with_registry_returns_authfile_args(self, monkeypatch):
+        """With registry, should return --authfile args."""
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        from rots.config import Config
+
+        cfg = Config()
+        args = cfg.podman_auth_args()
+        assert len(args) == 2
+        assert args[0] == "--authfile"
+        assert isinstance(args[1], str)

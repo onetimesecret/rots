@@ -17,15 +17,20 @@ Both config_dir and ssh_host can be resolved automatically from a
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import Annotated
 
 import cyclopts
 
+from rots.commands.instance._helpers import apply_quiet
+
 from ..common import Quiet
 from ._manifest import ManifestEntry, resolve_manifest
 from ._rsync import build_rsync_file_cmd, detect_rsync, run_rsync, warn_if_macos_rsync
+
+logger = logging.getLogger(__name__)
 
 app = cyclopts.App(
     name="host",
@@ -159,6 +164,7 @@ def push(
         ots host push ops-jurisdictions/ca/config-v0.24/
         ots --host ca-tor-web-01 host push
     """
+    apply_quiet(quiet)
     dry_run = not apply
     ssh_host = _resolve_ssh_host()
     resolved_dir = _resolve_config_dir(config_dir)
@@ -170,15 +176,13 @@ def push(
     files = _resolve_files(resolved_dir, manifest)
 
     if not files:
-        print("No config files found to push.", file=sys.stderr)
+        logger.error("No config files found to push.")
         raise SystemExit(1)
 
-    if not quiet:
-        mode = "DRY RUN" if dry_run else "PUSH"
-        print(f"[{mode}] {resolved_dir} -> {ssh_host}")
-        print(f"  rsync: {rsync_info.path} ({rsync_info.version})")
-        print(f"  files: {len(files)}")
-        print()
+    mode = "DRY RUN" if dry_run else "PUSH"
+    logger.info(f"[{mode}] {resolved_dir} -> {ssh_host}")
+    logger.info(f"  rsync: {rsync_info.path} ({rsync_info.version})")
+    logger.info(f"  files: {len(files)}")
 
     any_failed = False
     for local_path, entry in files:
@@ -190,22 +194,19 @@ def push(
             dry_run=dry_run,
             backup=True,
         )
-        if not quiet:
-            print(f"  {entry.local_name} -> {entry.remote_path}")
+        logger.info(f"  {entry.local_name} -> {entry.remote_path}")
 
         result = run_rsync(cmd, quiet=quiet)
         if result.returncode != 0:
             any_failed = True
-            print(f"  [FAIL] {entry.local_name} (exit {result.returncode})", file=sys.stderr)
+            logger.error(f"  [FAIL] {entry.local_name} (exit {result.returncode})")
 
-    if not quiet:
-        print()
-        if dry_run:
-            print("Dry-run complete. Pass --apply to push changes.")
-        elif any_failed:
-            print("Some files failed to push. Check errors above.")
-        else:
-            print("Push complete.")
+    if dry_run:
+        logger.info("Dry-run complete. Pass --apply to push changes.")
+    elif any_failed:
+        logger.error("Some files failed to push. Check errors above.")
+    else:
+        logger.info("Push complete.")
 
     if any_failed:
         raise SystemExit(1)
@@ -226,6 +227,7 @@ def diff(
         cd ops-jurisdictions/ca/ && ots host diff
         ots --host ca-tor-web-01 host diff ops-jurisdictions/ca/config-v0.24/
     """
+    apply_quiet(quiet)
     ssh_host = _resolve_ssh_host()
     ex = _get_executor()
     resolved_dir = _resolve_config_dir(config_dir)
@@ -234,12 +236,10 @@ def diff(
     files = _resolve_files(resolved_dir, manifest)
 
     if not files:
-        print("No config files found to diff.", file=sys.stderr)
+        logger.error("No config files found to diff.")
         raise SystemExit(1)
 
-    if not quiet:
-        print(f"Comparing {resolved_dir} <-> {ssh_host}")
-        print()
+    logger.info(f"Comparing {resolved_dir} <-> {ssh_host}")
 
     any_diff = False
     for local_path, entry in files:
@@ -261,8 +261,7 @@ def diff(
         remote_content = result.stdout
 
         if local_content == remote_content:
-            if not quiet:
-                print(f"  [identical] {entry.local_name}")
+            logger.info(f"  [identical] {entry.local_name}")
             continue
 
         # Unified diff
@@ -279,8 +278,8 @@ def diff(
             any_diff = True
             print(diff_text)
 
-    if not any_diff and not quiet:
-        print("No differences found.")
+    if not any_diff:
+        logger.info("No differences found.")
 
 
 @app.command
@@ -300,6 +299,7 @@ def pull(
         cd ops-jurisdictions/ca/ && ots host pull
         ots --host ca-tor-web-01 host pull --apply
     """
+    apply_quiet(quiet)
     dry_run = not apply
     ssh_host = _resolve_ssh_host()
     ex = _get_executor()
@@ -307,10 +307,8 @@ def pull(
 
     manifest = resolve_manifest(resolved_dir)
 
-    if not quiet:
-        mode = "DRY RUN" if dry_run else "PULL"
-        print(f"[{mode}] {ssh_host} -> {resolved_dir}")
-        print()
+    mode = "DRY RUN" if dry_run else "PULL"
+    logger.info(f"[{mode}] {ssh_host} -> {resolved_dir}")
 
     any_failed = False
     pulled = 0
@@ -321,33 +319,28 @@ def pull(
         result = ex.run(["cat", str(entry.remote_path)], timeout=30)
 
         if result.returncode != 0:
-            if not quiet:
-                print(f"  [skip] {entry.remote_path} (not on remote)")
+            logger.info(f"  [skip] {entry.remote_path} (not on remote)")
             continue
 
         remote_content = result.stdout
 
         if local_path.exists() and local_path.read_text() == remote_content:
-            if not quiet:
-                print(f"  [identical] {entry.local_name}")
+            logger.info(f"  [identical] {entry.local_name}")
             continue
 
         if dry_run:
             action = "would overwrite" if local_path.exists() else "would create"
-            print(f"  [{action}] {entry.local_name} <- {entry.remote_path}")
+            logger.info(f"  [{action}] {entry.local_name} <- {entry.remote_path}")
         else:
             local_path.write_text(remote_content)
             action = "updated" if local_path.exists() else "created"
-            if not quiet:
-                print(f"  [{action}] {entry.local_name} <- {entry.remote_path}")
+            logger.info(f"  [{action}] {entry.local_name} <- {entry.remote_path}")
         pulled += 1
 
-    if not quiet:
-        print()
-        if dry_run:
-            print(f"Dry-run: {pulled} file(s) would be written. Pass --apply to apply.")
-        else:
-            print(f"Pulled {pulled} file(s).")
+    if dry_run:
+        logger.info(f"Dry-run: {pulled} file(s) would be written. Pass --apply to apply.")
+    else:
+        logger.info(f"Pulled {pulled} file(s).")
 
     if any_failed:
         raise SystemExit(1)
@@ -444,8 +437,8 @@ def init_env(
 
     content = generate_env_template(host=host, tag=tag)
     env_path.write_text(content)
-    print(f"Created {env_path}")
+    logger.info(f"Created {env_path}")
     if not host:
-        print("  Hint: edit OTS_HOST to set the target SSH host alias")
+        logger.info("  Hint: edit OTS_HOST to set the target SSH host alias")
     if not tag:
-        print("  Hint: edit OTS_TAG to set the release version (e.g. v0.24)")
+        logger.info("  Hint: edit OTS_TAG to set the release version (e.g. v0.24)")

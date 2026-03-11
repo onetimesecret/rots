@@ -74,7 +74,7 @@ def _run_systemctl(
     """Run a systemctl command with diagnostic output on failure."""
     ex = _get_executor(executor)
     cmd = ["systemctl", action, unit]
-    logger.debug("  $ sudo -- %s", " ".join(cmd))
+    logger.debug(f"  $ sudo -- {' '.join(cmd)}")
     result = ex.run(cmd, sudo=True, timeout=90)
     if not result.ok:
         journal = _fetch_journal(unit, executor=executor)
@@ -296,7 +296,7 @@ def daemon_reload(*, executor: Executor | None = None) -> None:
     if _is_local(ex):
         require_systemctl()
     cmd = ["systemctl", "daemon-reload"]
-    logger.debug("  $ sudo -- %s", " ".join(cmd))
+    logger.debug(f"  $ sudo -- {' '.join(cmd)}")
     result = ex.run(cmd, sudo=True, timeout=30)
     if not result.ok:
         raise SystemctlError("(all units)", "daemon-reload", result.stderr.strip())
@@ -322,7 +322,7 @@ def reset_failed(unit: str, *, executor: Executor | None = None) -> None:
     if _is_local(ex):
         require_systemctl()
     cmd = ["systemctl", "reset-failed", unit]
-    logger.debug("  $ sudo -- %s", " ".join(cmd))
+    logger.debug(f"  $ sudo -- {' '.join(cmd)}")
     # Suppress stderr - it's fine if the unit wasn't in failed state
     ex.run(cmd, sudo=True, timeout=10)
 
@@ -344,7 +344,7 @@ def disable(unit: str, *, executor: Executor | None = None) -> None:
     if _is_local(ex):
         require_systemctl()
     cmd = ["systemctl", "disable", unit]
-    logger.debug("  $ sudo -- %s", " ".join(cmd))
+    logger.debug(f"  $ sudo -- {' '.join(cmd)}")
     # Suppress stderr — 'not enabled' is not an error worth surfacing
     ex.run(cmd, sudo=True, timeout=10)
 
@@ -372,7 +372,7 @@ def get_container_health_map(
             "--format",
             "json",
             "--filter",
-            "name=systemd-onetime",
+            "name=onetime-",
         ],
         timeout=15,
     )
@@ -387,8 +387,8 @@ def get_container_health_map(
         return {}
 
     health_map: dict[tuple[str, str], dict[str, str]] = {}
-    # Match container names like systemd-onetime-web_7043 or systemd-onetime-worker--1
-    name_pattern = re.compile(r"systemd-onetime-(web|worker|scheduler)[_-]+(.+)")
+    # Match container names like onetime-web@7043 or onetime-worker@1
+    name_pattern = re.compile(r"onetime-(web|worker|scheduler)@(.+)")
 
     for container in containers:
         # podman JSON uses "Names" (list) or "Name" (string) depending on version
@@ -419,23 +419,16 @@ def get_container_health_map(
 
 
 def unit_to_container_name(unit: str) -> str:
-    """Convert systemd unit name to Quadlet container name.
+    """Convert systemd unit name to the explicit ``ContainerName=`` we set.
 
-    Quadlet names containers as: systemd-{unit_with_separator}
-    Example: onetime-web@7044 -> systemd-onetime-web--7044
+    We set ``ContainerName=`` in each Quadlet template using the same
+    ``@`` convention as the systemd unit itself::
 
-    Uses ``--`` (double dash) as the separator between the template base name
-    and the instance identifier.  A single ``_`` was previously used but is
-    ambiguous because ``_`` can also appear in unit names, making it impossible
-    to distinguish ``onetime-web@7043`` from a hypothetical ``onetime-web_7043``.
-    Double dashes are the conventional systemd escaping character and will not
-    collide with naturally occurring underscores in unit names.
+        onetime-web@7043.service  ->  onetime-web@7043
+        onetime-worker@1          ->  onetime-worker@1
+        onetime-scheduler@main    ->  onetime-scheduler@main
     """
-    # Remove .service suffix if present
-    name = unit.removesuffix(".service")
-    # Replace @ with -- (distinctive separator that won't collide with underscores)
-    name = name.replace("@", "--")
-    return f"systemd-{name}"
+    return unit.removesuffix(".service")
 
 
 def recreate(unit: str, *, executor: Executor | None = None) -> None:
@@ -455,10 +448,10 @@ def recreate(unit: str, *, executor: Executor | None = None) -> None:
     # Stop the systemd unit
     _run_systemctl("stop", unit, executor=executor)
 
-    # Remove the container (Quadlet uses systemd-{name} format with @ -> --)
+    # Remove the container (ContainerName= set to onetime-{type}@{id})
     container_name = unit_to_container_name(unit)
     rm_cmd = ["podman", "rm", "--ignore", container_name]
-    logger.debug("  $ sudo -- %s", " ".join(rm_cmd))
+    logger.debug(f"  $ sudo -- {' '.join(rm_cmd)}")
     ex.run(rm_cmd, sudo=True, timeout=30, check=True)
 
     # Start creates a fresh container from the updated quadlet
@@ -475,7 +468,7 @@ def status(
     if _is_local(ex):
         require_systemctl()
     cmd = ["systemctl", "--no-pager", f"-n{lines}", "status", unit]
-    logger.debug("  $ sudo -- %s", " ".join(cmd))
+    logger.debug(f"  $ sudo -- {' '.join(cmd)}")
     result = ex.run(cmd, sudo=True, timeout=30)
     # Print output directly (status is for human consumption)
     if result.stdout:
@@ -563,15 +556,14 @@ def wait_for_healthy(
         )
         last_state = result.stdout.strip()
         if result.ok and last_state == "active":
-            logger.debug("%s is active", unit)
+            logger.debug(f"{unit} is active")
             return
         if last_state == "failed":
             consecutive_failures += 1
             logger.debug(
-                "%s is failed (consecutive: %d/%d), waiting...",
-                unit,
-                consecutive_failures,
-                consecutive_failures_threshold,
+                f"{unit} is failed"
+                f" (consecutive: {consecutive_failures}/{consecutive_failures_threshold}),"
+                " waiting..."
             )
             # Only exit early once the failure has persisted across multiple
             # consecutive polls — a transient "failed" during restart is normal.
@@ -579,7 +571,7 @@ def wait_for_healthy(
                 break
         else:
             consecutive_failures = 0
-            logger.debug("%s is %s, waiting...", unit, last_state)
+            logger.debug(f"{unit} is {last_state}, waiting...")
         time.sleep(poll_interval)
 
     raise HealthCheckTimeoutError(unit, timeout, last_state)
@@ -642,14 +634,14 @@ def wait_for_http_healthy(
             try:
                 with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310
                     if response.status == 200:
-                        logger.debug("HTTP health check passed: %s", url)
+                        logger.debug(f"HTTP health check passed: {url}")
                         return
                     last_error = f"HTTP {response.status}"
             except urllib.error.HTTPError as e:
                 last_error = f"HTTP {e.code}"
             except (urllib.error.URLError, OSError) as e:
                 last_error = str(e)
-            logger.debug("HTTP health check pending (%s): %s", last_error, url)
+            logger.debug(f"HTTP health check pending ({last_error}): {url}")
             time.sleep(poll_interval)
     else:
         # Remote: run curl on the target host so localhost is correct
@@ -657,10 +649,10 @@ def wait_for_http_healthy(
         while time.monotonic() < deadline:
             result = ex.run(curl_cmd, timeout=10)
             if result.ok:
-                logger.debug("HTTP health check passed (remote): %s", url)
+                logger.debug(f"HTTP health check passed (remote): {url}")
                 return
             last_error = f"curl exit {result.returncode}"
-            logger.debug("HTTP health check pending (%s): %s", last_error, url)
+            logger.debug(f"HTTP health check pending ({last_error}): {url}")
             time.sleep(poll_interval)
 
     raise HttpHealthCheckTimeoutError(port, timeout, last_error)

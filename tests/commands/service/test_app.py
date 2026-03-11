@@ -1,6 +1,7 @@
 # tests/commands/service/test_app.py
 """Tests for service command app."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -275,18 +276,18 @@ class TestInitIdempotency:
         mock_copy,
         mock_update,
         mock_check_conflict,
-        capsys,
+        caplog,
     ):
         """init should skip all modifications when config already exists (idempotent)."""
         mock_copy.side_effect = FileExistsError("Config already exists: /etc/valkey/...")
 
-        init("valkey", "6379", start=False, enable=False)
+        with caplog.at_level(logging.INFO, logger="rots.commands.service.app"):
+            init("valkey", "6379", start=False, enable=False)
 
         # update_config_value must NOT be called when config already exists
         mock_update.assert_not_called()
-        captured = capsys.readouterr()
-        assert "already exists" in captured.out
-        assert "Skipping" in captured.out
+        assert "already exists" in caplog.text
+        assert "Skipping" in caplog.text
 
     @patch("rots.commands.service.app.check_default_service_conflict")
     @patch("rots.commands.service.app.update_config_value")
@@ -296,16 +297,16 @@ class TestInitIdempotency:
         mock_copy,
         mock_update,
         mock_check_conflict,
-        capsys,
+        caplog,
     ):
         """init should return early (not reach start/enable) when config already exists."""
         mock_copy.side_effect = FileExistsError("Config already exists")
 
         # Should not raise SystemExit - just return cleanly
-        init("valkey", "6379", start=True, enable=True)
+        with caplog.at_level(logging.INFO, logger="rots.commands.service.app"):
+            init("valkey", "6379", start=True, enable=True)
 
-        captured = capsys.readouterr()
-        assert "already configured" in captured.out.lower()
+        assert "already configured" in caplog.text.lower()
 
     @patch("rots.commands.service.app.check_default_service_conflict")
     @patch("rots.commands.service.app.systemctl")
@@ -322,7 +323,7 @@ class TestInitIdempotency:
         mock_systemctl,
         mock_check_conflict,
         tmp_path,
-        capsys,
+        caplog,
     ):
         """init --force should delete existing config and recreate from defaults."""
         existing_config = tmp_path / "6379.conf"
@@ -354,12 +355,12 @@ class TestInitIdempotency:
             mock_pkg.default_config = tmp_path / "default.conf"
             mock_get_pkg.return_value = mock_pkg
 
-            init("valkey", "6379", force=True, start=False, enable=False)
+            with caplog.at_level(logging.INFO, logger="rots.commands.service.app"):
+                init("valkey", "6379", force=True, start=False, enable=False)
 
-        captured = capsys.readouterr()
-        assert "force" in captured.out.lower() or "Removed" in captured.out
+        assert "force" in caplog.text.lower() or "Removed" in caplog.text
 
-    def test_init_dry_run_existing_config_shows_skip_notice(self, capsys, tmp_path):
+    def test_init_dry_run_existing_config_shows_skip_notice(self, caplog, tmp_path):
         """init --dry-run with existing config should show skip notice."""
         with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
@@ -374,11 +375,11 @@ class TestInitIdempotency:
             mock_pkg.secrets = None
             mock_get_pkg.return_value = mock_pkg
 
-            init("valkey", "6379", dry_run=True, start=False, enable=False)
+            with caplog.at_level(logging.INFO, logger="rots.commands.service.app"):
+                init("valkey", "6379", dry_run=True, start=False, enable=False)
 
-        captured = capsys.readouterr()
-        assert "already exists" in captured.out
-        assert "skip" in captured.out.lower() or "force" in captured.out.lower()
+        assert "already exists" in caplog.text
+        assert "skip" in caplog.text.lower() or "force" in caplog.text.lower()
 
 
 class TestEnableCommand:
@@ -394,13 +395,13 @@ class TestEnableCommand:
         )
 
     @patch("rots.commands.service.app.systemctl")
-    def test_enable_prints_enabled(self, mock_systemctl, capsys):
+    def test_enable_prints_enabled(self, mock_systemctl, caplog):
         """Test enable prints enabled message."""
-        enable("valkey", "6379")
+        with caplog.at_level(logging.INFO, logger="rots.commands.service.app"):
+            enable("valkey", "6379")
 
-        captured = capsys.readouterr()
-        assert "Enabling" in captured.out
-        assert "Enabled" in captured.out
+        assert "Enabling" in caplog.text
+        assert "Enabled" in caplog.text
 
 
 class TestDisableCommand:
@@ -633,7 +634,7 @@ class TestServiceErrorPaths:
         mock_secrets,
         mock_systemctl,
         mock_check_conflict,
-        capsys,
+        caplog,
         tmp_path,
     ):
         """init() exits with code 1 when copy_default_config raises FileNotFoundError."""
@@ -643,12 +644,12 @@ class TestServiceErrorPaths:
         mock_data.return_value = tmp_path / "data"
         mock_secrets.return_value = None
 
-        with pytest.raises(SystemExit) as exc_info:
-            init("valkey", "6379", start=False, enable=False)
+        with caplog.at_level(logging.ERROR, logger="rots.commands.service.app"):
+            with pytest.raises(SystemExit) as exc_info:
+                init("valkey", "6379", start=False, enable=False)
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "ERROR" in captured.out
+        assert "ERROR" in caplog.text
 
     @patch("rots.commands.service.app.check_default_service_conflict")
     @patch("rots.commands.service.app.systemctl")
@@ -688,21 +689,21 @@ class TestServiceErrorPaths:
         assert exc_info.value.code == 1
 
     @patch("rots.commands.service.app.systemctl")
-    def test_enable_command_error_exits(self, mock_systemctl, capsys):
+    def test_enable_command_error_exits(self, mock_systemctl, caplog):
         """enable() exits with code 1 when systemctl enable raises CommandError."""
         import pytest
 
         mock_systemctl.side_effect = _make_command_error(stderr="enable failed")
 
-        with pytest.raises(SystemExit) as exc_info:
-            enable("valkey", "6379")
+        with caplog.at_level(logging.ERROR, logger="rots.commands.service.app"):
+            with pytest.raises(SystemExit) as exc_info:
+                enable("valkey", "6379")
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "ERROR" in captured.out
+        assert "ERROR" in caplog.text
 
     @patch("rots.commands.service.app.systemctl")
-    def test_disable_command_error_exits(self, mock_systemctl, capsys):
+    def test_disable_command_error_exits(self, mock_systemctl, caplog):
         """disable() exits with code 1 when systemctl disable raises CommandError."""
         import pytest
 
@@ -713,54 +714,54 @@ class TestServiceErrorPaths:
 
         mock_systemctl.side_effect = systemctl_side_effect
 
-        with pytest.raises(SystemExit) as exc_info:
-            disable("valkey", "6379", yes=True)
+        with caplog.at_level(logging.ERROR, logger="rots.commands.service.app"):
+            with pytest.raises(SystemExit) as exc_info:
+                disable("valkey", "6379", yes=True)
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "ERROR" in captured.out
+        assert "ERROR" in caplog.text
 
     @patch("rots.commands.service.app.systemctl")
-    def test_start_command_error_exits(self, mock_systemctl, capsys):
+    def test_start_command_error_exits(self, mock_systemctl, caplog):
         """start() exits with code 1 when systemctl start raises CommandError."""
         import pytest
 
         mock_systemctl.side_effect = _make_command_error(stderr="start failed")
 
-        with pytest.raises(SystemExit) as exc_info:
-            start("valkey", "6379")
+        with caplog.at_level(logging.ERROR, logger="rots.commands.service.app"):
+            with pytest.raises(SystemExit) as exc_info:
+                start("valkey", "6379")
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "ERROR" in captured.out
+        assert "ERROR" in caplog.text
 
     @patch("rots.commands.service.app.systemctl")
-    def test_stop_command_error_exits(self, mock_systemctl, capsys):
+    def test_stop_command_error_exits(self, mock_systemctl, caplog):
         """stop() exits with code 1 when systemctl stop raises CommandError."""
         import pytest
 
         mock_systemctl.side_effect = _make_command_error(stderr="stop failed")
 
-        with pytest.raises(SystemExit) as exc_info:
-            stop("valkey", "6379")
+        with caplog.at_level(logging.ERROR, logger="rots.commands.service.app"):
+            with pytest.raises(SystemExit) as exc_info:
+                stop("valkey", "6379")
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "ERROR" in captured.out
+        assert "ERROR" in caplog.text
 
     @patch("rots.commands.service.app.systemctl")
-    def test_restart_command_error_exits(self, mock_systemctl, capsys):
+    def test_restart_command_error_exits(self, mock_systemctl, caplog):
         """restart() exits with code 1 when systemctl restart raises CommandError."""
         import pytest
 
         mock_systemctl.side_effect = _make_command_error(stderr="restart failed")
 
-        with pytest.raises(SystemExit) as exc_info:
-            restart("valkey", "6379")
+        with caplog.at_level(logging.ERROR, logger="rots.commands.service.app"):
+            with pytest.raises(SystemExit) as exc_info:
+                restart("valkey", "6379")
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "ERROR" in captured.out
+        assert "ERROR" in caplog.text
 
 
 class TestInitNonNumericInstance:
@@ -773,7 +774,7 @@ class TestInitNonNumericInstance:
         with pytest.raises(SystemExit):
             init("valkey", "primary")
 
-    def test_init_non_numeric_instance_with_port_succeeds(self, capsys, tmp_path):
+    def test_init_non_numeric_instance_with_port_succeeds(self, caplog, tmp_path):
         """init with non-numeric instance and explicit --port should work."""
         with (
             patch("rots.commands.service.app.check_default_service_conflict"),
@@ -787,11 +788,11 @@ class TestInitNonNumericInstance:
             mock_data.return_value = tmp_path / "data"
             mock_secrets.return_value = None
 
-            init("valkey", "primary", port=6379, start=False, enable=False)
+            with caplog.at_level(logging.INFO, logger="rots.commands.service.app"):
+                init("valkey", "primary", port=6379, start=False, enable=False)
 
-        captured = capsys.readouterr()
-        assert "primary" in captured.out
-        assert "6379" in captured.out
+        assert "primary" in caplog.text
+        assert "6379" in caplog.text
 
 
 class TestListAllWithInstances:
@@ -914,7 +915,7 @@ class TestListInstancesWithInstances:
 class TestInitDryRunCreate:
     """Tests for init --dry-run when config does not exist."""
 
-    def test_init_dry_run_no_existing_config_shows_create(self, capsys, tmp_path):
+    def test_init_dry_run_no_existing_config_shows_create(self, caplog, tmp_path):
         """init --dry-run with no existing config should show 'Would create'."""
         non_existing = tmp_path / "nope.conf"
 
@@ -929,10 +930,10 @@ class TestInitDryRunCreate:
             mock_pkg.secrets = None
             mock_get_pkg.return_value = mock_pkg
 
-            init("valkey", "6379", dry_run=True, start=False, enable=False)
+            with caplog.at_level(logging.INFO, logger="rots.commands.service.app"):
+                init("valkey", "6379", dry_run=True, start=False, enable=False)
 
-        captured = capsys.readouterr()
-        assert "create" in captured.out.lower() or "Would" in captured.out
+        assert "create" in caplog.text.lower() or "Would" in caplog.text
 
 
 class TestInitForceFileNotFound:
@@ -1006,7 +1007,7 @@ class TestInitEnableWarning:
         mock_secrets,
         mock_systemctl,
         mock_check_conflict,
-        capsys,
+        caplog,
         tmp_path,
     ):
         """init --enable with systemctl CommandError prints WARNING but doesn't exit."""
@@ -1022,22 +1023,22 @@ class TestInitEnableWarning:
         mock_systemctl.side_effect = systemctl_side_effect
 
         # Should NOT raise SystemExit — enable failure is a warning
-        init("valkey", "6379", enable=True, start=False)
+        with caplog.at_level(logging.WARNING, logger="rots.commands.service.app"):
+            init("valkey", "6379", enable=True, start=False)
 
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.out or "Could not enable" in captured.out
+        assert "WARNING" in caplog.text or "Could not enable" in caplog.text
 
 
 class TestDisableAbort:
     """Tests for disable confirmation prompt abort."""
 
     @patch("rots.commands.service.app.systemctl")
-    def test_disable_aborts_when_user_says_no(self, mock_systemctl, capsys, monkeypatch):
+    def test_disable_aborts_when_user_says_no(self, mock_systemctl, caplog, monkeypatch):
         """disable should abort without calling systemctl when user declines."""
         monkeypatch.setattr("builtins.input", lambda _: "n")
 
-        disable("valkey", "6379", yes=False)
+        with caplog.at_level(logging.INFO, logger="rots.commands.service.app"):
+            disable("valkey", "6379", yes=False)
 
         mock_systemctl.assert_not_called()
-        captured = capsys.readouterr()
-        assert "Aborted" in captured.out
+        assert "Aborted" in caplog.text

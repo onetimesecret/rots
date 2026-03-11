@@ -6,6 +6,7 @@ commands/env/app.py. Also includes regression tests for related bugs
 documented in the task tracker.
 """
 
+import logging
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -217,7 +218,7 @@ class TestEnvProcess:
     """Tests for the 'ots env process' command."""
 
     @patch("rots.commands.env.app.process_env_file")
-    def test_env_process_happy_path(self, mock_process, tmp_path, capsys):
+    def test_env_process_happy_path(self, mock_process, tmp_path, caplog):
         """process should report secrets created successfully."""
         env_content = (
             "SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\nHMAC_SECRET=abc123\nAPI_KEY=xyz789\n"
@@ -232,15 +233,15 @@ class TestEnvProcess:
             ["secret created: ots_hmac_secret", "secret created: ots_api_key"],
         )
 
-        process(env_file=env_file)
+        with caplog.at_level(logging.INFO):
+            process(env_file=env_file)
 
-        captured = capsys.readouterr()
-        assert "ots_hmac_secret" in captured.out
-        assert "ots_api_key" in captured.out
-        assert "[created]" in captured.out
+        assert "ots_hmac_secret" in caplog.text
+        assert "ots_api_key" in caplog.text
+        assert "[created]" in caplog.text
 
     @patch("rots.commands.env.app.process_env_file")
-    def test_env_process_dry_run(self, mock_process, tmp_path, capsys):
+    def test_env_process_dry_run(self, mock_process, tmp_path, caplog):
         """process --dry-run should report dry-run and not write secrets."""
         env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc123\n"
         env_file = _make_env_file(tmp_path, env_content)
@@ -250,10 +251,10 @@ class TestEnvProcess:
             [],
         )
 
-        process(env_file=env_file, dry_run=True)
+        with caplog.at_level(logging.INFO):
+            process(env_file=env_file, dry_run=True)
 
-        captured = capsys.readouterr()
-        assert "dry-run" in captured.out.lower()
+        assert "dry-run" in caplog.text.lower()
         # Confirm process_env_file was called with dry_run=True
         mock_process.assert_called_once()
         _, kwargs = mock_process.call_args
@@ -263,26 +264,26 @@ class TestEnvProcess:
             or "dry_run" in mock_process.call_args.kwargs
         )
 
-    def test_env_process_missing_file(self, tmp_path, capsys):
+    def test_env_process_missing_file(self, tmp_path, caplog):
         """process should raise SystemExit(1) when file not found."""
         missing = tmp_path / "nonexistent"
         with pytest.raises(SystemExit) as exc_info:
-            process(env_file=missing)
+            with caplog.at_level(logging.ERROR):
+                process(env_file=missing)
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "not found" in captured.out.lower() or "error" in captured.out.lower()
+        assert "not found" in caplog.text.lower() or "error" in caplog.text.lower()
 
-    def test_env_process_no_secret_variable_names(self, tmp_path, capsys):
+    def test_env_process_no_secret_variable_names(self, tmp_path, caplog):
         """process should raise SystemExit(1) when SECRET_VARIABLE_NAMES is missing."""
         env_file = _make_env_file(tmp_path, "SOME_VAR=value\n")
         with pytest.raises(SystemExit) as exc_info:
-            process(env_file=env_file)
+            with caplog.at_level(logging.ERROR):
+                process(env_file=env_file)
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "SECRET_VARIABLE_NAMES" in captured.out
+        assert "SECRET_VARIABLE_NAMES" in caplog.text
 
     @patch("rots.commands.env.app.process_env_file")
-    def test_env_process_reports_errors(self, mock_process, tmp_path, capsys):
+    def test_env_process_reports_errors(self, mock_process, tmp_path, caplog):
         """process should raise SystemExit(1) when secrets have errors (empty/missing)."""
         env_content = "SECRET_VARIABLE_NAMES=MISSING_VAR\n"
         env_file = _make_env_file(tmp_path, env_content)
@@ -293,10 +294,10 @@ class TestEnvProcess:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            process(env_file=env_file)
+            with caplog.at_level(logging.ERROR):
+                process(env_file=env_file)
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "error" in captured.out.lower()
+        assert "error" in caplog.text.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +374,7 @@ class TestEnvVerify:
 
     @patch("rots.commands.env.app.secret_exists")
     @patch("rots.commands.env.app.extract_secrets")
-    def test_env_verify_all_exist(self, mock_extract, mock_exists, tmp_path, capsys):
+    def test_env_verify_all_exist(self, mock_extract, mock_exists, tmp_path, caplog):
         """verify should succeed when all secrets exist."""
         env_content = (
             "SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\nHMAC_SECRET=abc123\nAPI_KEY=xyz789\n"
@@ -389,13 +390,14 @@ class TestEnvVerify:
         )
         mock_exists.return_value = True
 
-        verify(env_file=env_file)
-        captured = capsys.readouterr()
-        assert "All secrets verified" in captured.out
+        with caplog.at_level(logging.INFO):
+            verify(env_file=env_file)
+
+        assert "All secrets verified" in caplog.text
 
     @patch("rots.commands.env.app.secret_exists")
     @patch("rots.commands.env.app.extract_secrets")
-    def test_env_verify_missing_secrets(self, mock_extract, mock_exists, tmp_path, capsys):
+    def test_env_verify_missing_secrets(self, mock_extract, mock_exists, tmp_path, caplog):
         """verify should raise SystemExit(1) when a secret is missing."""
         env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc123\n"
         env_file = _make_env_file(tmp_path, env_content)
@@ -407,11 +409,11 @@ class TestEnvVerify:
         mock_exists.return_value = False
 
         with pytest.raises(SystemExit) as exc_info:
-            verify(env_file=env_file)
+            with caplog.at_level(logging.INFO):
+                verify(env_file=env_file)
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "MISSING" in captured.out
-        assert "ots env process" in captured.out
+        assert "MISSING" in caplog.text
+        assert "ots env process" in caplog.text
 
     def test_env_verify_missing_file(self, tmp_path):
         """verify should raise SystemExit(1) when file is not found."""
@@ -420,14 +422,13 @@ class TestEnvVerify:
             verify(env_file=missing)
         assert exc_info.value.code == 1
 
-    def test_env_verify_no_secret_variable_names(self, tmp_path, capsys):
+    def test_env_verify_no_secret_variable_names(self, tmp_path, caplog):
         """verify should succeed (nothing to verify) when SECRET_VARIABLE_NAMES absent."""
         env_file = _make_env_file(tmp_path, "SOME_VAR=value\n")
-        verify(env_file=env_file)
-        captured = capsys.readouterr()
+        with caplog.at_level(logging.INFO):
+            verify(env_file=env_file)
         assert (
-            "nothing to verify" in captured.out.lower()
-            or "No SECRET_VARIABLE_NAMES" in captured.out
+            "nothing to verify" in caplog.text.lower() or "No SECRET_VARIABLE_NAMES" in caplog.text
         )
 
 
@@ -614,7 +615,7 @@ class TestExecShellFallback:
         )
         mocker.patch(
             "rots.commands.instance.app.systemd.unit_to_container_name",
-            return_value="systemd-onetime-web_7043",
+            return_value="onetime-web@7043",
         )
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value = subprocess.CompletedProcess([], 0)

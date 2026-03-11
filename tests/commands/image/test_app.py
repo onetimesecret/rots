@@ -1,6 +1,8 @@
 # tests/commands/image/test_app.py
 """Tests for image app commands."""
 
+import logging
+
 import pytest
 
 
@@ -55,7 +57,7 @@ class TestRmCommand:
         captured = capsys.readouterr()
         assert "Aborted" in captured.out
 
-    def test_rm_removes_image_with_yes(self, mocker, capsys, tmp_path):
+    def test_rm_removes_image_with_yes(self, mocker, caplog, tmp_path):
         """Should remove image when --yes is provided."""
         from rots.commands.image.app import rm
 
@@ -69,13 +71,13 @@ class TestRmCommand:
             return_value=mocker.MagicMock(returncode=0, stdout="", stderr=""),
         )
 
-        rm(tags=("v0.22.0",), yes=True)
+        with caplog.at_level(logging.INFO):
+            rm(tags=("v0.22.0",), yes=True)
 
         mock_run.assert_called()
-        captured = capsys.readouterr()
-        assert "Removed" in captured.out
+        assert "Removed" in caplog.text
 
-    def test_rm_tries_multiple_patterns(self, mocker, capsys, tmp_path):
+    def test_rm_tries_multiple_patterns(self, mocker, caplog, tmp_path):
         """Should try multiple image patterns."""
         from rots.commands.image.app import rm
 
@@ -99,13 +101,13 @@ class TestRmCommand:
             side_effect=mock_subprocess_run,
         )
 
-        rm(tags=("v0.22.0",), yes=True)
+        with caplog.at_level(logging.INFO):
+            rm(tags=("v0.22.0",), yes=True)
 
         assert call_count == 3  # Tried 3 patterns before success
-        captured = capsys.readouterr()
-        assert "Removed" in captured.out
+        assert "Removed" in caplog.text
 
-    def test_rm_reports_not_found(self, mocker, capsys, tmp_path):
+    def test_rm_reports_not_found(self, mocker, caplog, tmp_path):
         """Should report when image not found."""
         from rots.commands.image.app import rm
 
@@ -119,10 +121,10 @@ class TestRmCommand:
             return_value=mocker.MagicMock(returncode=1, stdout="", stderr="not found"),
         )
 
-        rm(tags=("nonexistent",), yes=True)
+        with caplog.at_level(logging.INFO):
+            rm(tags=("nonexistent",), yes=True)
 
-        captured = capsys.readouterr()
-        assert "Image not found" in captured.out
+        assert "Image not found" in caplog.text
 
     def test_rm_with_force(self, mocker, tmp_path):
         """Should pass force flag to podman."""
@@ -570,14 +572,15 @@ class TestSetCurrentPodmanTag:
         assert "onetimesecret:v0.23.3" in tag_cmd_str
         assert "onetimesecret:current" in tag_cmd_str
 
-    def test_set_current_tags_previous_as_rollback(self, mocker, tmp_path, capsys):
+    def test_set_current_tags_previous_as_rollback(self, mocker, tmp_path, caplog):
         """set-current should tag the previous CURRENT as :rollback."""
         from rots.commands.image.app import set_current
 
         prev = ("ghcr.io/onetimesecret/onetimesecret", "v0.22.0")
         mock_run = self._mock_externals(mocker, tmp_path, current_image=prev)
 
-        set_current(tag="v0.23.3")
+        with caplog.at_level(logging.INFO):
+            set_current(tag="v0.23.3")
 
         # Calls: inspect, tag :current, tag :rollback
         calls = mock_run.call_args_list
@@ -587,10 +590,9 @@ class TestSetCurrentPodmanTag:
         assert "onetimesecret:v0.22.0" in rollback_tag_cmd
         assert "onetimesecret:rollback" in rollback_tag_cmd
 
-        captured = capsys.readouterr()
-        assert "ROLLBACK set to previous: v0.22.0" in captured.out
+        assert "ROLLBACK set to previous: v0.22.0" in caplog.text
 
-    def test_set_current_fails_if_image_not_local(self, mocker, tmp_path, capsys):
+    def test_set_current_fails_if_image_not_local(self, mocker, tmp_path, caplog):
         """set-current should exit with error if image not found locally."""
         import subprocess
 
@@ -615,16 +617,16 @@ class TestSetCurrentPodmanTag:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            set_current(tag="v99.0.0")
+            with caplog.at_level(logging.ERROR):
+                set_current(tag="v99.0.0")
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "Image not found locally" in captured.out
-        assert "ots image pull --tag v99.0.0" in captured.out
+        assert "Image not found locally" in caplog.text
+        assert "ots image pull --tag v99.0.0" in caplog.text
         # DB should NOT have been updated
         mock_set_current.assert_not_called()
 
-    def test_set_current_fails_if_podman_tag_fails(self, mocker, tmp_path, capsys):
+    def test_set_current_fails_if_podman_tag_fails(self, mocker, tmp_path, caplog):
         """set-current should exit if podman tag fails (DB unchanged)."""
         import subprocess
 
@@ -660,11 +662,11 @@ class TestSetCurrentPodmanTag:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            set_current(tag="v0.23.3")
+            with caplog.at_level(logging.ERROR):
+                set_current(tag="v0.23.3")
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "Failed to tag image in podman" in captured.out
+        assert "Failed to tag image in podman" in caplog.text
         mock_set_current.assert_not_called()
 
 
@@ -677,7 +679,7 @@ class TestRollbackPodmanTag:
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("TAG", raising=False)
 
-    def test_rollback_tags_in_podman(self, mocker, tmp_path, capsys):
+    def test_rollback_tags_in_podman(self, mocker, tmp_path, caplog):
         """rollback should tag the new current and old current in podman."""
         from rots.commands.image.app import rollback
 
@@ -707,7 +709,8 @@ class TestRollbackPodmanTag:
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
 
-        rollback()
+        with caplog.at_level(logging.INFO):
+            rollback()
 
         calls = mock_run.call_args_list
         assert len(calls) == 2
@@ -722,10 +725,9 @@ class TestRollbackPodmanTag:
         assert "onetimesecret:v0.23.3" in rollback_tag_cmd
         assert "onetimesecret:rollback" in rollback_tag_cmd
 
-        captured = capsys.readouterr()
-        assert "Rollback complete" in captured.out
+        assert "Rollback complete" in caplog.text
 
-    def test_rollback_warns_on_podman_tag_failure(self, mocker, tmp_path, capsys):
+    def test_rollback_warns_on_podman_tag_failure(self, mocker, tmp_path, caplog):
         """rollback should warn but not abort if podman tag fails."""
         from rots.commands.image.app import rollback
 
@@ -756,13 +758,13 @@ class TestRollbackPodmanTag:
         )
 
         # Should NOT raise — rollback continues despite tag failure
-        rollback()
+        with caplog.at_level(logging.INFO):
+            rollback()
 
-        captured = capsys.readouterr()
-        assert "Warning: podman tag failed" in captured.out
-        assert "Rollback complete" in captured.out
+        assert "podman tag failed" in caplog.text
+        assert "Rollback complete" in caplog.text
 
-    def test_rollback_without_apply_prints_hint(self, mocker, tmp_path, capsys):
+    def test_rollback_without_apply_prints_hint(self, mocker, tmp_path, caplog):
         """rollback without --apply should print 'To apply: ots instance redeploy'."""
         from rots.commands.image.app import rollback
 
@@ -792,12 +794,12 @@ class TestRollbackPodmanTag:
             return_value=mocker.MagicMock(stdout="", returncode=0),
         )
 
-        rollback(apply=False)
+        with caplog.at_level(logging.INFO):
+            rollback(apply=False)
 
-        captured = capsys.readouterr()
-        assert "To apply: ots instance redeploy" in captured.out
+        assert "To apply: ots instance redeploy" in caplog.text
 
-    def test_rollback_with_apply_calls_redeploy(self, mocker, tmp_path, capsys):
+    def test_rollback_with_apply_calls_redeploy(self, mocker, tmp_path, caplog):
         """rollback --apply should call redeploy after updating aliases."""
 
         from rots.commands.image.app import rollback
@@ -831,15 +833,15 @@ class TestRollbackPodmanTag:
             "rots.commands.instance.app.redeploy",
         )
 
-        rollback(apply=True, delay=0)
+        with caplog.at_level(logging.INFO):
+            rollback(apply=True, delay=0)
 
         # Should have called redeploy to apply the rollback
         mock_redeploy.assert_called_once_with(identifiers=(), delay=0)
-        captured = capsys.readouterr()
-        assert "Applying rollback" in captured.out
-        assert "To apply: ots instance redeploy" not in captured.out
+        assert "Applying rollback" in caplog.text
+        assert "To apply: ots instance redeploy" not in caplog.text
 
-    def test_rollback_with_apply_does_not_print_hint(self, mocker, tmp_path, capsys):
+    def test_rollback_with_apply_does_not_print_hint(self, mocker, tmp_path, caplog):
         """rollback --apply should not print the manual 'To apply:' hint."""
         from rots.commands.image.app import rollback
 
@@ -870,10 +872,10 @@ class TestRollbackPodmanTag:
         )
         mocker.patch("rots.commands.instance.app.redeploy")
 
-        rollback(apply=True, delay=0)
+        with caplog.at_level(logging.INFO):
+            rollback(apply=True, delay=0)
 
-        captured = capsys.readouterr()
-        assert "To apply: ots instance redeploy" not in captured.out
+        assert "To apply: ots instance redeploy" not in caplog.text
 
 
 class TestPullPositionalReference:
@@ -1001,7 +1003,7 @@ class TestPullPositionalReference:
         assert mock_run.call_count == 2
         mock_set_current.assert_called_once()
 
-    def test_pull_no_reference_no_tag_rejects_sentinel(self, mocker, monkeypatch, tmp_path, capsys):
+    def test_pull_no_reference_no_tag_rejects_sentinel(self, mocker, monkeypatch, tmp_path, caplog):
         """No reference, no --tag, empty TAG env var falls back to
         @current sentinel which pull rejects."""
         from rots.commands.image.app import pull
@@ -1010,11 +1012,11 @@ class TestPullPositionalReference:
         self._mock_externals(mocker, tmp_path)
 
         with pytest.raises(SystemExit) as exc_info:
-            pull()
+            with caplog.at_level(logging.ERROR):
+                pull()
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "alias" in captured.out.lower()
+        assert "alias" in caplog.text.lower()
 
     def test_pull_reference_with_trailing_colon(self, mocker, monkeypatch, tmp_path):
         """Reference ending with colon should treat it as image-only (no tag)."""
@@ -1039,7 +1041,7 @@ class TestPullCurrentPodmanTag:
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("TAG", raising=False)
 
-    def test_pull_current_tags_in_podman(self, mocker, monkeypatch, tmp_path, capsys):
+    def test_pull_current_tags_in_podman(self, mocker, monkeypatch, tmp_path, caplog):
         """pull --current should tag the pulled image as :current."""
         from rots.commands.image.app import pull
 
@@ -1064,7 +1066,8 @@ class TestPullCurrentPodmanTag:
             return_value=tmp_path / "deployments.db",
         )
 
-        pull(set_as_current=True)
+        with caplog.at_level(logging.INFO):
+            pull(set_as_current=True)
 
         # Calls: podman pull, podman tag :current
         calls = mock_run.call_args_list
@@ -1078,8 +1081,7 @@ class TestPullCurrentPodmanTag:
         assert "onetimesecret:v0.23.3" in tag_cmd
         assert "onetimesecret:current" in tag_cmd
 
-        captured = capsys.readouterr()
-        assert "Set CURRENT to v0.23.3" in captured.out
+        assert "Set CURRENT to v0.23.3" in caplog.text
 
     def test_pull_current_with_previous_tags_rollback(
         self,
@@ -1174,7 +1176,7 @@ class TestPullPrivateRegistry:
         full_ref = " ".join(cmd)
         assert "registry.example.com/onetimesecret:v1.0.0" in full_ref
 
-    def test_pull_private_without_registry_exits(self, mocker, monkeypatch, tmp_path, capsys):
+    def test_pull_private_without_registry_exits(self, mocker, monkeypatch, tmp_path, caplog):
         """Scenario 17: pull --private without OTS_REGISTRY should exit with error."""
         from rots.commands.image.app import pull
 
@@ -1184,11 +1186,11 @@ class TestPullPrivateRegistry:
         self._mock_externals(mocker, tmp_path)
 
         with pytest.raises(SystemExit) as exc_info:
-            pull(private=True)
+            with caplog.at_level(logging.ERROR):
+                pull(private=True)
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "OTS_REGISTRY" in captured.out
+        assert "OTS_REGISTRY" in caplog.text
 
 
 class TestRegistryEnvVarResolution:
@@ -1207,7 +1209,7 @@ class TestRegistryEnvVarResolution:
         monkeypatch.delenv("OTS_REGISTRY_USER", raising=False)
         monkeypatch.delenv("OTS_REGISTRY_PASSWORD", raising=False)
 
-    def test_login_uses_registry_env_var(self, mocker, monkeypatch, tmp_path, capsys):
+    def test_login_uses_registry_env_var(self, mocker, monkeypatch, tmp_path, caplog):
         """Scenario 20: login with OTS_REGISTRY env var should resolve registry."""
         from rots.commands.image.app import login
 
@@ -1229,7 +1231,8 @@ class TestRegistryEnvVarResolution:
             return_value=mocker.MagicMock(stdout="Login Succeeded", returncode=0),
         )
 
-        login()
+        with caplog.at_level(logging.INFO):
+            login()
 
         # Verify podman login was called with the registry from env var
         mock_run.assert_called_once()
@@ -1237,8 +1240,7 @@ class TestRegistryEnvVarResolution:
         full_cmd = " ".join(cmd)
         assert "registry.example.com" in full_cmd
 
-        captured = capsys.readouterr()
-        assert "registry.example.com" in captured.out
+        assert "registry.example.com" in caplog.text
 
     def test_list_remote_uses_registry_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario 21: list-remote with OTS_REGISTRY env var should resolve registry."""
@@ -1400,7 +1402,7 @@ class TestPushEnvVarResolution:
         # source should use the full IMAGE reference
         assert "docker.io/myorg/myapp:v3.0.0" in tag_cmd
 
-    def test_push_missing_tag_exits_with_error(self, mocker, monkeypatch, tmp_path, capsys):
+    def test_push_missing_tag_exits_with_error(self, mocker, monkeypatch, tmp_path, caplog):
         """Scenario: push with no --tag and TAG env var unset falls back to @current sentinel.
 
         The @current sentinel is not a valid OCI tag, so the podman tag
@@ -1425,11 +1427,11 @@ class TestPushEnvVarResolution:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            push()
+            with caplog.at_level(logging.ERROR):
+                push()
 
         assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "Failed to tag image" in captured.out
+        assert "Failed to tag image" in caplog.text
 
 
 class TestListRemoteImageResolution:
@@ -1668,7 +1670,7 @@ class TestRmImageBasenameDerivation:
         # Fourth pattern is the private registry image
         assert any("registry.example.com" in img for img in attempted_images)
 
-    def test_rm_succeeds_on_first_matching_pattern(self, mocker, monkeypatch, tmp_path, capsys):
+    def test_rm_succeeds_on_first_matching_pattern(self, mocker, monkeypatch, tmp_path, caplog):
         """rm should stop trying patterns once one succeeds."""
         from rots.commands.image.app import rm
 
@@ -1688,11 +1690,11 @@ class TestRmImageBasenameDerivation:
 
         mocker.patch("rots.podman.subprocess.run", side_effect=mock_subprocess_run)
 
-        rm(tags=("v1.0.0",), yes=True)
+        with caplog.at_level(logging.INFO):
+            rm(tags=("v1.0.0",), yes=True)
 
         # Should stop after the first successful removal
         assert len(attempted_images) == 1
         assert attempted_images[0] == "myapp:v1.0.0"
 
-        captured = capsys.readouterr()
-        assert "Removed myapp:v1.0.0" in captured.out
+        assert "Removed myapp:v1.0.0" in caplog.text

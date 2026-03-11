@@ -6,7 +6,7 @@ They render quadlet template content without writing to disk.
 """
 
 
-def _make_cfg(mocker, tmp_path, image="ghcr.io/test/image", tag="v1.0.0"):
+def _make_cfg(mocker, tmp_path, image="ghcr.io/test/image", tag="v1.0.0", registry=None):
     """Return a minimal Config mock for render tests."""
     from rots.config import Config
 
@@ -15,6 +15,7 @@ def _make_cfg(mocker, tmp_path, image="ghcr.io/test/image", tag="v1.0.0"):
     cfg.memory_max = None
     cfg.cpu_quota = None
     cfg.valkey_service = None
+    cfg.registry = registry
     cfg.config_dir = tmp_path / "etc"
     cfg.resolved_image_with_tag.return_value = f"{image}:{tag}"
     return cfg
@@ -286,3 +287,77 @@ class TestBuildFmtVars:
         )
         assert isinstance(result, dict)
         assert "image" in result
+
+
+class TestAuthFileInTemplates:
+    """Test AuthFile= directive in rendered templates when registry is configured."""
+
+    def test_no_registry_no_authfile_web(self, mocker, tmp_path):
+        """Without registry, web template should not contain AuthFile."""
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path)
+        result = quadlet.render_web_template(cfg, force=True)
+        assert "AuthFile=" not in result
+
+    def test_no_registry_no_authfile_worker(self, mocker, tmp_path):
+        """Without registry, worker template should not contain AuthFile."""
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path)
+        result = quadlet.render_worker_template(cfg, force=True)
+        assert "AuthFile=" not in result
+
+    def test_no_registry_no_authfile_scheduler(self, mocker, tmp_path):
+        """Without registry, scheduler template should not contain AuthFile."""
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path)
+        result = quadlet.render_scheduler_template(cfg, force=True)
+        assert "AuthFile=" not in result
+
+    def test_registry_adds_authfile_web(self, mocker, tmp_path):
+        """With registry, web template should contain AuthFile line."""
+        from pathlib import Path
+
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path, registry="registry.example.com")
+        cfg.get_registry_auth_file.return_value = Path("/etc/containers/auth.json")
+        result = quadlet.render_web_template(cfg, force=True)
+        assert "AuthFile=/etc/containers/auth.json" in result
+
+    def test_registry_adds_authfile_worker(self, mocker, tmp_path):
+        """With registry, worker template should contain AuthFile line."""
+        from pathlib import Path
+
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path, registry="registry.example.com")
+        cfg.get_registry_auth_file.return_value = Path("/etc/containers/auth.json")
+        result = quadlet.render_worker_template(cfg, force=True)
+        assert "AuthFile=/etc/containers/auth.json" in result
+
+    def test_registry_adds_authfile_scheduler(self, mocker, tmp_path):
+        """With registry, scheduler template should contain AuthFile line."""
+        from pathlib import Path
+
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path, registry="registry.example.com")
+        cfg.get_registry_auth_file.return_value = Path("/etc/containers/auth.json")
+        result = quadlet.render_scheduler_template(cfg, force=True)
+        assert "AuthFile=/etc/containers/auth.json" in result
+
+    def test_authfile_appears_after_image_line(self, mocker, tmp_path):
+        """AuthFile should appear immediately after Image= in the rendered template."""
+        from pathlib import Path
+
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path, registry="reg.io")
+        cfg.get_registry_auth_file.return_value = Path("/etc/containers/auth.json")
+        result = quadlet.render_web_template(cfg, force=True)
+        lines = result.splitlines()
+        image_idx = next(i for i, line in enumerate(lines) if line.startswith("Image="))
+        assert lines[image_idx + 1] == "AuthFile=/etc/containers/auth.json"

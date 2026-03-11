@@ -2,6 +2,7 @@
 """Tests for instance command helpers."""
 
 import fcntl
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -83,26 +84,26 @@ class TestDeployLock:
         with deploy_lock(lock_path):
             pass
 
-    def test_falls_back_to_stderr_warning_when_file_cannot_be_opened(self, tmp_path, capsys):
+    def test_falls_back_to_stderr_warning_when_file_cannot_be_opened(self, tmp_path, caplog):
         """When the lock file cannot be opened, warn to stderr and yield (no-op)."""
         # Point at a path where the parent cannot be created/written to
         unwritable = tmp_path / "deploy.lock"
         reached = []
 
-        with pytest.MonkeyPatch.context() as mp:
-            # Make open() raise OSError to simulate unwritable path after mkdir
-            def fake_open(self, mode="r", **kwargs):
-                raise OSError("Permission denied")
+        with caplog.at_level(logging.WARNING):
+            with pytest.MonkeyPatch.context() as mp:
+                # Make open() raise OSError to simulate unwritable path after mkdir
+                def fake_open(self, mode="r", **kwargs):
+                    raise OSError("Permission denied")
 
-            mp.setattr(unwritable.__class__, "open", fake_open)
-            # Also make mkdir a no-op so we don't fail on that
-            mp.setattr(unwritable.__class__, "mkdir", lambda *a, **kw: None)
+                mp.setattr(unwritable.__class__, "open", fake_open)
+                # Also make mkdir a no-op so we don't fail on that
+                mp.setattr(unwritable.__class__, "mkdir", lambda *a, **kw: None)
 
-            with deploy_lock(unwritable):
-                reached.append(True)
+                with deploy_lock(unwritable):
+                    reached.append(True)
 
-        captured = capsys.readouterr()
-        assert "Warning" in captured.err
+        assert "cannot open deploy lock file" in caplog.text
         assert reached == [True]
 
     def test_multiple_sequential_deploys_succeed(self, tmp_path):
@@ -478,44 +479,44 @@ class TestResolveIdentifiers:
 class TestForEachInstance:
     """Test for_each_instance helper."""
 
-    def test_empty_instances_returns_zero(self, capsys):
+    def test_empty_instances_returns_zero(self, caplog):
         """Should return 0 when no instances provided."""
         called = []
-        result = for_each_instance(
-            {}, delay=0, action=lambda t, i: called.append((t, i)), verb="Testing"
-        )
+        with caplog.at_level(logging.INFO):
+            result = for_each_instance(
+                {}, delay=0, action=lambda t, i: called.append((t, i)), verb="Testing"
+            )
         assert result == 0
         assert called == []
-        output = capsys.readouterr().out
-        assert "No instances found to operate on." in output
+        assert "No instances found to operate on." in caplog.text
 
-    def test_single_instance(self, capsys):
+    def test_single_instance(self, caplog):
         """Should process single instance."""
         called = []
         instances = {InstanceType.WEB: ["7043"]}
-        result = for_each_instance(
-            instances, delay=0, action=lambda t, i: called.append((t, i)), verb="Testing"
-        )
+        with caplog.at_level(logging.INFO):
+            result = for_each_instance(
+                instances, delay=0, action=lambda t, i: called.append((t, i)), verb="Testing"
+            )
         assert result == 1
         assert called == [(InstanceType.WEB, "7043")]
-        output = capsys.readouterr().out
-        assert "[1/1] Testing onetime-web@7043" in output
-        assert "Processed 1 instance(s)" in output
+        assert "[1/1] Testing onetime-web@7043" in caplog.text
+        assert "Processed 1 instance(s)" in caplog.text
 
-    def test_multiple_instances_same_type(self, capsys):
+    def test_multiple_instances_same_type(self, caplog):
         """Should process multiple instances of same type."""
         called = []
         instances = {InstanceType.WORKER: ["1", "2"]}
-        result = for_each_instance(
-            instances, delay=0, action=lambda t, i: called.append((t, i)), verb="Starting"
-        )
+        with caplog.at_level(logging.INFO):
+            result = for_each_instance(
+                instances, delay=0, action=lambda t, i: called.append((t, i)), verb="Starting"
+            )
         assert result == 2
         assert called == [(InstanceType.WORKER, "1"), (InstanceType.WORKER, "2")]
-        output = capsys.readouterr().out
-        assert "[1/2] Starting onetime-worker@1" in output
-        assert "[2/2] Starting onetime-worker@2" in output
+        assert "[1/2] Starting onetime-worker@1" in caplog.text
+        assert "[2/2] Starting onetime-worker@2" in caplog.text
 
-    def test_mixed_types(self, capsys):
+    def test_mixed_types(self, caplog):
         """Should process instances of different types."""
         called = []
         instances = {
@@ -523,24 +524,25 @@ class TestForEachInstance:
             InstanceType.WORKER: ["1"],
             InstanceType.SCHEDULER: ["main"],
         }
-        result = for_each_instance(
-            instances, delay=0, action=lambda t, i: called.append((t, i)), verb="Stopping"
-        )
+        with caplog.at_level(logging.INFO):
+            result = for_each_instance(
+                instances, delay=0, action=lambda t, i: called.append((t, i)), verb="Stopping"
+            )
         assert result == 3
         assert (InstanceType.WEB, "7043") in called
         assert (InstanceType.WORKER, "1") in called
         assert (InstanceType.SCHEDULER, "main") in called
 
-    def test_delay_between_instances(self, mocker, capsys):
+    def test_delay_between_instances(self, mocker, caplog):
         """Should wait between instances when delay > 0."""
         mock_sleep = mocker.patch("rots.commands.instance._helpers.time.sleep")
         instances = {InstanceType.WEB: ["7043", "7044", "7045"]}
-        for_each_instance(instances, delay=5, action=lambda t, i: None, verb="Restarting")
+        with caplog.at_level(logging.INFO):
+            for_each_instance(instances, delay=5, action=lambda t, i: None, verb="Restarting")
         # Should sleep twice (between 1-2 and 2-3, but not after last)
         assert mock_sleep.call_count == 2
         mock_sleep.assert_called_with(5)
-        output = capsys.readouterr().out
-        assert "Waiting 5s..." in output
+        assert "Waiting 5s..." in caplog.text
 
     def test_no_delay_when_zero(self, mocker):
         """Should not sleep when delay is 0."""
@@ -641,7 +643,7 @@ class TestRunHook:
         call_args = mock_run.call_args[0]
         assert call_args[0] == "./scripts/scan.sh --verbose"
 
-    def test_verbose_mode_prints_progress_messages(self, mocker, capsys):
+    def test_verbose_mode_prints_progress_messages(self, mocker, caplog):
         """quiet=False (default) should print stage name and pass confirmation."""
         from rots.commands.instance._helpers import run_hook
 
@@ -650,11 +652,11 @@ class TestRunHook:
             return_value=mocker.MagicMock(returncode=0),
         )
 
-        run_hook("echo ok", "pre-hook", quiet=False)
+        with caplog.at_level(logging.INFO):
+            run_hook("echo ok", "pre-hook", quiet=False)
 
-        captured = capsys.readouterr()
-        assert "pre-hook" in captured.out
-        assert "passed" in captured.out
+        assert "pre-hook" in caplog.text
+        assert "passed" in caplog.text
 
     def test_failed_hook_error_message_includes_exit_code(self, mocker, capsys):
         """Error output should include the non-zero exit code."""

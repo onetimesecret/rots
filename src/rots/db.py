@@ -168,7 +168,7 @@ def _remote_query(
         timeout=15,
     )
     if not result.ok:
-        logger.warning("Remote sqlite3 query failed: %s", result.stderr.strip())
+        logger.warning(f"Remote sqlite3 query failed: {result.stderr.strip()}")
         return []
     stdout = result.stdout.strip()
     if not stdout:
@@ -190,7 +190,7 @@ def _remote_execute(
         timeout=15,
     )
     if not result.ok:
-        logger.warning("Remote sqlite3 execute failed: %s", result.stderr.strip())
+        logger.warning(f"Remote sqlite3 execute failed: {result.stderr.strip()}")
 
 
 def _interpolate_params(sql: str, params: tuple) -> str:
@@ -225,7 +225,7 @@ def _remote_init_db(db_path: Path, *, executor: Executor) -> None:
         timeout=15,
     )
     if not result.ok:
-        logger.warning("Remote init_db failed: %s", result.stderr.strip())
+        logger.warning(f"Remote init_db failed: {result.stderr.strip()}")
 
 
 def init_db(db_path: Path, *, executor: Executor | None = None) -> None:

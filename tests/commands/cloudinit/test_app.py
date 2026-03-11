@@ -1,6 +1,8 @@
 # tests/commands/cloudinit/test_app.py
 """Tests for cloud-init command app."""
 
+import logging
+
 import pytest
 import yaml
 
@@ -22,17 +24,15 @@ class TestCloudInitGenerate:
         assert "Types: deb" in captured.out
         assert "trixie" in captured.out
 
-    def test_generate_to_file(self, tmp_path, capsys):
+    def test_generate_to_file(self, tmp_path, caplog):
         """Generate should write to specified file."""
         output_file = tmp_path / "cloud-init.yaml"
 
-        with pytest.raises(SystemExit) as exc_info:
+        with caplog.at_level(logging.INFO), pytest.raises(SystemExit) as exc_info:
             app(["generate", "--output", str(output_file)])
 
         assert exc_info.value.code == 0
-
-        captured = capsys.readouterr()
-        assert "[created]" in captured.out
+        assert "[created]" in caplog.text
 
         assert output_file.exists()
         content = output_file.read_text()
@@ -186,7 +186,7 @@ class TestCloudInitGenerate:
 class TestCloudInitValidate:
     """Tests for cloudinit validate command."""
 
-    def test_validate_valid_config(self, tmp_path, capsys):
+    def test_validate_valid_config(self, tmp_path, caplog):
         """Validate should pass for valid config."""
         config_file = tmp_path / "valid.yaml"
         config_file.write_text(
@@ -202,13 +202,11 @@ apt:
 """
         )
 
-        with pytest.raises(SystemExit) as exc_info:
+        with caplog.at_level(logging.INFO), pytest.raises(SystemExit) as exc_info:
             app(["validate", str(config_file)])
 
         assert exc_info.value.code == 0
-
-        captured = capsys.readouterr()
-        assert "[ok]" in captured.out
+        assert "[ok]" in caplog.text
 
     def test_validate_missing_file(self):
         """Validate should fail for missing file."""

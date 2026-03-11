@@ -456,36 +456,31 @@ class TestUnitToContainerName:
     """Test unit_to_container_name function."""
 
     def test_converts_web_template_instance_unit(self):
-        """Should convert onetime-web@7044 to systemd-onetime-web--7044."""
+        """Should strip to bare unit name: onetime-web@7044."""
         from rots import systemd
 
-        assert systemd.unit_to_container_name("onetime-web@7044") == "systemd-onetime-web--7044"
+        assert systemd.unit_to_container_name("onetime-web@7044") == "onetime-web@7044"
 
     def test_handles_service_suffix(self):
-        """Should strip .service suffix before converting."""
+        """Should strip .service suffix."""
         from rots import systemd
 
-        assert (
-            systemd.unit_to_container_name("onetime-web@7043.service")
-            == "systemd-onetime-web--7043"
-        )
+        assert systemd.unit_to_container_name("onetime-web@7043.service") == "onetime-web@7043"
 
     def test_handles_different_ports(self):
         """Should work with various port numbers."""
         from rots import systemd
 
-        assert systemd.unit_to_container_name("onetime-web@3000") == "systemd-onetime-web--3000"
-        assert systemd.unit_to_container_name("onetime-web@8080") == "systemd-onetime-web--8080"
+        assert systemd.unit_to_container_name("onetime-web@3000") == "onetime-web@3000"
+        assert systemd.unit_to_container_name("onetime-web@8080") == "onetime-web@8080"
 
-    def test_double_dash_avoids_underscore_collision(self):
-        """@ -> -- must not collide with a unit that has a literal underscore."""
+    def test_preserves_at_sign_in_container_name(self):
+        """Container name preserves the @ from the unit name."""
         from rots import systemd
 
-        # onetime-web@7043 and a hypothetical onetime-web_7043 must produce
-        # different container names.
-        at_name = systemd.unit_to_container_name("onetime-web@7043")
-        underscore_name = "systemd-onetime-web_7043"
-        assert at_name != underscore_name
+        # With explicit ContainerName= in the Quadlet, the @ is kept as-is.
+        assert systemd.unit_to_container_name("onetime-web@7043") == "onetime-web@7043"
+        assert "@" in systemd.unit_to_container_name("onetime-web@7043")
 
 
 class TestRecreate:
@@ -511,7 +506,7 @@ class TestRecreate:
             "podman",
             "rm",
             "--ignore",
-            "systemd-onetime-web--7044",
+            "onetime-web@7044",
         ]
         assert calls[2][0][0] == ["sudo", "--", "systemctl", "start", "onetime-web@7044"]
 
@@ -562,7 +557,7 @@ class TestContainerExists:
         systemd.container_exists("onetime-web@7044")
 
         mock_run.assert_called_once_with(
-            ["podman", "container", "exists", "systemd-onetime-web--7044"],
+            ["podman", "container", "exists", "onetime-web@7044"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -819,19 +814,16 @@ class TestWorkerUnitToContainerName:
     """Test unit_to_container_name for worker units."""
 
     def test_converts_worker_unit_with_numeric_id(self):
-        """Should convert onetime-worker@1 to systemd-onetime-worker--1."""
+        """Should return onetime-worker@1 unchanged."""
         from rots import systemd
 
-        assert systemd.unit_to_container_name("onetime-worker@1") == "systemd-onetime-worker--1"
+        assert systemd.unit_to_container_name("onetime-worker@1") == "onetime-worker@1"
 
     def test_converts_worker_unit_with_string_id(self):
-        """Should convert onetime-worker@billing to systemd-onetime-worker--billing."""
+        """Should return onetime-worker@billing unchanged."""
         from rots import systemd
 
-        assert (
-            systemd.unit_to_container_name("onetime-worker@billing")
-            == "systemd-onetime-worker--billing"
-        )
+        assert systemd.unit_to_container_name("onetime-worker@billing") == "onetime-worker@billing"
 
     def test_handles_worker_service_suffix(self):
         """Should strip .service suffix from worker units."""
@@ -839,7 +831,7 @@ class TestWorkerUnitToContainerName:
 
         assert (
             systemd.unit_to_container_name("onetime-worker@emails.service")
-            == "systemd-onetime-worker--emails"
+            == "onetime-worker@emails"
         )
 
 
@@ -847,13 +839,10 @@ class TestSchedulerUnitToContainerName:
     """Test unit_to_container_name for scheduler units."""
 
     def test_converts_scheduler_unit(self):
-        """Should convert onetime-scheduler@main to systemd-onetime-scheduler--main."""
+        """Should return onetime-scheduler@main unchanged."""
         from rots import systemd
 
-        assert (
-            systemd.unit_to_container_name("onetime-scheduler@main")
-            == "systemd-onetime-scheduler--main"
-        )
+        assert systemd.unit_to_container_name("onetime-scheduler@main") == "onetime-scheduler@main"
 
 
 class TestWorkerContainerExists:
@@ -870,7 +859,7 @@ class TestWorkerContainerExists:
         systemd.container_exists("onetime-worker@billing")
 
         mock_run.assert_called_once_with(
-            ["podman", "container", "exists", "systemd-onetime-worker--billing"],
+            ["podman", "container", "exists", "onetime-worker@billing"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -887,7 +876,7 @@ class TestWorkerContainerExists:
         systemd.container_exists("onetime-worker@1")
 
         mock_run.assert_called_once_with(
-            ["podman", "container", "exists", "systemd-onetime-worker--1"],
+            ["podman", "container", "exists", "onetime-worker@1"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -1192,6 +1181,7 @@ class TestQuadletWritePermissionError:
         cfg.memory_max = None
         cfg.cpu_quota = None
         cfg.valkey_service = None
+        cfg.registry = None
         cfg.config_dir = tmp_path / "etc"
         cfg.resolved_image_with_tag.return_value = "ghcr.io/test/image:v1.0.0"
 

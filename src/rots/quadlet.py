@@ -9,7 +9,7 @@ SECRET_VARIABLE_NAMES defined in the environment file.
 
 from __future__ import annotations
 
-import sys
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,6 +25,8 @@ from .environment_file import (
 
 if TYPE_CHECKING:
     from ots_shared.ssh import Executor
+
+logger = logging.getLogger(__name__)
 
 # EXIT_PRECOND (3) is intentionally not imported from commands.common to avoid
 # a circular import: quadlet -> commands -> env -> quadlet.
@@ -69,7 +71,7 @@ WEB_TEMPLATE = """\
 # TROUBLESHOOTING:
 #   List secrets:  podman secret ls
 #   Inspect:       podman secret inspect ots_hmac_secret
-#   Container:     podman exec -it systemd-onetime-web_7043 /bin/sh
+#   Container:     podman exec -it onetime-web@7043 /bin/sh
 
 [Unit]
 Description=OneTimeSecret Web Container %i
@@ -87,8 +89,9 @@ RestartSec=5
 TimeoutStopSec=30
 {resource_limits_section}
 [Container]
+ContainerName=onetime-web@%i
 Image={image}
-Network=host
+{auth_section}Network=host
 
 # Syslog tag for per-instance log filtering: journalctl -t onetime-web-7043 -f
 PodmanArgs=--log-opt tag=onetime-web-%i
@@ -155,7 +158,7 @@ def get_secrets_section(
 
     if not env_exists:
         msg = (
-            f"ERROR: Environment file not found: {env_path}\n"
+            f"Environment file not found: {env_path}\n"
             "\n"
             "The environment file must exist before deploying. It defines which\n"
             "variables are secrets and provides infrastructure configuration.\n"
@@ -172,15 +175,15 @@ def get_secrets_section(
             "(the application will fail at runtime without required secrets)."
         )
         if force:
-            print(f"WARNING: {msg}", file=sys.stderr)
+            logger.warning(msg)
             return "# No secrets configured (env file not found - deployed with --force)"
-        print(msg, file=sys.stderr)
+        logger.error(msg)
         raise SystemExit(_EXIT_PRECOND)
 
     secrets = get_secrets_from_env_file(env_path, executor=executor)
     if not secrets:
         msg = (
-            f"ERROR: No secrets configured in {env_path}\n"
+            f"No secrets configured in {env_path}\n"
             "\n"
             "SECRET_VARIABLE_NAMES is not set or is empty. The application requires\n"
             "secrets (HMAC_SECRET, SECRET, SESSION_SECRET, etc.) to function.\n"
@@ -193,9 +196,9 @@ def get_secrets_section(
             "(the application will fail at runtime without required secrets)."
         )
         if force:
-            print(f"WARNING: {msg}", file=sys.stderr)
+            logger.warning(msg)
             return "# No secrets configured (SECRET_VARIABLE_NAMES not set - deployed with --force)"
-        print(msg, file=sys.stderr)
+        logger.error(msg)
         raise SystemExit(_EXIT_PRECOND)
 
     # Defense-in-depth: only include secrets that actually exist as podman secrets.
@@ -211,17 +214,16 @@ def get_secrets_section(
 
     if missing:
         names = ", ".join(s.secret_name for s in missing)
-        print(
-            f"WARNING: Podman secrets not found: {names}\n"
+        logger.warning(
+            f"Podman secrets not found: {names}\n"
             "These secrets are listed in SECRET_VARIABLE_NAMES but don't exist in\n"
             "the podman secret store. Run 'ots env process' to create them.\n"
-            "Skipping their Secret= lines in the quadlet.",
-            file=sys.stderr,
+            "Skipping their Secret= lines in the quadlet."
         )
 
     if not verified:
         msg = (
-            "ERROR: No podman secrets found for any configured secret variable.\n"
+            "No podman secrets found for any configured secret variable.\n"
             "\n"
             f"Secrets listed in {env_path} (SECRET_VARIABLE_NAMES) have not been\n"
             "created in the podman secret store. The application will fail at\n"
@@ -234,9 +236,9 @@ def get_secrets_section(
             "(the application will fail at runtime without required secrets)."
         )
         if force:
-            print(f"WARNING: {msg}", file=sys.stderr)
+            logger.warning(msg)
             return "# No secrets configured (no podman secrets found - deployed with --force)"
-        print(msg, file=sys.stderr)
+        logger.error(msg)
         raise SystemExit(_EXIT_PRECOND)
 
     return generate_quadlet_secret_lines(verified)
@@ -339,8 +341,15 @@ def _build_fmt_vars(
     secrets_section = get_secrets_section(env_file_path, force=force, executor=executor)
     config_volumes_section = get_config_volumes_section(cfg, executor=executor)
 
+    if cfg.registry:
+        auth_file = cfg.get_registry_auth_file(executor=executor)
+        auth_section = f"AuthFile={auth_file}\n"
+    else:
+        auth_section = ""
+
     fmt_vars: dict = {
         "image": cfg.resolved_image_with_tag(executor=executor),
+        "auth_section": auth_section,
         "config_dir": cfg.config_dir,
         "secrets_section": secrets_section,
         "config_volumes_section": config_volumes_section,
@@ -506,7 +515,7 @@ WORKER_TEMPLATE = """\
 # TROUBLESHOOTING:
 #   List secrets:  podman secret ls
 #   Inspect:       podman secret inspect ots_hmac_secret
-#   Container:     podman exec -it systemd-onetime-worker@1 /bin/sh
+#   Container:     podman exec -it onetime-worker@1 /bin/sh
 
 [Unit]
 Description=OneTimeSecret Worker %i
@@ -520,8 +529,9 @@ RestartSec=5
 TimeoutStopSec=90
 {resource_limits_section}
 [Container]
+ContainerName=onetime-worker@%i
 Image={image}
-Network=host
+{auth_section}Network=host
 
 # Syslog tag for per-instance log filtering: journalctl -t onetime-worker-1 -f
 PodmanArgs=--log-opt tag=onetime-worker-%i
@@ -615,7 +625,7 @@ SCHEDULER_TEMPLATE = """\
 # TROUBLESHOOTING:
 #   List secrets:  podman secret ls
 #   Inspect:       podman secret inspect ots_hmac_secret
-#   Container:     podman exec -it systemd-onetime-scheduler_main /bin/sh
+#   Container:     podman exec -it onetime-scheduler@main /bin/sh
 
 [Unit]
 Description=OneTimeSecret Scheduler %i
@@ -629,8 +639,9 @@ RestartSec=5
 TimeoutStopSec=60
 {resource_limits_section}
 [Container]
+ContainerName=onetime-scheduler@%i
 Image={image}
-Network=host
+{auth_section}Network=host
 
 # Syslog tag for per-instance log filtering: journalctl -t onetime-scheduler-main -f
 PodmanArgs=--log-opt tag=onetime-scheduler-%i

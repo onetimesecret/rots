@@ -27,8 +27,10 @@ from ..common import (
     Yes,
 )
 from ._helpers import (
+    apply_quiet,
     build_secret_args,
     deploy_lock,
+    flush_output,
     for_each_instance,
     format_command,
     format_journalctl_hint,
@@ -65,8 +67,8 @@ def _list_instances_impl(
     instances = resolve_identifiers(identifiers, instance_type, running_only=False, executor=ex)
 
     if not instances:
-        print("No configured instances found")
-        print("Deploy one first: ots instances deploy --help")
+        logger.info("No configured instances found")
+        logger.info("Deploy one first: ots instances deploy --help")
         return
 
     # Fetch container health once for all instances
@@ -212,9 +214,9 @@ def ps(
     p = Podman(executor=ex)
 
     if itype is not None:
-        name_filter = f"name=systemd-onetime-{itype.value}"
+        name_filter = f"name=onetime-{itype.value}@"
     else:
-        name_filter = "name=systemd-onetime"
+        name_filter = "name=onetime-"
 
     p.ps(
         filter=name_filter,
@@ -310,13 +312,17 @@ def run(
     ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
     override_tag = ref_tag or tag
     if ref_image or override_tag:
-        cfg = dataclasses.replace(cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag)
+        cfg = dataclasses.replace(
+            cfg,
+            image=ref_image or cfg.image,
+            tag=override_tag or cfg.tag,
+            _image_explicit=bool(ref_image) or cfg._image_explicit,
+        )
 
     ex = cfg.get_executor(host=context.host_var.get(None))
 
     # Resolve image/tag (handles @current/@rollback aliases)
-    image, resolved_tag = cfg.resolve_image_tag(executor=ex)
-    full_image = f"{image}:{resolved_tag}"
+    full_image = cfg.resolved_image_with_tag(executor=ex)
 
     # Container name
     container_name = name or f"onetimesecret-{port}"
@@ -375,16 +381,15 @@ def run(
             cmd.extend(["-v", f"{f}:/app/etc/{f.name}:ro"])
         cmd.extend(["-v", "static_assets:/app/public:ro"])
 
-        # Auth file for private registry
-        if cfg.registry:
-            cmd.extend(["--authfile", str(cfg.registry_auth_file)])
+    # Auth file for private registry (outside production block — needed for pull)
+    cmd.extend(cfg.podman_auth_args(executor=ex))
 
     # Image
     cmd.append(full_image)
 
-    if not quiet:
-        print(format_command(cmd))
-        print()
+    apply_quiet(quiet)
+    logger.info(format_command(cmd))
+    logger.info("")
 
     # Run it
     try:
@@ -393,11 +398,12 @@ def run(
             print(f"Container started: {result.stdout.strip()[:12]}")
         else:
             # Foreground - stream output to terminal in real time
+            flush_output()
             rc = ex.run_stream(cmd)
             if rc != 0:
                 raise SystemExit(rc)
     except KeyboardInterrupt:
-        print("\nStopped")
+        logger.info("Stopped")
 
 
 @app.command
@@ -511,20 +517,28 @@ def deploy(
     ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
     override_tag = ref_tag or tag
     if ref_image or override_tag:
-        cfg = dataclasses.replace(cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag)
+        cfg = dataclasses.replace(
+            cfg,
+            image=ref_image or cfg.image,
+            tag=override_tag or cfg.tag,
+            _image_explicit=bool(ref_image) or cfg._image_explicit,
+        )
 
     ex = cfg.get_executor(host=context.host_var.get(None))
 
     # Resolve image/tag (handles @current/@rollback aliases)
     image, resolved_tag = cfg.resolve_image_tag(executor=ex)
-    if not quiet and not json_output:
-        print(f"Image: {image}:{resolved_tag}")
+    apply_quiet(quiet)
+    if not json_output:
+        logger.info(f"Image: {image}:{resolved_tag}")
+        if cfg.registry:
+            logger.info(f"Registry: {cfg.registry}")
         config_files = cfg.get_existing_config_files(executor=ex)
         if config_files:
             mounted = [f.name for f in config_files]
-            print(f"Config overrides: {', '.join(mounted)}")
+            logger.info(f"Config overrides: {', '.join(mounted)}")
         else:
-            print("Config: using container built-in defaults")
+            logger.info("Config: using container built-in defaults")
 
     if dry_run:
         # Render the quadlet template and diff vs existing file (if any).
@@ -570,15 +584,15 @@ def deploy(
             result["quadlet_diff"] = "".join(diff_lines)
             print(json_mod.dumps(result, indent=2))
         else:
-            print(f"[dry-run] Would deploy {itype.value}: {', '.join(identifiers)}")
-            print(f"Quadlet: {template_path}")
+            logger.info(f"[dry-run] Would deploy {itype.value}: {', '.join(identifiers)}")
+            logger.info(f"Quadlet: {template_path}")
             if diff_lines:
-                print("--- quadlet diff ---")
+                logger.info("--- quadlet diff ---")
                 print("".join(diff_lines), end="")
             elif old_content:
-                print("(quadlet unchanged)")
+                logger.info("(quadlet unchanged)")
             else:
-                print("--- new quadlet ---")
+                logger.info("--- new quadlet ---")
                 print(new_content, end="")
         return
 
@@ -593,13 +607,13 @@ def deploy(
         # Raises SystemExit(1) if env file or secrets are missing (unless force=True).
         if itype == InstanceType.WEB:
             assets.update(cfg, create_volume=True, executor=ex)
-            logger.info("Writing quadlet files to %s", cfg.web_template_path.parent)
+            logger.info(f"Writing quadlet files to {cfg.web_template_path.parent}")
             quadlet.write_web_template(cfg, force=force, executor=ex)
         elif itype == InstanceType.WORKER:
-            logger.info("Writing quadlet files to %s", cfg.worker_template_path.parent)
+            logger.info(f"Writing quadlet files to {cfg.worker_template_path.parent}")
             quadlet.write_worker_template(cfg, force=force, executor=ex)
         elif itype == InstanceType.SCHEDULER:
-            logger.info("Writing quadlet files to %s", cfg.scheduler_template_path.parent)
+            logger.info(f"Writing quadlet files to {cfg.scheduler_template_path.parent}")
             quadlet.write_scheduler_template(cfg, force=force, executor=ex)
 
         def do_deploy(inst_type: InstanceType, id_: str) -> None:
@@ -610,15 +624,17 @@ def deploy(
                 systemd.start(unit, executor=ex)
                 # Optionally wait for the unit to become active (systemd state)
                 if wait_timeout > 0:
-                    if not quiet and not json_output:
-                        print(f"  Waiting up to {wait_timeout}s for {unit} to become active...")
+                    if not json_output:
+                        logger.info(
+                            f"  Waiting up to {wait_timeout}s for {unit} to become active..."
+                        )
                     systemd.wait_for_healthy(unit, timeout=wait_timeout, executor=ex)
                 # Optionally wait for HTTP health check (web instances only)
                 if wait and inst_type == InstanceType.WEB:
-                    if not quiet and not json_output:
+                    if not json_output:
                         timeout_s = wait_timeout or 60
                         url = f"http://localhost:{port}/health"
-                        print(f"  Waiting up to {timeout_s}s for {url} ...")
+                        logger.info(f"  Waiting up to {timeout_s}s for {url} ...")
                     systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60, executor=ex)
                 # Record successful deployment
                 db.record_deployment(
@@ -670,9 +686,9 @@ def deploy(
                         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                     }
                 )
-                # Print the error but do not abort — allow remaining instances to proceed.
+                # Log the error but do not abort — allow remaining instances to proceed.
                 # The caller will use EXIT_PARTIAL if some succeeded and some failed.
-                print(f"  ERROR: {e}", file=sys.stderr)
+                logger.error(f"  {e}")
             except Exception as e:
                 fail_notes = (
                     str(e)
@@ -831,30 +847,39 @@ def redeploy(
     ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
     override_tag = ref_tag or tag
     if ref_image or override_tag:
-        cfg = dataclasses.replace(cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag)
+        cfg = dataclasses.replace(
+            cfg,
+            image=ref_image or cfg.image,
+            tag=override_tag or cfg.tag,
+            _image_explicit=bool(ref_image) or cfg._image_explicit,
+        )
 
     ex = cfg.get_executor(host=context.host_var.get(None))
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
+
+    apply_quiet(quiet)
 
     if not instances:
         if json_output:
             print(json_mod.dumps({"action": "redeploy", "success": True, "instances": []}))
         else:
-            print("No running instances found")
-            print("Start existing instances with: ots instances start")
-            print("Or deploy new ones with:       ots instances deploy --help")
+            logger.info("No running instances found")
+            logger.info("Start existing instances with: ots instances start")
+            logger.info("Or deploy new ones with:       ots instances deploy --help")
         return
 
     # Resolve image/tag (handles CURRENT/ROLLBACK aliases)
     image, tag = cfg.resolve_image_tag(executor=ex)
-    if not quiet and not json_output:
-        print(f"Image: {image}:{tag}")
+    if not json_output:
+        logger.info(f"Image: {image}:{tag}")
+        if cfg.registry:
+            logger.info(f"Registry: {cfg.registry}")
         config_files = cfg.get_existing_config_files(executor=ex)
         if config_files:
             mounted = [f.name for f in config_files]
-            print(f"Config overrides: {', '.join(mounted)}")
+            logger.info(f"Config overrides: {', '.join(mounted)}")
         else:
-            print("Config: using container built-in defaults")
+            logger.info("Config: using container built-in defaults")
 
     if dry_run:
         verb = "force redeploy" if force else "redeploy"
@@ -907,7 +932,7 @@ def redeploy(
             )
         else:
             for inst_type, ids in instances.items():
-                print(f"[dry-run] Would {verb} {inst_type.value}: {', '.join(ids)}")
+                logger.info(f"[dry-run] Would {verb} {inst_type.value}: {', '.join(ids)}")
             for inst_type_val, diff_text in quadlet_diffs.items():
                 if inst_type_val == InstanceType.WEB.value:
                     tpath = cfg.web_template_path
@@ -915,12 +940,12 @@ def redeploy(
                     tpath = cfg.worker_template_path
                 else:
                     tpath = cfg.scheduler_template_path
-                print(f"Quadlet ({inst_type_val}): {tpath}")
+                logger.info(f"Quadlet ({inst_type_val}): {tpath}")
                 if diff_text:
-                    print("--- quadlet diff ---")
+                    logger.info("--- quadlet diff ---")
                     print(diff_text, end="")
                 else:
-                    print("(quadlet unchanged)")
+                    logger.info("(quadlet unchanged)")
         return
 
     # Execute pre-redeploy hook (aborts if it exits non-zero)
@@ -935,13 +960,13 @@ def redeploy(
         # Redeploy always enforces secrets check (no --force override for secrets here).
         if InstanceType.WEB in instances:
             assets.update(cfg, create_volume=force, executor=ex)
-            logger.info("Writing quadlet files to %s", cfg.web_template_path.parent)
+            logger.info(f"Writing quadlet files to {cfg.web_template_path.parent}")
             quadlet.write_web_template(cfg, executor=ex)
         if InstanceType.WORKER in instances:
-            logger.info("Writing quadlet files to %s", cfg.worker_template_path.parent)
+            logger.info(f"Writing quadlet files to {cfg.worker_template_path.parent}")
             quadlet.write_worker_template(cfg, executor=ex)
         if InstanceType.SCHEDULER in instances:
-            logger.info("Writing quadlet files to %s", cfg.scheduler_template_path.parent)
+            logger.info(f"Writing quadlet files to {cfg.scheduler_template_path.parent}")
             quadlet.write_scheduler_template(cfg, executor=ex)
 
         def do_redeploy(inst_type: InstanceType, id_: str) -> None:
@@ -955,30 +980,32 @@ def redeploy(
 
             if force:
                 if not json_output:
-                    print(f"Stopping {unit}")
+                    logger.info(f"Stopping {unit}")
                 systemd.stop(unit, executor=ex)
 
             try:
                 if force or not systemd.container_exists(unit, executor=ex):
                     if not json_output:
-                        print(f"Starting {unit}")
+                        logger.info(f"Starting {unit}")
                     systemd.start(unit, executor=ex)
                 else:
                     if not json_output:
-                        print(f"Recreating {unit}")
+                        logger.info(f"Recreating {unit}")
                     systemd.recreate(unit, executor=ex)
 
                 # Optionally wait for the unit to become active (systemd state)
                 if wait_timeout > 0:
-                    if not quiet and not json_output:
-                        print(f"  Waiting up to {wait_timeout}s for {unit} to become active...")
+                    if not json_output:
+                        logger.info(
+                            f"  Waiting up to {wait_timeout}s for {unit} to become active..."
+                        )
                     systemd.wait_for_healthy(unit, timeout=wait_timeout, executor=ex)
                 # Optionally wait for HTTP health check (web instances only)
                 if wait and inst_type == InstanceType.WEB:
-                    if not quiet and not json_output:
+                    if not json_output:
                         timeout_s = wait_timeout or 60
                         url = f"http://localhost:{port}/health"
-                        print(f"  Waiting up to {timeout_s}s for {url} ...")
+                        logger.info(f"  Waiting up to {timeout_s}s for {url} ...")
                     systemd.wait_for_http_healthy(port, timeout=wait_timeout or 60, executor=ex)
 
                 db.record_deployment(
@@ -1030,9 +1057,9 @@ def redeploy(
                         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                     }
                 )
-                # Print the error but do not abort — allow remaining instances to proceed.
+                # Log the error but do not abort — allow remaining instances to proceed.
                 # The caller will use EXIT_PARTIAL if some succeeded and some failed.
-                print(f"  ERROR: {e}", file=sys.stderr)
+                logger.error(f"  {e}")
             except Exception as e:
                 fail_notes = (
                     str(e)
@@ -1129,8 +1156,8 @@ def undeploy(
         if json_output:
             print(json_mod.dumps({"action": "undeploy", "success": True, "instances": []}))
         else:
-            print("No running instances found")
-            print("List all configured instances with: ots instances list")
+            logger.info("No running instances found")
+            logger.info("List all configured instances with: ots instances list")
         return
 
     # --json implies --yes (non-interactive)
@@ -1159,7 +1186,7 @@ def undeploy(
             )
         else:
             for inst_type, ids in instances.items():
-                print(f"[dry-run] Would undeploy {inst_type.value}: {', '.join(ids)}")
+                logger.info(f"[dry-run] Would undeploy {inst_type.value}: {', '.join(ids)}")
         return
 
     image, tag = cfg.resolve_image_tag(executor=ex)
@@ -1261,19 +1288,19 @@ def start(
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
-        print("No configured instances found")
-        print("Deploy one first: ots instances deploy --help")
+        logger.info("No configured instances found")
+        logger.info("Deploy one first: ots instances deploy --help")
         return
 
     for inst_type, ids in instances.items():
         for id_ in ids:
             unit = systemd.unit_name(inst_type.value, id_)
             systemd.start(unit, executor=ex)
-            print(f"Started {unit}")
+            logger.info(f"Started {unit}")
 
     hint = format_journalctl_hint(instances)
     if hint:
-        print(f"\nView logs: {hint}")
+        logger.info(f"\nView logs: {hint}")
 
 
 @app.command
@@ -1301,15 +1328,15 @@ def stop(
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
-        print("No running instances found")
-        print("List all configured instances with: ots instances list")
+        logger.info("No running instances found")
+        logger.info("List all configured instances with: ots instances list")
         return
 
     for inst_type, ids in instances.items():
         for id_ in ids:
             unit = systemd.unit_name(inst_type.value, id_)
             systemd.stop(unit, executor=ex)
-            print(f"Stopped {unit}")
+            logger.info(f"Stopped {unit}")
 
 
 @app.command
@@ -1340,8 +1367,8 @@ def restart(
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
-        print("No running instances found")
-        print("Start existing instances with: ots instances start")
+        logger.info("No running instances found")
+        logger.info("Start existing instances with: ots instances start")
         return
 
     def do_restart(inst_type: InstanceType, id_: str) -> None:
@@ -1375,8 +1402,8 @@ def enable(
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
-        print("No configured instances found")
-        print("Deploy one first: ots instances deploy --help")
+        logger.info("No configured instances found")
+        logger.info("Deploy one first: ots instances deploy --help")
         return
 
     for inst_type, ids in instances.items():
@@ -1384,9 +1411,9 @@ def enable(
             unit = systemd.unit_name(inst_type.value, id_)
             try:
                 systemd.enable(unit, executor=ex)
-                print(f"Enabled {unit}")
+                logger.info(f"Enabled {unit}")
             except systemd.SystemctlError as e:
-                print(f"Failed to enable {unit}: {e.journal}")
+                logger.error(f"Failed to enable {unit}: {e.journal}")
 
 
 @app.command
@@ -1414,8 +1441,8 @@ def disable(
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
-        print("No configured instances found")
-        print("List all configured instances with: ots instances list")
+        logger.info("No configured instances found")
+        logger.info("List all configured instances with: ots instances list")
         return
 
     if not yes:
@@ -1433,9 +1460,9 @@ def disable(
             unit = systemd.unit_name(inst_type.value, id_)
             try:
                 systemd.disable(unit, executor=ex)
-                print(f"Disabled {unit}")
+                logger.info(f"Disabled {unit}")
             except systemd.SystemctlError as e:
-                print(f"Failed to disable {unit}: {e.journal}")
+                logger.error(f"Failed to disable {unit}: {e.journal}")
 
 
 @app.command
@@ -1467,8 +1494,8 @@ def status(
         if json_output:
             print(json_mod.dumps({"instances": []}))
         else:
-            print("No configured instances found")
-            print("Deploy one first: ots instances deploy --help")
+            logger.info("No configured instances found")
+            logger.info("Deploy one first: ots instances deploy --help")
         return
 
     if json_output:
@@ -1520,7 +1547,7 @@ def logs(
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
-        print("No instances found")
+        logger.info("No instances found")
         return
 
     # Build list of units
@@ -1581,7 +1608,7 @@ def show_env():
 
         env_file = Path(env_path)
         if not env_file.exists():
-            print("  (file not found)")
+            logger.info("  (file not found)")
             print()
             return
         content = env_file.read_text()
@@ -1589,7 +1616,7 @@ def show_env():
         # Remote: read via executor
         result = resolved_ex.run(["cat", env_path], timeout=10)
         if not result.ok:
-            print("  (file not found)")
+            logger.info("  (file not found)")
             print()
             return
         content = result.stdout
@@ -1644,8 +1671,8 @@ def exec_shell(
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
-        print("No running instances found")
-        print("Start existing instances with: ots instances start")
+        logger.info("No running instances found")
+        logger.info("Start existing instances with: ots instances start")
         return
 
     shell = command or os.environ.get("SHELL", "/bin/sh")
@@ -1655,7 +1682,8 @@ def exec_shell(
             # Use Quadlet container naming convention
             unit = systemd.unit_name(inst_type.value, id_)
             container = systemd.unit_to_container_name(unit)
-            print(f"=== Entering {unit} ===")
+            logger.info(f"=== Entering {unit} ===")
+            flush_output()
             ex.run_interactive(["podman", "exec", "-it", container, shell])
             print()
 
@@ -1713,8 +1741,10 @@ def shell(
     """
     from pathlib import Path
 
+    apply_quiet(quiet)
+
     if persistent and volume:
-        print("Error: --persistent and --volume are mutually exclusive")
+        logger.error("--persistent and --volume are mutually exclusive")
         raise SystemExit(1)
 
     cfg = Config()
@@ -1723,26 +1753,27 @@ def shell(
     ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
     override_tag = ref_tag or tag
     if ref_image or override_tag:
-        cfg = dataclasses.replace(cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag)
+        cfg = dataclasses.replace(
+            cfg,
+            image=ref_image or cfg.image,
+            tag=override_tag or cfg.tag,
+            _image_explicit=bool(ref_image) or cfg._image_explicit,
+        )
 
     # Obtain executor early for remote env file checks
     from rots.systemd import _get_executor
 
     ex = _get_executor(cfg.get_executor(host=context.host_var.get(None)))
 
-    # Resolve image/tag (handles @current/@rollback aliases)
-    image, resolved_tag = cfg.resolve_image_tag(executor=ex)
+    # Check for unresolved sentinel tags before proceeding
+    _canonical_image, resolved_tag = cfg.resolve_image_tag(executor=ex)
     if resolved_tag.startswith("@"):
-        print(f"Error: tag '{resolved_tag}' is a sentinel (no deploy recorded).")
-        print("Use --tag to specify an image tag, e.g.: rots instance shell --tag v0.24.0")
+        logger.error(f"tag '{resolved_tag}' is a sentinel (no deploy recorded).")
+        logger.error("Use --tag to specify an image tag, e.g.: rots instance shell --tag v0.24.0")
         raise SystemExit(1)
 
-    # Use private registry when OTS_REGISTRY is set
-    if cfg.registry:
-        image_basename = image.split("/")[-1]
-        image = f"{cfg.registry}/{image_basename}"
-
-    full_image = f"{image}:{resolved_tag}"
+    # Operational image:tag with registry prefix applied when OTS_REGISTRY is set
+    full_image = cfg.resolved_image_with_tag(executor=ex)
 
     # Build podman run command
     cmd = ["podman", "run", "--rm"]
@@ -1790,6 +1821,9 @@ def shell(
         resolved = f.resolve()  # symlink resolution for macOS podman VM
         cmd.extend(["-v", f"{resolved}:/app/etc/{f.name}:ro"])
 
+    # Auth file for private registry
+    cmd.extend(cfg.podman_auth_args(executor=ex))
+
     # Image
     cmd.append(full_image)
 
@@ -1799,22 +1833,23 @@ def shell(
     else:
         cmd.append("/bin/bash")
 
-    if not quiet:
-        print(format_command(cmd))
-        print()
+    logger.info(format_command(cmd))
+    logger.info("")
 
     try:
         if command is None:
             # Interactive shell — full PTY
+            flush_output()
             rc = ex.run_interactive(cmd)
         else:
             # Non-interactive command — stream output
+            flush_output()
             rc = ex.run_stream(cmd)
         if rc != 0:
-            print(f"Shell exited with code {rc}")
+            logger.info(f"Shell exited with code {rc}")
             raise SystemExit(rc)
     except KeyboardInterrupt:
-        print("\nInterrupted")
+        logger.info("\nInterrupted")
 
 
 @app.command(name="config-transform")
@@ -1889,7 +1924,12 @@ def config_transform(
     ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
     override_tag = ref_tag or tag
     if ref_image or override_tag:
-        cfg = dataclasses.replace(cfg, image=ref_image or cfg.image, tag=override_tag or cfg.tag)
+        cfg = dataclasses.replace(
+            cfg,
+            image=ref_image or cfg.image,
+            tag=override_tag or cfg.tag,
+            _image_explicit=bool(ref_image) or cfg._image_explicit,
+        )
 
     ex = cfg.get_executor(host=context.host_var.get(None))
     p = Podman(executor=ex)
@@ -1910,9 +1950,8 @@ def config_transform(
     elif not config_path.exists():
         raise SystemExit(f"Config file not found: {config_path}")
 
-    # Resolve image/tag (handles @current/@rollback aliases)
-    image, resolved_tag = cfg.resolve_image_tag(executor=ex)
-    full_image = f"{image}:{resolved_tag}"
+    # Resolve image/tag (handles @current/@rollback aliases, applies registry prefix)
+    full_image = cfg.resolved_image_with_tag(executor=ex)
 
     # Create temporary volume with timestamp
     timestamp = int(time.time())
@@ -1955,20 +1994,22 @@ def config_transform(
         # Resolve symlinks for podman VM compatibility (macOS, local only)
         config_dir_str = str(cfg.config_dir.resolve()) if not is_remote else str(cfg.config_dir)
         cmd.extend(["-v", f"{config_dir_str}:/app/etc:ro"])
+        cmd.extend(cfg.podman_auth_args(executor=ex))
         cmd.append(full_image)
         cmd.extend(["/bin/bash", "-c", command])
 
-        if not quiet:
-            print(f"Running: {format_command(cmd)}")
-            print()
+        apply_quiet(quiet)
+        logger.info(f"Running: {format_command(cmd)}")
+        logger.info("")
 
+        flush_output()
         result = ex.run(cmd)
 
         if not result.ok:
             # Show migration command output for operator debugging.
             # No secrets here: env vars are passed via podman secrets,
             # not visible in command stdout/stderr.
-            print(f"Migration command failed (exit {result.returncode})")
+            logger.error(f"Migration command failed (exit {result.returncode})")
             if result.stderr:
                 print(result.stderr)
             if result.stdout:
@@ -1990,8 +2031,8 @@ def config_transform(
         )
 
         if not read_result.ok:
-            print(f"No transformed file produced: /app/data/{file}.new")
-            print("Migration command should write transformed config to {file}.new")
+            logger.error(f"No transformed file produced: /app/data/{file}.new")
+            logger.error(f"Migration command should write transformed config to {file}.new")
             raise SystemExit(1)
 
         new_content = read_result.stdout
@@ -2015,14 +2056,14 @@ def config_transform(
         )
 
         if not config_diff:
-            print("No changes detected")
+            logger.info("No changes detected")
             return
 
         print("".join(config_diff))
 
         if not apply:
             print()
-            print("Dry run - no changes made. Use --apply to apply changes.")
+            logger.info("Dry run - no changes made. Use --apply to apply changes.")
             return
 
         # Create backup with timestamp
@@ -2032,9 +2073,9 @@ def config_transform(
         if is_remote:
             # Remote: use cp for backup, tee for write
             ex.run(["cp", "-p", str(config_path), str(backup_path)], check=True)
-            print(f"Backup created: {backup_path}")
+            logger.info(f"Backup created: {backup_path}")
             ex.run(["tee", str(config_path)], input=new_content)
-            print(f"Config updated: {config_path}")
+            logger.info(f"Config updated: {config_path}")
         else:
             # Handle numbered backups if timestamp backup exists
             if backup_path.exists():
@@ -2050,10 +2091,10 @@ def config_transform(
             import shutil
 
             shutil.copy2(config_path, backup_path)
-            print(f"Backup created: {backup_path}")
+            logger.info(f"Backup created: {backup_path}")
 
             config_path.write_text(new_content)
-            print(f"Config updated: {config_path}")
+            logger.info(f"Config updated: {config_path}")
 
     finally:
         # Cleanup: remove temporary volume
@@ -2100,7 +2141,7 @@ def cleanup(
             if json_output:
                 print(json_mod.dumps(outcome, indent=2))
             else:
-                print(f"Removed volume: {volume_name}")
+                logger.info(f"Removed volume: {volume_name}")
         else:
             # Volume may not exist - treat as success (idempotent)
             stderr = result.stderr.strip()
@@ -2114,20 +2155,22 @@ def cleanup(
                 if json_output:
                     print(json_mod.dumps(outcome, indent=2))
                 else:
-                    print(f"Volume '{volume_name}' not found (already removed or never created)")
+                    logger.info(
+                        f"Volume '{volume_name}' not found (already removed or never created)"
+                    )
             else:
                 outcome = {"success": False, "volume": volume_name, "error": stderr}
                 if json_output:
                     print(json_mod.dumps(outcome, indent=2))
                 else:
-                    print(f"Failed to remove volume '{volume_name}': {stderr}")
+                    logger.error(f"Failed to remove volume '{volume_name}': {stderr}")
                 raise SystemExit(1)
     except FileNotFoundError:
         msg = "podman not found - is Podman installed?"
         if json_output:
             print(json_mod.dumps({"success": False, "error": msg}))
         else:
-            print(f"Error: {msg}")
+            logger.error(f"{msg}")
         raise SystemExit(1)
 
 
@@ -2167,8 +2210,8 @@ def metrics(
         if json_output:
             print(json_mod.dumps({"instances": []}))
         else:
-            print("No configured instances found")
-            print("Deploy one first: ots instances deploy --help")
+            logger.info("No configured instances found")
+            logger.info("Deploy one first: ots instances deploy --help")
         return
 
     p = Podman(executor=ex)
@@ -2293,7 +2336,7 @@ def rollback(
         if json_output:
             print(json_mod.dumps({"action": "rollback", "success": False, "error": msg}))
         else:
-            print(f"Error: {msg}")
+            logger.error(f"{msg}")
         raise SystemExit(1)
 
     current_image, current_tag, _ = previous[0]
@@ -2312,13 +2355,15 @@ def rollback(
         if json_output:
             print(json_mod.dumps(result, indent=2))
         else:
-            print(f"[dry-run] Would roll back from {current_image}:{current_tag}")
-            print(f"         to {rollback_image}:{rollback_tag} (last deployed: {rollback_ts})")
+            logger.info(f"[dry-run] Would roll back from {current_image}:{current_tag}")
+            logger.info(
+                f"         to {rollback_image}:{rollback_tag} (last deployed: {rollback_ts})"
+            )
             if instances:
                 for inst_type_key, ids in instances.items():
-                    print(f"[dry-run] Would redeploy {inst_type_key.value}: {', '.join(ids)}")
+                    logger.info(f"[dry-run] Would redeploy {inst_type_key.value}: {', '.join(ids)}")
             else:
-                print("[dry-run] No running instances found to redeploy")
+                logger.info("[dry-run] No running instances found to redeploy")
         return
 
     # Confirm unless --yes or --json
@@ -2337,13 +2382,13 @@ def rollback(
         if json_output:
             print(json_mod.dumps({"action": "rollback", "success": False, "error": msg}))
         else:
-            print(f"Error: {msg}")
+            logger.error(f"{msg}")
         raise SystemExit(1)
 
     new_image, new_tag = rollback_result
 
     if not json_output:
-        print(
+        logger.info(
             f"Aliases updated: CURRENT={new_image}:{new_tag},"
             f" ROLLBACK={current_image}:{current_tag}"
         )
@@ -2368,7 +2413,7 @@ def rollback(
                 )
             )
         else:
-            print(msg_extra)
+            logger.info(f"{msg_extra}")
         return
 
     redeploy_results: list[dict] = []

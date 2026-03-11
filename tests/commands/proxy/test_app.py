@@ -2,6 +2,7 @@
 """Tests for proxy app commands."""
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import ANY
 
@@ -29,7 +30,7 @@ class TestRenderCommand:
         captured = capsys.readouterr()
         assert "Hello Rendered" in captured.out
 
-    def test_render_writes_to_output(self, tmp_path, mocker, capsys):
+    def test_render_writes_to_output(self, tmp_path, mocker, caplog):
         """Should write rendered content to output file."""
         from rots.commands.proxy.app import render
 
@@ -43,12 +44,12 @@ class TestRenderCommand:
         )
         mocker.patch("rots.commands.proxy.app.validate_caddy_config")
 
-        render(template=template, output=output, dry_run=False)
+        with caplog.at_level(logging.INFO, logger="rots.commands.proxy.app"):
+            render(template=template, output=output, dry_run=False)
 
         assert output.exists()
         assert output.read_text() == "Hello Rendered"
-        captured = capsys.readouterr()
-        assert "[ok]" in captured.out
+        assert "[ok]" in caplog.text
 
     def test_render_validates_before_writing(self, tmp_path, mocker):
         """Should call validate_caddy_config before writing."""
@@ -154,7 +155,7 @@ class TestPushCommand:
 
         assert "not found" in str(exc_info.value)
 
-    def test_push_dry_run_prints_actions(self, tmp_path, mocker, capsys):
+    def test_push_dry_run_prints_actions(self, tmp_path, mocker, caplog):
         """push --dry-run should print expected actions without side effects."""
         from rots.commands.proxy.app import push
 
@@ -168,16 +169,16 @@ class TestPushCommand:
         mock_cfg.proxy_config.return_value = "/etc/caddy/Caddyfile"
         mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
 
-        push(source=template, dry_run=True)
+        with caplog.at_level(logging.INFO, logger="rots.commands.proxy.app"):
+            push(source=template, dry_run=True)
 
-        captured = capsys.readouterr()
-        assert "Would push" in captured.out
-        assert "Would render" in captured.out
-        assert "Would reload" in captured.out
+        assert "Would push" in caplog.text
+        assert "Would render" in caplog.text
+        assert "Would reload" in caplog.text
         # Executor should NOT have been called for actual operations
         mock_ex.run.assert_not_called()
 
-    def test_push_happy_path(self, tmp_path, mocker, capsys):
+    def test_push_happy_path(self, tmp_path, mocker, caplog):
         """push should push template, render, validate, and reload."""
         from rots.commands.proxy.app import push
 
@@ -198,13 +199,13 @@ class TestPushCommand:
         mock_validate = mocker.patch("rots.commands.proxy.app.validate_caddy_config")
         mock_reload = mocker.patch("rots.commands.proxy.app.reload_caddy")
 
-        push(source=template)
+        with caplog.at_level(logging.INFO, logger="rots.commands.proxy.app"):
+            push(source=template)
 
-        captured = capsys.readouterr()
         # Verify all three steps completed
-        assert "[ok] Pushed" in captured.out
-        assert "[ok] Rendered" in captured.out
-        assert "[ok] Caddy reloaded" in captured.out
+        assert "[ok] Pushed" in caplog.text
+        assert "[ok] Rendered" in caplog.text
+        assert "[ok] Caddy reloaded" in caplog.text
         # Verify render, validate, reload were called
         mock_render.assert_called_once_with(mock_cfg.proxy_template, executor=mock_ex)
         mock_validate.assert_called_once_with(
@@ -264,7 +265,7 @@ class TestPushDirectoryCommand:
         (snippets / "tls.caddy").write_text("(tls) { tls internal }")
         return source
 
-    def test_push_directory_dry_run_lists_files(self, tmp_path, mocker, capsys):
+    def test_push_directory_dry_run_lists_files(self, tmp_path, mocker, caplog):
         """push --dry-run with a directory should list all files."""
         from rots.commands.proxy.app import push
 
@@ -277,17 +278,17 @@ class TestPushDirectoryCommand:
         mock_cfg.proxy_config = tmp_path / "remote" / "Caddyfile"
         mocker.patch("rots.commands.proxy.app.Config", return_value=mock_cfg)
 
-        push(source=source, dry_run=True)
+        with caplog.at_level(logging.INFO, logger="rots.commands.proxy"):
+            push(source=source, dry_run=True)
 
-        captured = capsys.readouterr()
-        assert "Caddyfile.template" in captured.out
-        assert "snippets/global.caddy" in captured.out
-        assert "snippets/tls.caddy" in captured.out
-        assert "Would push 3 file(s)" in captured.out
+        assert "Caddyfile.template" in caplog.text
+        assert "snippets/global.caddy" in caplog.text
+        assert "snippets/tls.caddy" in caplog.text
+        assert "Would push 3 file(s)" in caplog.text
         mock_ex.run.assert_not_called()
         mock_ex.put_file.assert_not_called()
 
-    def test_push_directory_pushes_all_files(self, tmp_path, mocker, capsys):
+    def test_push_directory_pushes_all_files(self, tmp_path, mocker, caplog):
         """push with a directory should call put_file for each file."""
         from rots.commands.proxy.app import push
 
@@ -303,14 +304,14 @@ class TestPushDirectoryCommand:
         mocker.patch("rots.commands.proxy.app.validate_caddy_config")
         mocker.patch("rots.commands.proxy.app.reload_caddy")
 
-        push(source=source)
+        with caplog.at_level(logging.INFO, logger="rots.commands.proxy"):
+            push(source=source)
 
-        captured = capsys.readouterr()
-        assert "[ok] Pushed 3 file(s)" in captured.out
+        assert "[ok] Pushed 3 file(s)" in caplog.text
         # Verify all 3 source files appear in the output
-        assert "Caddyfile.template" in captured.out
-        assert "snippets/global.caddy" in captured.out
-        assert "snippets/tls.caddy" in captured.out
+        assert "Caddyfile.template" in caplog.text
+        assert "snippets/global.caddy" in caplog.text
+        assert "snippets/tls.caddy" in caplog.text
 
     def test_push_directory_auto_detects_template(self, tmp_path, mocker, capsys):
         """push with a directory should auto-detect *.template for render."""
@@ -383,7 +384,7 @@ class TestPushDirectoryCommand:
         remote_tpl = mock_cfg.proxy_template.parent / "B.template"
         mock_render.assert_called_once_with(remote_tpl, executor=mock_ex)
 
-    def test_push_directory_no_render_skips_pipeline(self, tmp_path, mocker, capsys):
+    def test_push_directory_no_render_skips_pipeline(self, tmp_path, mocker, caplog):
         """push --no-render should skip render/validate/reload."""
         from rots.commands.proxy.app import push
 
@@ -399,15 +400,15 @@ class TestPushDirectoryCommand:
         mock_validate = mocker.patch("rots.commands.proxy.app.validate_caddy_config")
         mock_reload = mocker.patch("rots.commands.proxy.app.reload_caddy")
 
-        push(source=source, no_render=True)
+        with caplog.at_level(logging.INFO, logger="rots.commands.proxy"):
+            push(source=source, no_render=True)
 
-        captured = capsys.readouterr()
-        assert "[ok] Pushed 3 file(s)" in captured.out
+        assert "[ok] Pushed 3 file(s)" in caplog.text
         mock_render.assert_not_called()
         mock_validate.assert_not_called()
         mock_reload.assert_not_called()
 
-    def test_push_directory_custom_remote_dir(self, tmp_path, mocker, capsys):
+    def test_push_directory_custom_remote_dir(self, tmp_path, mocker, caplog):
         """push --remote-dir should override destination."""
         from rots.commands.proxy.app import push
 
@@ -424,17 +425,17 @@ class TestPushDirectoryCommand:
         mocker.patch("rots.commands.proxy.app.validate_caddy_config")
         mocker.patch("rots.commands.proxy.app.reload_caddy")
 
-        push(source=source, remote_dir=custom_dest)
+        with caplog.at_level(logging.INFO, logger="rots.commands.proxy"):
+            push(source=source, remote_dir=custom_dest)
 
-        captured = capsys.readouterr()
         # Verify files were pushed to the custom destination
-        assert str(custom_dest) in captured.out
+        assert str(custom_dest) in caplog.text
 
 
 class TestDiffCommand:
     """Test diff command."""
 
-    def test_diff_equivalent_configs(self, tmp_path, mocker, capsys):
+    def test_diff_equivalent_configs(self, tmp_path, mocker, caplog):
         """Should print [ok] when configs produce identical JSON."""
         from rots.commands.proxy.app import diff
 
@@ -448,10 +449,10 @@ class TestDiffCommand:
             return_value='{"same": true}\n',
         )
 
-        diff(old=old, new=new)
+        with caplog.at_level(logging.INFO, logger="rots.commands.proxy.app"):
+            diff(old=old, new=new)
 
-        captured = capsys.readouterr()
-        assert "[ok] Configs are equivalent" in captured.out
+        assert "[ok] Configs are equivalent" in caplog.text
 
     def test_diff_different_configs_exits_1(self, tmp_path, mocker, capsys):
         """Should print unified diff and exit 1 when configs differ."""
@@ -526,17 +527,17 @@ class TestDiffCommand:
 class TestReloadCommand:
     """Test reload command."""
 
-    def test_reload_calls_helper(self, mocker, capsys):
+    def test_reload_calls_helper(self, mocker, caplog):
         """Should call reload_caddy helper with executor."""
         from rots.commands.proxy.app import reload
 
         mock_reload = mocker.patch("rots.commands.proxy.app.reload_caddy")
 
-        reload()
+        with caplog.at_level(logging.INFO, logger="rots.commands.proxy.app"):
+            reload()
 
         mock_reload.assert_called_once_with(executor=ANY)
-        captured = capsys.readouterr()
-        assert "[ok]" in captured.out
+        assert "[ok]" in caplog.text
 
     def test_reload_error_exits(self, mocker):
         """Should exit with error message on ProxyError."""
@@ -611,7 +612,7 @@ class TestStatusCommand:
 class TestValidateCommand:
     """Test validate command — now reads file then calls validate_caddy_config helper."""
 
-    def test_validate_existing_file(self, tmp_path, mocker, capsys):
+    def test_validate_existing_file(self, tmp_path, mocker, caplog):
         """Should validate an existing config file."""
         from rots.commands.proxy.app import validate
 
@@ -620,11 +621,11 @@ class TestValidateCommand:
 
         mock_validate = mocker.patch("rots.commands.proxy.app.validate_caddy_config")
 
-        validate(config_file=config)
+        with caplog.at_level(logging.INFO, logger="rots.commands.proxy.app"):
+            validate(config_file=config)
 
         mock_validate.assert_called_once_with("localhost { }", executor=ANY, source_dir=tmp_path)
-        captured = capsys.readouterr()
-        assert "[ok]" in captured.out
+        assert "[ok]" in caplog.text
 
     def test_validate_uses_default_path(self, tmp_path, mocker):
         """Should use default config path when none provided."""
@@ -651,7 +652,7 @@ class TestValidateCommand:
 
         mock_validate.assert_called_once_with("localhost { }", executor=ANY, source_dir=tmp_path)
 
-    def test_validate_success_with_output(self, tmp_path, mocker, capsys):
+    def test_validate_success_with_output(self, tmp_path, mocker, caplog):
         """Should print [ok] when validation succeeds."""
         from rots.commands.proxy.app import validate
 
@@ -660,10 +661,10 @@ class TestValidateCommand:
 
         mocker.patch("rots.commands.proxy.app.validate_caddy_config")
 
-        validate(config_file=config)
+        with caplog.at_level(logging.INFO, logger="rots.commands.proxy.app"):
+            validate(config_file=config)
 
-        captured = capsys.readouterr()
-        assert "[ok]" in captured.out
+        assert "[ok]" in caplog.text
 
     def test_validate_missing_file_exits(self, tmp_path):
         """Should exit if config file doesn't exist."""

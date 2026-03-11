@@ -292,8 +292,10 @@ class TestBuildCommand:
         build_call = [c for c in calls if "buildx" in str(c)]
         assert len(build_call) >= 1
 
-    def test_build_push_requires_registry(self, mocker, tmp_path, capsys):
+    def test_build_push_requires_registry(self, mocker, tmp_path, caplog):
         """Build with --push should require registry."""
+        import logging
+
         # Set up valid project structure
         (tmp_path / "Containerfile").touch()
         (tmp_path / "package.json").write_text('{"version": "0.23.0"}')
@@ -327,9 +329,9 @@ class TestBuildCommand:
         from rots.cli import app
 
         with pytest.raises(SystemExit) as exc:
-            app(["image", "build", "--project-dir", str(tmp_path), "--push"])
+            with caplog.at_level(logging.ERROR):
+                app(["image", "build", "--project-dir", str(tmp_path), "--push"])
         # Should exit with error code 1
         assert exc.value.code == 1
-        # Error message is printed to stdout
-        captured = capsys.readouterr()
-        assert "--push requires --registry" in captured.out
+        # Error message now goes through logger
+        assert "--push requires --registry" in caplog.text

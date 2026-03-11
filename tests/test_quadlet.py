@@ -1065,31 +1065,35 @@ class TestGetSecretsSection:
 
         assert exc_info.value.code == 3  # EXIT_PRECOND
 
-    def test_missing_env_file_force_returns_comment(self, tmp_path, capsys):
-        """get_secrets_section(force=True) with missing env file returns comment, prints WARNING."""
+    def test_missing_env_file_force_returns_comment(self, tmp_path, caplog):
+        """get_secrets_section(force=True) with missing env file returns comment, logs WARNING."""
+        import logging
+
         from rots.quadlet import get_secrets_section
 
-        result = get_secrets_section(
-            env_file_path=tmp_path / "nonexistent.env",
-            force=True,
-        )
+        with caplog.at_level(logging.WARNING):
+            result = get_secrets_section(
+                env_file_path=tmp_path / "nonexistent.env",
+                force=True,
+            )
 
         assert "No secrets configured" in result
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.err
+        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
 
-    def test_no_secret_names_force_returns_comment(self, tmp_path, capsys):
+    def test_no_secret_names_force_returns_comment(self, tmp_path, caplog):
         """get_secrets_section(force=True) with no SECRET_VARIABLE_NAMES returns comment."""
+        import logging
+
         from rots.quadlet import get_secrets_section
 
         env_file = tmp_path / "onetimesecret.env"
         env_file.write_text("REDIS_URL=redis://localhost\n")  # No SECRET_VARIABLE_NAMES
 
-        result = get_secrets_section(env_file_path=env_file, force=True)
+        with caplog.at_level(logging.WARNING):
+            result = get_secrets_section(env_file_path=env_file, force=True)
 
         assert "No secrets configured" in result
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.err
+        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
 
     def test_write_web_template_missing_env_propagates_system_exit(self, mocker, tmp_path):
         """write_web_template() without force propagates SystemExit(3) when env file missing."""
@@ -1111,8 +1115,10 @@ class TestGetSecretsSection:
 class TestWriteTemplatesForce:
     """Tests for force= parameter across write_*_template functions."""
 
-    def test_write_web_template_force_skips_system_exit(self, mocker, tmp_path, capsys):
+    def test_write_web_template_force_skips_system_exit(self, mocker, tmp_path, caplog):
         """write_web_template(force=True) should complete when env file is missing."""
+        import logging
+
         mocker.patch("rots.quadlet.systemd.daemon_reload")
         from rots import quadlet
         from rots.config import Config
@@ -1123,14 +1129,16 @@ class TestWriteTemplatesForce:
         )
 
         # Should not raise SystemExit
-        quadlet.write_web_template(cfg, env_file_path=tmp_path / "nonexistent.env", force=True)
+        with caplog.at_level(logging.WARNING):
+            quadlet.write_web_template(cfg, env_file_path=tmp_path / "nonexistent.env", force=True)
 
         assert cfg.web_template_path.exists()
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.err
+        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
 
-    def test_write_worker_template_force_skips_system_exit(self, mocker, tmp_path, capsys):
+    def test_write_worker_template_force_skips_system_exit(self, mocker, tmp_path, caplog):
         """write_worker_template(force=True) should complete when env file is missing."""
+        import logging
+
         mocker.patch("rots.quadlet.systemd.daemon_reload")
         from rots import quadlet
         from rots.config import Config
@@ -1140,14 +1148,18 @@ class TestWriteTemplatesForce:
             var_dir=tmp_path / "var",
         )
 
-        quadlet.write_worker_template(cfg, env_file_path=tmp_path / "nonexistent.env", force=True)
+        with caplog.at_level(logging.WARNING):
+            quadlet.write_worker_template(
+                cfg, env_file_path=tmp_path / "nonexistent.env", force=True
+            )
 
         assert cfg.worker_template_path.exists()
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.err
+        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
 
-    def test_write_scheduler_template_force_skips_system_exit(self, mocker, tmp_path, capsys):
+    def test_write_scheduler_template_force_skips_system_exit(self, mocker, tmp_path, caplog):
         """write_scheduler_template(force=True) should complete when env file is missing."""
+        import logging
+
         mocker.patch("rots.quadlet.systemd.daemon_reload")
         from rots import quadlet
         from rots.config import Config
@@ -1157,13 +1169,13 @@ class TestWriteTemplatesForce:
             var_dir=tmp_path / "var",
         )
 
-        quadlet.write_scheduler_template(
-            cfg, env_file_path=tmp_path / "nonexistent.env", force=True
-        )
+        with caplog.at_level(logging.WARNING):
+            quadlet.write_scheduler_template(
+                cfg, env_file_path=tmp_path / "nonexistent.env", force=True
+            )
 
         assert cfg.scheduler_template_path.exists()
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.err
+        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
 
     def test_write_web_template_no_force_raises_system_exit(self, mocker, tmp_path):
         """write_web_template() without force=True raises SystemExit(3) for missing env."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -11,6 +12,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ots_shared.ssh.executor import Executor
+
+logger = logging.getLogger(__name__)
 
 # Default image registry (public)
 DEFAULT_IMAGE = "ghcr.io/onetimesecret/onetimesecret"
@@ -162,6 +165,7 @@ class Config:
     var_dir: Path = Path("/var/lib/onetimesecret")
     image: str = field(default_factory=lambda: os.environ.get("IMAGE") or DEFAULT_IMAGE)
     tag: str = field(default_factory=lambda: os.environ.get("TAG") or DEFAULT_TAG)
+    _image_explicit: bool = field(default=False, repr=False)
     web_template_path: Path = Path("/etc/containers/systemd/onetime-web@.container")
     worker_template_path: Path = Path("/etc/containers/systemd/onetime-worker@.container")
     scheduler_template_path: Path = Path("/etc/containers/systemd/onetime-scheduler@.container")
@@ -191,6 +195,8 @@ class Config:
 
     def __post_init__(self):
         """Validate fields on construction (and dataclasses.replace)."""
+        if not self._image_explicit and os.environ.get("IMAGE"):
+            self._image_explicit = True
         self.validate()
 
     @property
@@ -458,9 +464,7 @@ class Config:
             return LocalExecutor()
 
         if resolved not in _ssh_cache:
-            import sys
-
-            print(f"Connecting to {resolved}...", file=sys.stderr, flush=True)
+            logger.info(f"Connecting to {resolved}...")
             try:
                 _ssh_cache[resolved] = ssh_connect(resolved)
             except ImportError:
@@ -496,7 +500,7 @@ class Config:
                         "Check your SSH configuration (~/.ssh/config) and known_hosts."
                     )
                 raise
-            print("Connected.", file=sys.stderr, flush=True)
+            logger.info("Connected.")
         return SSHExecutor(_ssh_cache[resolved])
 
     def resolve_image_tag(self, *, executor: Executor | None = None) -> tuple[str, str]:
@@ -505,6 +509,10 @@ class Config:
         Sentinel tags (@current, @rollback) and bare alias names (current,
         rollback) are looked up in the deployment database. Falls back to the
         literal tag if no alias is found.
+
+        When an alias resolves, only the tag is taken from the database.
+        The image is only taken from the alias when the user did not
+        explicitly set IMAGE (i.e. IMAGE env var is not present).
 
         Args:
             executor: Optional executor for remote DB lookups. When None,
@@ -522,7 +530,11 @@ class Config:
         if tag_key.lower() in ("current", "rollback"):
             alias = db.get_alias(self.db_path, tag_key, executor=executor)
             if alias:
-                return (alias.image, alias.tag)
+                # Explicit image (env var or CLI positional) takes precedence
+                # over the alias image.  The alias only supplies the image
+                # when no explicit override was given.
+                image = self.image if self._image_explicit else alias.image
+                return (image, alias.tag)
 
         # Not an alias (or alias not set) — return as-is.
         # Callers that need a real tag (e.g. pull) should check for the
@@ -530,10 +542,28 @@ class Config:
         return (self.image, self.tag)
 
     def resolved_image_with_tag(self, *, executor: Executor | None = None) -> str:
-        """Image with tag, resolving aliases like 'current' and 'rollback'.
+        """Operational image:tag string for podman pull/run.
+
+        Resolves aliases like 'current' and 'rollback', and prepends
+        the private registry prefix when ``OTS_REGISTRY`` is set.
+
+        For the canonical (registry-free) pair, use :meth:`resolve_image_tag`.
 
         Args:
             executor: Optional executor for remote DB lookups.
         """
         image, tag = self.resolve_image_tag(executor=executor)
+        if self.registry:
+            image_basename = image.split("/")[-1]
+            image = f"{self.registry}/{image_basename}"
         return f"{image}:{tag}"
+
+    def podman_auth_args(self, *, executor: Executor | None = None) -> list[str]:
+        """Return ``--authfile`` arguments when a private registry is configured.
+
+        Returns an empty list when no registry is set, so callers can
+        always do ``cmd.extend(cfg.podman_auth_args(...))``.
+        """
+        if not self.registry:
+            return []
+        return ["--authfile", str(self.get_registry_auth_file(executor=executor))]
