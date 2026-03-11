@@ -215,11 +215,10 @@ def get_secrets_section(
     if missing:
         names = ", ".join(s.secret_name for s in missing)
         logger.warning(
-            "Podman secrets not found: %s\n"
+            f"Podman secrets not found: {names}\n"
             "These secrets are listed in SECRET_VARIABLE_NAMES but don't exist in\n"
             "the podman secret store. Run 'ots env process' to create them.\n"
-            "Skipping their Secret= lines in the quadlet.",
-            names,
+            "Skipping their Secret= lines in the quadlet."
         )
 
     if not verified:

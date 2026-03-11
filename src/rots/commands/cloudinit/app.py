@@ -132,7 +132,7 @@ def generate(
     # Output
     if output:
         Path(output).write_text(config)
-        logger.info("[created] %s", output)
+        logger.info(f"[created] {output}")
     else:
         print(config)
 
@@ -183,7 +183,7 @@ def validate(
                 print(f"  - {error}", file=sys.stderr)
             raise SystemExit(1)
         else:
-            logger.info("[ok] %s is valid", file_path)
+            logger.info(f"[ok] {file_path} is valid")
 
     except yaml.YAMLError as e:
         print(f"Invalid YAML in {file_path}:", file=sys.stderr)

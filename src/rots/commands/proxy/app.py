@@ -118,7 +118,7 @@ def render(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(rendered)
 
-        logger.info("[ok] Rendered %s -> %s", tpl, out)
+        logger.info(f"[ok] Rendered {tpl} -> {out}")
 
     except ProxyError as e:
         raise SystemExit(str(e)) from e
@@ -217,8 +217,8 @@ def _push_file(
     content = source.read_text()
 
     if dry_run:
-        logger.info("Would push: %s -> %s", source, tpl_dest)
-        logger.info("Would render: %s -> %s", tpl_dest, out)
+        logger.info(f"Would push: {source} -> {tpl_dest}")
+        logger.info(f"Would render: {tpl_dest} -> {out}")
         logger.info("Would reload Caddy")
         return
 
@@ -227,7 +227,7 @@ def _push_file(
     result = executor.run(["tee", str(tpl_dest)], input=content, timeout=15)
     if not result.ok:
         raise ProxyError(f"Failed to write {tpl_dest}: {result.stderr}")
-    logger.info("[ok] Pushed %s -> %s", source, tpl_dest)
+    logger.info(f"[ok] Pushed {source} -> {tpl_dest}")
 
     # Step 2: Render template on remote
     rendered = render_template(tpl_dest, executor=executor)
@@ -236,7 +236,7 @@ def _push_file(
     result = executor.run(["tee", str(out)], input=rendered, timeout=15)
     if not result.ok:
         raise ProxyError(f"Failed to write {out}: {result.stderr}")
-    logger.info("[ok] Rendered %s -> %s", tpl_dest, out)
+    logger.info(f"[ok] Rendered {tpl_dest} -> {out}")
 
     # Step 3: Reload Caddy
     reload_caddy(executor=executor)
@@ -273,19 +273,19 @@ def _push_directory(
                 tpl_name = found.name
 
     if dry_run:
-        logger.info("Would push %s file(s) to %s:", len(files), dest)
+        logger.info(f"Would push {len(files)} file(s) to {dest}:")
         push_files_to_remote(source, dest, executor=executor, dry_run=True)
         if tpl_name:
-            logger.info("Would render: %s -> %s", dest / tpl_name, out)
+            logger.info(f"Would render: {dest / tpl_name} -> {out}")
             logger.info("Would reload Caddy")
         elif not no_render:
             logger.info("No template found; skipping render/reload")
         return
 
     # Push all files
-    logger.info("Pushing %s file(s) to %s:", len(files), dest)
+    logger.info(f"Pushing {len(files)} file(s) to {dest}:")
     push_files_to_remote(source, dest, executor=executor)
-    logger.info("[ok] Pushed %s file(s)", len(files))
+    logger.info(f"[ok] Pushed {len(files)} file(s)")
 
     if not tpl_name:
         if not no_render:
@@ -301,7 +301,7 @@ def _push_directory(
     result = executor.run(["tee", str(out)], input=rendered, timeout=15)
     if not result.ok:
         raise ProxyError(f"Failed to write {out}: {result.stderr}")
-    logger.info("[ok] Rendered %s -> %s", tpl_path, out)
+    logger.info(f"[ok] Rendered {tpl_path} -> {out}")
 
     reload_caddy(executor=executor)
     logger.info("[ok] Caddy reloaded")
@@ -396,10 +396,10 @@ def validate(
             source_dir = file_path.parent
 
         validate_caddy_config(content, executor=ex, source_dir=source_dir)
-        logger.info("[ok] %s is valid", file_path)
+        logger.info(f"[ok] {file_path} is valid")
 
     except ProxyError as e:
-        logger.error("Validation failed for %s", file_path)
+        logger.error(f"Validation failed for {file_path}")
         raise SystemExit(str(e)) from e
     except FileNotFoundError as e:
         raise SystemExit("caddy not found in PATH") from e

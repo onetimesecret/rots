@@ -94,12 +94,11 @@ def detect_rsync() -> RsyncInfo:
 def warn_if_macos_rsync(info: RsyncInfo) -> None:
     """Print a warning if rsync looks like macOS openrsync with unreliable --checksum."""
     if info.is_openrsync or (info.major > 0 and info.major < 3):
+        tag = " (openrsync)" if info.is_openrsync else ""
         logger.warning(
-            "rsync %s detected%s — --checksum may be unreliable.\n"
+            f"rsync {info.version} detected{tag} — --checksum may be unreliable.\n"
             "  Set RSYNC_PATH to a newer rsync (e.g. /opt/homebrew/bin/rsync) "
-            "for reliable checksums.",
-            info.version,
-            " (openrsync)" if info.is_openrsync else "",
+            "for reliable checksums."
         )
 
 

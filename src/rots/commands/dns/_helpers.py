@@ -79,10 +79,10 @@ def get_public_ip() -> str | None:
     try:
         with urllib.request.urlopen("https://api.ipify.org", timeout=5) as resp:
             ip = resp.read().decode("ascii").strip()
-            logger.debug("Detected public IP: %s", ip)
+            logger.debug(f"Detected public IP: {ip}")
             return ip
     except (urllib.error.URLError, OSError) as exc:
-        logger.warning("Failed to detect public IP: %s", exc)
+        logger.warning(f"Failed to detect public IP: {exc}")
         return None
 
 
@@ -140,12 +140,12 @@ def detect_provider() -> str | None:
     """
     explicit = os.environ.get("LEXICON_PROVIDER")
     if explicit:
-        logger.debug("Provider set explicitly via LEXICON_PROVIDER=%s", explicit)
+        logger.debug(f"Provider set explicitly via LEXICON_PROVIDER={explicit}")
         return explicit.lower()
 
     for provider, env_vars in PROVIDER_ENV_HINTS.items():
         if any(os.environ.get(v) for v in env_vars):
-            logger.debug("Detected provider %s from env vars", provider)
+            logger.debug(f"Detected provider {provider} from env vars")
             return provider
 
     logger.debug("No DNS provider detected from environment")
@@ -216,11 +216,7 @@ class DnsClient:
                 )
                 return records if isinstance(records, list) else []
         except Exception:
-            logger.exception(
-                "Failed to list %s records for %s",
-                record_type,
-                self.domain,
-            )
+            logger.exception(f"Failed to list {record_type} records for {self.domain}")
             return []
 
     def add_record(
@@ -240,20 +236,10 @@ class DnsClient:
         try:
             with Client(config) as ops:
                 ops.create_record(record_type, name, content)
-                logger.info(
-                    "Created %s record: %s -> %s",
-                    record_type,
-                    name,
-                    content,
-                )
+                logger.info(f"Created {record_type} record: {name} -> {content}")
                 return True
         except Exception:
-            logger.exception(
-                "Failed to create %s record %s -> %s",
-                record_type,
-                name,
-                content,
-            )
+            logger.exception(f"Failed to create {record_type} record {name} -> {content}")
             return False
 
     def update_record(
@@ -274,11 +260,7 @@ class DnsClient:
 
         existing = self.list_records(record_type, name=name)
         if not existing:
-            logger.info(
-                "No existing %s record for %s, creating instead",
-                record_type,
-                name,
-            )
+            logger.info(f"No existing {record_type} record for {name}, creating instead")
             return self.add_record(record_type, name, content)
 
         identifier = existing[0].get("id")
@@ -291,20 +273,10 @@ class DnsClient:
                     name,
                     content,
                 )
-                logger.info(
-                    "Updated %s record: %s -> %s",
-                    record_type,
-                    name,
-                    content,
-                )
+                logger.info(f"Updated {record_type} record: {name} -> {content}")
                 return True
         except Exception:
-            logger.exception(
-                "Failed to update %s record %s -> %s",
-                record_type,
-                name,
-                content,
-            )
+            logger.exception(f"Failed to update {record_type} record {name} -> {content}")
             return False
 
     def delete_record(
@@ -328,23 +300,14 @@ class DnsClient:
 
         existing = self.list_records(record_type, name=name)
         if not existing:
-            logger.warning(
-                "No %s record found for %s to delete",
-                record_type,
-                name,
-            )
+            logger.warning(f"No {record_type} record found for {name} to delete")
             return False
 
         target = existing[0]
         if content:
             matches = [r for r in existing if r.get("content") == content]
             if not matches:
-                logger.warning(
-                    "No %s record for %s with content %s",
-                    record_type,
-                    name,
-                    content,
-                )
+                logger.warning(f"No {record_type} record for {name} with content {content}")
                 return False
             target = matches[0]
 
@@ -358,16 +321,8 @@ class DnsClient:
                     name,
                     content or "",
                 )
-                logger.info(
-                    "Deleted %s record: %s",
-                    record_type,
-                    name,
-                )
+                logger.info(f"Deleted {record_type} record: {name}")
                 return True
         except Exception:
-            logger.exception(
-                "Failed to delete %s record %s",
-                record_type,
-                name,
-            )
+            logger.exception(f"Failed to delete {record_type} record {name}")
             return False

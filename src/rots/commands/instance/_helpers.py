@@ -80,7 +80,7 @@ def deploy_lock(
         fh = resolved.open("a")  # "a" so we never truncate an existing file
     except OSError as exc:
         # Unable to create/open the lock file — non-fatal on dev machines
-        logger.warning("cannot open deploy lock file %s: %s", resolved, exc)
+        logger.warning(f"cannot open deploy lock file {resolved}: {exc}")
         yield
         return
 
@@ -89,9 +89,8 @@ def deploy_lock(
     except BlockingIOError:
         fh.close()
         logger.error(
-            "another deploy is already in progress (lock held: %s).\n"
-            "Wait for it to finish or remove the lock file manually if it is stale.",
-            resolved,
+            f"another deploy is already in progress (lock held: {resolved}).\n"
+            "Wait for it to finish or remove the lock file manually if it is stale."
         )
         raise SystemExit(1)
 
@@ -134,7 +133,7 @@ def _remote_lock_acquire(
     )
 
     if result.ok:
-        logger.debug("Remote deploy lock acquired: %s", lock_path)
+        logger.debug(f"Remote deploy lock acquired: {lock_path}")
         return
 
     # Lock file exists — check staleness
@@ -160,10 +159,8 @@ def _remote_lock_acquire(
             cat = executor.run(["cat", str(lock_path)], sudo=True)
             holder = cat.stdout.strip() if cat.ok else "unknown"
             logger.warning(
-                "Breaking stale remote deploy lock (held by %s, age %ds > %ds)",
-                holder,
-                age,
-                stale_seconds,
+                f"Breaking stale remote deploy lock"
+                f" (held by {holder}, age {age}s > {stale_seconds}s)"
             )
             executor.run(["rm", "-f", str(lock_path)], sudo=True)
             # Retry once
@@ -178,14 +175,11 @@ def _remote_lock_acquire(
     cat = executor.run(["cat", str(lock_path)], sudo=True)
     holder = cat.stdout.strip() if cat.ok else "unknown"
     logger.error(
-        "another deploy is already in progress on the remote host.\n"
-        "  Lock file: %s\n"
-        "  Held by: %s\n"
-        "Wait for it to finish, or remove the lock if it is stale:\n"
-        "  ssh <host> sudo rm %s",
-        lock_path,
-        holder,
-        lock_path,
+        f"another deploy is already in progress on the remote host.\n"
+        f"  Lock file: {lock_path}\n"
+        f"  Held by: {holder}\n"
+        f"Wait for it to finish, or remove the lock if it is stale:\n"
+        f"  ssh <host> sudo rm {lock_path}"
     )
     raise SystemExit(1)
 
@@ -194,9 +188,9 @@ def _remote_lock_release(lock_path: Path, executor: Executor) -> None:
     """Release advisory deploy lock on a remote host."""
     result = executor.run(["rm", "-f", str(lock_path)], sudo=True)
     if not result.ok:
-        logger.warning("Failed to remove remote deploy lock: %s", result.stderr)
+        logger.warning(f"Failed to remove remote deploy lock: {result.stderr}")
     else:
-        logger.debug("Remote deploy lock released: %s", lock_path)
+        logger.debug(f"Remote deploy lock released: {lock_path}")
 
 
 def _resolve_lock_path(lock_path: Path) -> Path:
@@ -414,7 +408,7 @@ def for_each_instance(
 
     for i, (itype, id_) in enumerate(items, 1):
         unit = systemd.unit_name(itype.value, id_)
-        logger.info("[%d/%d] %s %s...", i, total, verb, unit)
+        logger.info(f"[{i}/{total}] {verb} {unit}...")
         try:
             action(itype, id_)
         except SystemctlError as exc:
@@ -426,15 +420,15 @@ def for_each_instance(
             logger.error(msg)
             raise SystemExit(1) from None
         if i < total and delay > 0:
-            logger.info("Waiting %ds...", delay)
+            logger.info(f"Waiting {delay}s...")
             time.sleep(delay)
 
-    logger.info("Processed %d instance(s)", total)
+    logger.info(f"Processed {total} instance(s)")
 
     if show_logs_hint:
         hint = format_journalctl_hint(instances)
         if hint:
-            logger.info("View logs: %s", hint)
+            logger.info(f"View logs: {hint}")
 
     return total
 
@@ -467,7 +461,7 @@ def run_hook(
     Raises:
         SystemExit(1): If the hook exits non-zero.
     """
-    logger.info("Running %s: %s", stage, hook_cmd)
+    logger.info(f"Running {stage}: {hook_cmd}")
 
     proc = subprocess.run(
         hook_cmd,
@@ -476,6 +470,6 @@ def run_hook(
     )
 
     if proc.returncode != 0:
-        logger.error("%s failed (exit %d): %s", stage, proc.returncode, hook_cmd)
+        logger.error(f"{stage} failed (exit {proc.returncode}): {hook_cmd}")
         raise SystemExit(1)
-    logger.info("%s passed", stage)
+    logger.info(f"{stage} passed")

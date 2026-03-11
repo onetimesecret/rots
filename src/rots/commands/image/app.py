@@ -119,19 +119,14 @@ def pull(
         alias = db.get_alias(cfg.db_path, tag_key, executor=ex)
         if alias:
             logger.error(
-                "'%s' is a DB alias pointing to %s:%s.\n"
-                "To pull that version, use:  ots image pull --tag %s",
-                resolved_tag,
-                alias.image,
-                alias.tag,
-                alias.tag,
+                f"'{resolved_tag}' is a DB alias pointing to {alias.image}:{alias.tag}.\n"
+                f"To pull that version, use:  ots image pull --tag {alias.tag}"
             )
         else:
             logger.error(
-                "'%s' is a DB alias sentinel but no alias is set.\n"
+                f"'{resolved_tag}' is a DB alias sentinel but no alias is set.\n"
                 "Provide an explicit tag:  ots image pull --tag v0.23.0\n"
-                "Or set a CURRENT alias first:  ots image set-current --tag <tag>",
-                resolved_tag,
+                "Or set a CURRENT alias first:  ots image set-current --tag <tag>"
             )
         raise SystemExit(1)
 
@@ -144,7 +139,7 @@ def pull(
 
     full_image = f"{resolved_image}:{resolved_tag}"
 
-    logger.info("Pulling %s...", full_image)
+    logger.info(f"Pulling {full_image}...")
 
     try:
         # Use auth file for authenticated registries
@@ -158,9 +153,9 @@ def pull(
             pull_kwargs["platform"] = platform
 
         p.pull(full_image, **pull_kwargs)
-        logger.info("Successfully pulled %s", full_image)
+        logger.info(f"Successfully pulled {full_image}")
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        logger.error("Failed to pull %s: %s", full_image, e)
+        logger.error(f"Failed to pull {full_image}: {e}")
         db.record_deployment(
             cfg.db_path,
             image=resolved_image,
@@ -205,13 +200,13 @@ def pull(
                     text=True,
                 )
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            logger.warning("podman tag failed (%s), aliases updated in DB only", e)
+            logger.warning(f"podman tag failed ({e}), aliases updated in DB only")
 
         previous = db.set_current(cfg.db_path, resolved_image, resolved_tag, executor=ex)
         if previous:
-            logger.info("Set CURRENT to %s (previous: %s)", resolved_tag, previous)
+            logger.info(f"Set CURRENT to {resolved_tag} (previous: {previous})")
         else:
-            logger.info("Set CURRENT to %s", resolved_tag)
+            logger.info(f"Set CURRENT to {resolved_tag}")
 
 
 @app.default
@@ -345,14 +340,14 @@ def list_remote(
         image_ref,
     ]
 
-    logger.info("$ %s", " ".join(cmd))
+    logger.info(f"$ {' '.join(cmd)}")
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
         tags = data.get("Tags", [])
 
-        logger.info("Tags for %s/%s (%d total):", reg, image, len(tags))
+        logger.info(f"Tags for {reg}/{image} ({len(tags)} total):")
 
         # Sort tags (newest-looking first)
         tags_sorted = sorted(tags, reverse=True)
@@ -360,10 +355,10 @@ def list_remote(
             print(f"  {tag}")
 
     except subprocess.CalledProcessError as e:
-        logger.error("Failed to list tags: %s", e.stderr)
+        logger.error(f"Failed to list tags: {e.stderr}")
         raise SystemExit(1)
     except json.JSONDecodeError as e:
-        logger.error("Failed to parse response: %s", e)
+        logger.error(f"Failed to parse response: {e}")
         raise SystemExit(1)
 
 
@@ -402,8 +397,8 @@ def set_current(
     try:
         p.image.inspect(source_ref, check=True, capture_output=True, text=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
-        logger.error("Image not found locally: %s", source_ref)
-        logger.error("Pull it first: ots image pull --tag %s", tag)
+        logger.error(f"Image not found locally: {source_ref}")
+        logger.error(f"Pull it first: ots image pull --tag {tag}")
         raise SystemExit(1)
 
     # Tag in podman before updating the database. If podman tag fails,
@@ -427,14 +422,14 @@ def set_current(
                 text=True,
             )
     except Exception as e:
-        logger.error("Failed to tag image in podman: %s", e)
+        logger.error(f"Failed to tag image in podman: {e}")
         raise SystemExit(1)
 
     previous = db.set_current(cfg.db_path, resolved_image, tag, executor=ex)
 
-    logger.info("CURRENT set to %s:%s", resolved_image, tag)
+    logger.info(f"CURRENT set to {resolved_image}:{tag}")
     if previous:
-        logger.info("ROLLBACK set to previous: %s", previous)
+        logger.info(f"ROLLBACK set to previous: {previous}")
     else:
         logger.info("(No previous CURRENT to roll back to)")
 
@@ -484,7 +479,7 @@ def rollback(
     # Show current state
     current = db.get_current_image(cfg.db_path, executor=ex)
     if current:
-        logger.info("Current: %s:%s", current[0], current[1])
+        logger.info(f"Current: {current[0]}:{current[1]}")
     else:
         logger.error("No CURRENT alias set")
         raise SystemExit(1)
@@ -495,8 +490,8 @@ def rollback(
         logger.error("No previous deployment to roll back to")
         raise SystemExit(1)
 
-    logger.info("Rolling back to: %s:%s", previous[1][0], previous[1][1])
-    logger.info("  (last deployed: %s)", previous[1][2])
+    logger.info(f"Rolling back to: {previous[1][0]}:{previous[1][1]}")
+    logger.info(f"  (last deployed: {previous[1][2]})")
 
     result = db.rollback(cfg.db_path, executor=ex)
     if result:
@@ -518,10 +513,10 @@ def rollback(
                 text=True,
             )
         except Exception as e:
-            logger.warning("podman tag failed (%s), aliases updated in DB only", e)
+            logger.warning(f"podman tag failed ({e}), aliases updated in DB only")
         logger.info("Rollback complete.")
-        logger.info("  CURRENT: %s:%s", image, tag)
-        logger.info("  ROLLBACK: %s:%s", current[0], current[1])
+        logger.info(f"  CURRENT: {image}:{tag}")
+        logger.info(f"  ROLLBACK: {current[0]}:{current[1]}")
 
         if apply:
             logger.info("Applying rollback: redeploying all running instances...")
@@ -742,7 +737,7 @@ def login(
         logger.error("Username and password are required")
         raise SystemExit(1)
 
-    logger.info("Logging in to %s...", reg)
+    logger.info(f"Logging in to {reg}...")
 
     try:
         p.login(
@@ -755,9 +750,9 @@ def login(
             capture_output=True,
             text=True,
         )
-        logger.info("Login successful: %s", reg)
+        logger.info(f"Login successful: {reg}")
     except Exception as e:
-        logger.error("Login failed: %s", e)
+        logger.error(f"Login failed: {e}")
         raise SystemExit(1)
 
 
@@ -819,16 +814,16 @@ def push(
     source_full = f"{src}:{resolved_tag}"
     target_full = f"{reg}/{src_basename}:{resolved_tag}"
 
-    logger.info("Tagging %s -> %s", source_full, target_full)
+    logger.info(f"Tagging {source_full} -> {target_full}")
 
     # Tag the image for the target registry
     try:
         p.tag(source_full, target_full, check=True, capture_output=True, text=True)
     except Exception as e:
-        logger.error("Failed to tag image: %s", e)
+        logger.error(f"Failed to tag image: {e}")
         raise SystemExit(1)
 
-    logger.info("Pushing %s...", target_full)
+    logger.info(f"Pushing {target_full}...")
 
     # Push to registry
     try:
@@ -839,9 +834,9 @@ def push(
             capture_output=True,
             text=True,
         )
-        logger.info("Successfully pushed %s", target_full)
+        logger.info(f"Successfully pushed {target_full}")
     except Exception as e:
-        logger.error("Failed to push %s: %s", target_full, e)
+        logger.error(f"Failed to push {target_full}: {e}")
         raise SystemExit(1)
 
     # Record the push action
@@ -881,7 +876,7 @@ def logout(
         logger.error("Registry URL required. Use --registry or set OTS_REGISTRY env var")
         raise SystemExit(1)
 
-    logger.info("Logging out from %s...", reg)
+    logger.info(f"Logging out from {reg}...")
 
     try:
         p.logout(
@@ -891,9 +886,9 @@ def logout(
             capture_output=True,
             text=True,
         )
-        logger.info("Logged out from %s", reg)
+        logger.info(f"Logged out from {reg}")
     except Exception as e:
-        logger.error("Logout failed: %s", e)
+        logger.error(f"Logout failed: {e}")
 
 
 @app.command
@@ -951,14 +946,14 @@ def rm(
                 if force:
                     kwargs["force"] = True
                 p.rmi(image, **kwargs)
-                logger.info("Removed %s", image)
+                logger.info(f"Removed {image}")
                 removed = True
                 break
             except Exception:
                 continue
 
         if not removed:
-            logger.warning("Image not found: %s", tag)
+            logger.warning(f"Image not found: {tag}")
 
 
 @app.command
@@ -1004,7 +999,7 @@ def prune(
         print("Pruned images:")
         print(result.stdout)
     except Exception as e:
-        logger.error("Prune failed: %s", e)
+        logger.error(f"Prune failed: {e}")
         raise SystemExit(1)
 
 
@@ -1320,7 +1315,7 @@ def build(
 
     # Immediate context feedback
     oci_label = ".oci-build.json" if oci_config is not None else "default"
-    logger.info("build: %s [%s]", proj_dir, oci_label)
+    logger.info(f"build: {proj_dir} [{oci_label}]")
 
     if oci_config is not None:
         _build_with_oci_config(
@@ -1400,9 +1395,9 @@ def _build_with_oci_config(
         logger.info("Building base image...")
         try:
             base_tag = _build_base(p, proj_dir, base_config, resolved_platform, quiet)
-            logger.info("  Base: %s", base_tag)
+            logger.info(f"  Base: {base_tag}")
         except Exception as e:
-            logger.error("Base build failed: %s", _format_build_error(e))
+            logger.error(f"Base build failed: {_format_build_error(e)}")
             raise SystemExit(1)
 
     # Determine which variants to build
@@ -1442,11 +1437,11 @@ def _build_with_oci_config(
         raise SystemExit(1)
 
     names = [f"{image_name}{v.get('suffix', '')}:{build_tag}" for v in variants_to_build]
-    logger.info("Building %d variant(s): %s", len(variants_to_build), ", ".join(names))
-    logger.info("  Project: %s", proj_dir)
-    logger.info("  Platform: %s", resolved_platform)
-    logger.info("  Version: %s", pkg_version)
-    logger.info("  Commit: %s", git_hash or "N/A (no git)")
+    logger.info(f"Building {len(variants_to_build)} variant(s): {', '.join(names)}")
+    logger.info(f"  Project: {proj_dir}")
+    logger.info(f"  Platform: {resolved_platform}")
+    logger.info(f"  Version: {pkg_version}")
+    logger.info(f"  Commit: {git_hash or 'N/A (no git)'}")
 
     built_images: list[str] = []
     try:
@@ -1474,7 +1469,7 @@ def _build_with_oci_config(
                             build_contexts[ctx_name] = completed[dep_key]
                         else:
                             logger.warning(
-                                "dependency '%s' not yet built, skipping context", ctx_ref
+                                f"dependency '{ctx_ref}' not yet built, skipping context"
                             )
 
             local_image = _build_variant(
@@ -1491,7 +1486,7 @@ def _build_with_oci_config(
             built_images.append(local_image)
             completed[variant.get("suffix", "")] = local_image
 
-            logger.info("  Built: %s", local_image)
+            logger.info(f"  Built: {local_image}")
 
             # Record the build
             db.record_deployment(
@@ -1503,7 +1498,7 @@ def _build_with_oci_config(
                 notes=f"oci-config, target={variant.get('target')}",
             )
     except Exception as e:
-        logger.error("Build failed: %s", _format_build_error(e))
+        logger.error(f"Build failed: {_format_build_error(e)}")
         raise SystemExit(1)
     finally:
         # Clean up base image
@@ -1520,7 +1515,7 @@ def _build_with_oci_config(
     # Print summary
     logger.info("Build complete:")
     for img in built_images:
-        logger.info("  Local:  %s", img)
+        logger.info(f"  Local:  {img}")
 
 
 def _build_legacy(
@@ -1561,15 +1556,15 @@ def _build_legacy(
     image_name = f"{image_basename}{suffix or ''}"
     local_image = f"{image_name}:{build_tag}"
 
-    logger.info("Building %s", local_image)
-    logger.info("  Project: %s", proj_dir)
+    logger.info(f"Building {local_image}")
+    logger.info(f"  Project: {proj_dir}")
     if dockerfile:
-        logger.info("  Dockerfile: %s", dockerfile)
+        logger.info(f"  Dockerfile: {dockerfile}")
     if target:
-        logger.info("  Target: %s", target)
-    logger.info("  Platform: %s", platform)
-    logger.info("  Version: %s", pkg_version)
-    logger.info("  Commit: %s", git_hash or "N/A (no git)")
+        logger.info(f"  Target: {target}")
+    logger.info(f"  Platform: {platform}")
+    logger.info(f"  Version: {pkg_version}")
+    logger.info(f"  Commit: {git_hash or 'N/A (no git)'}")
 
     # Build the image
     try:
@@ -1598,9 +1593,9 @@ def _build_legacy(
 
         p.buildx.build(str(proj_dir), **build_kwargs)
 
-        logger.info("Successfully built %s", local_image)
+        logger.info(f"Successfully built {local_image}")
     except Exception as e:
-        logger.error("Build failed: %s", _format_build_error(e))
+        logger.error(f"Build failed: {_format_build_error(e)}")
         raise SystemExit(1)
 
     # Record the build action
@@ -1619,7 +1614,7 @@ def _build_legacy(
 
     # Print summary
     logger.info("Build complete:")
-    logger.info("  Local:  %s", local_image)
+    logger.info(f"  Local:  {local_image}")
 
 
 def _push_images(
@@ -1641,7 +1636,7 @@ def _push_images(
         image_name_part = local_image.rsplit(":", 1)[0]
         target_image = f"{reg}/{image_name_part}:{build_tag}"
 
-        logger.info("Tagging %s -> %s", local_image, target_image)
+        logger.info(f"Tagging {local_image} -> {target_image}")
 
         try:
             p.tag(
@@ -1652,10 +1647,10 @@ def _push_images(
                 text=True,
             )
         except Exception as e:
-            logger.error("Failed to tag image: %s", e)
+            logger.error(f"Failed to tag image: {e}")
             raise SystemExit(1)
 
-        logger.info("Pushing %s...", target_image)
+        logger.info(f"Pushing {target_image}...")
 
         try:
             p.push(
@@ -1665,9 +1660,9 @@ def _push_images(
                 capture_output=quiet,
                 text=True,
             )
-            logger.info("Successfully pushed %s", target_image)
+            logger.info(f"Successfully pushed {target_image}")
         except Exception as e:
-            logger.error("Failed to push %s: %s", target_image, e)
+            logger.error(f"Failed to push {target_image}: {e}")
             raise SystemExit(1)
 
         db.record_deployment(

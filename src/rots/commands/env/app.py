@@ -85,7 +85,7 @@ def process(
     path = env_file or DEFAULT_ENV_FILE
 
     if not _file_exists(path, ex):
-        logger.error("Environment file not found: %s", path)
+        logger.error(f"Environment file not found: {path}")
         raise SystemExit(1)
 
     parsed = EnvFile.parse(path, executor=ex)
@@ -97,8 +97,8 @@ def process(
 
     # Header
     suffix = " (dry-run)" if dry_run else ""
-    logger.info("Processing: %s%s", path, suffix)
-    logger.info("Secrets: %s", ", ".join(parsed.secret_variable_names))
+    logger.info(f"Processing: {path}{suffix}")
+    logger.info(f"Secrets: {', '.join(parsed.secret_variable_names)}")
     logger.info("")
 
     secrets, messages = process_env_file(
@@ -114,24 +114,24 @@ def process(
     for msg in messages:
         if "secret created:" in msg:
             secret_name = msg.split(": ", 1)[-1]
-            logger.info("  [created]  %s  (stored in podman secret store)", secret_name)
+            logger.info(f"  [created]  {secret_name}  (stored in podman secret store)")
         elif "secret replaced:" in msg:
             secret_name = msg.split(": ", 1)[-1]
-            logger.info("  [replaced] %s  (updated in podman secret store)", secret_name)
+            logger.info(f"  [replaced] {secret_name}  (updated in podman secret store)")
         elif "empty" in msg.lower():
             var = msg.split()[1] if len(msg.split()) > 1 else "unknown"
-            logger.error("  [error]    %s is empty", var)
+            logger.error(f"  [error]    {var} is empty")
             has_errors = True
         elif "not found" in msg.lower():
             var = msg.split()[1] if len(msg.split()) > 1 else "unknown"
-            logger.error("  [error]    %s not in file", var)
+            logger.error(f"  [error]    {var} not in file")
             has_errors = True
         elif "Updated environment file" in msg:
             file_was_modified = True
         elif "No changes needed" in msg:
-            logger.info("  %s", msg)
+            logger.info(f"  {msg}")
         else:
-            logger.info("  %s", msg)
+            logger.info(f"  {msg}")
 
     if has_errors:
         logger.error("Errors found. All secrets must have values.")
@@ -140,7 +140,7 @@ def process(
     if dry_run:
         logger.info("Dry-run complete. Run without --dry-run to apply changes.")
     elif file_was_modified:
-        logger.info("Updated: %s", path)
+        logger.info(f"Updated: {path}")
 
 
 @app.default
@@ -170,7 +170,7 @@ def show(
     path = env_file or DEFAULT_ENV_FILE
 
     if not _file_exists(path, ex):
-        logger.error("Environment file not found: %s", path)
+        logger.error(f"Environment file not found: {path}")
         raise SystemExit(1)
 
     parsed = EnvFile.parse(path, executor=ex)
@@ -343,7 +343,7 @@ def verify(
     path = env_file or DEFAULT_ENV_FILE
 
     if not _file_exists(path, ex):
-        logger.error("Environment file not found: %s", path)
+        logger.error(f"Environment file not found: {path}")
         raise SystemExit(1)
 
     parsed = EnvFile.parse(path, executor=ex)
@@ -352,7 +352,7 @@ def verify(
         logger.info("No SECRET_VARIABLE_NAMES defined - nothing to verify.")
         return
 
-    logger.info("Verifying secrets for: %s", path)
+    logger.info(f"Verifying secrets for: {path}")
 
     secrets, _ = extract_secrets(parsed)
     all_ok = True
@@ -361,7 +361,7 @@ def verify(
         exists = secret_exists(spec.secret_name, executor=ex)
         status = "OK" if exists else "MISSING"
         symbol = "+" if exists else "-"
-        logger.info("  [%s] %s -> %s: %s", symbol, spec.secret_name, spec.env_var_name, status)
+        logger.info(f"  [{symbol}] {spec.secret_name} -> {spec.env_var_name}: {status}")
         if not exists:
             all_ok = False
 
@@ -425,37 +425,37 @@ def push(
         raise SystemExit(1)
 
     if not source.exists():
-        logger.error("Local file not found: %s", source)
+        logger.error(f"Local file not found: {source}")
         raise SystemExit(1)
 
     content = source.read_text()
     if not content.strip():
-        logger.error("Local file is empty: %s", source)
+        logger.error(f"Local file is empty: {source}")
         raise SystemExit(1)
 
     if dry_run:
-        logger.info("Would push: %s -> %s (on remote host)", source, remote_path)
-        logger.info("  File size: %s bytes", len(content.encode("utf-8")))
-        logger.info("  Lines: %s", len(content.splitlines()))
+        logger.info(f"Would push: {source} -> {remote_path} (on remote host)")
+        logger.info(f"  File size: {len(content.encode('utf-8'))} bytes")
+        logger.info(f"  Lines: {len(content.splitlines())}")
         if process_secrets:
-            logger.info("Would then run: ots env process -f %s", remote_path)
+            logger.info(f"Would then run: ots env process -f {remote_path}")
         return
 
     # Push the file to the remote host
-    logger.info("Pushing %s -> %s", source, remote_path)
+    logger.info(f"Pushing {source} -> {remote_path}")
     # Ensure parent directory exists
     ex.run(["mkdir", "-p", str(remote_path.parent)])
     result = ex.run(["tee", str(remote_path)], input=content)
     if not result.ok:
-        logger.error("Failed to write %s on remote host", remote_path)
+        logger.error(f"Failed to write {remote_path} on remote host")
         if result.stderr:
-            logger.error("  %s", result.stderr.strip())
+            logger.error(f"  {result.stderr.strip()}")
         raise SystemExit(1)
-    logger.info("  Pushed (%s bytes)", len(content.encode("utf-8")))
+    logger.info(f"  Pushed ({len(content.encode('utf-8'))} bytes)")
 
     # Optionally process secrets
     if process_secrets:
-        logger.info("Processing secrets from %s...", remote_path)
+        logger.info(f"Processing secrets from {remote_path}...")
         parsed = EnvFile.parse(remote_path, executor=ex)
 
         if not parsed.secret_variable_names:
@@ -463,7 +463,7 @@ def push(
             logger.info("Secrets processing skipped.")
             return
 
-        logger.info("Secrets: %s", ", ".join(parsed.secret_variable_names))
+        logger.info(f"Secrets: {', '.join(parsed.secret_variable_names)}")
 
         secrets, messages = process_env_file(
             parsed,
@@ -475,15 +475,15 @@ def push(
         for msg in messages:
             if "secret created:" in msg:
                 secret_name = msg.split(": ", 1)[-1]
-                logger.info("  [created]  %s", secret_name)
+                logger.info(f"  [created]  {secret_name}")
             elif "secret replaced:" in msg:
                 secret_name = msg.split(": ", 1)[-1]
-                logger.info("  [replaced] %s", secret_name)
+                logger.info(f"  [replaced] {secret_name}")
             elif "Updated environment file" in msg:
                 pass  # handled below
             elif "No changes needed" in msg:
-                logger.info("  %s", msg)
+                logger.info(f"  {msg}")
             else:
-                logger.info("  %s", msg)
+                logger.info(f"  {msg}")
 
-        logger.info("Updated: %s", remote_path)
+        logger.info(f"Updated: {remote_path}")

@@ -87,13 +87,13 @@ def update(cfg: Config, create_volume: bool = True, *, executor: Executor | None
         if _is_remote(executor):
             check_result = executor.run(["test", "-f", str(manifest)])  # type: ignore[union-attr]
             if check_result.ok:
-                logger.info("Manifest found: %s", manifest)
+                logger.info(f"Manifest found: {manifest}")
             else:
-                logger.warning("manifest not found at %s", manifest)
+                logger.warning(f"manifest not found at {manifest}")
         else:
             if manifest.exists():
-                logger.info("Manifest found: %s", manifest)
+                logger.info(f"Manifest found: {manifest}")
             else:
-                logger.warning("manifest not found at %s", manifest)
+                logger.warning(f"manifest not found at {manifest}")
     finally:
         p.rm(container_id, check=True)

@@ -177,7 +177,7 @@ def push_files_to_remote(
     if dry_run:
         for local, rel in files:
             remote_path = remote_base / rel
-            logger.info("  %s -> %s", rel, remote_path)
+            logger.info(f"  {rel} -> {remote_path}")
         return [(local, remote_base / rel) for local, rel in files]
 
     # Collect unique remote parent directories
@@ -194,7 +194,7 @@ def push_files_to_remote(
         result = executor.run(["tee", str(remote_path)], input=content, timeout=15)
         if not result.ok:
             raise ProxyError(f"Failed to write {remote_path}: {result.stderr}")
-        logger.info("  %s -> %s", rel, remote_path)
+        logger.info(f"  {rel} -> {remote_path}")
         transferred.append((local, remote_path))
 
     return transferred

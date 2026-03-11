@@ -426,15 +426,11 @@ def check_default_service_conflict(
 
     if is_service_active(pkg.default_service, executor=executor):
         logger.warning(
-            "Default service %s is running.\n"
-            "  This may conflict with template instances (%s)\n"
+            f"Default service {pkg.default_service} is running.\n"
+            f"  This may conflict with template instances ({pkg.template_unit})\n"
             "  To use multiple instances, stop and disable the default service:\n"
-            "    sudo systemctl stop %s\n"
-            "    sudo systemctl disable %s",
-            pkg.default_service,
-            pkg.template_unit,
-            pkg.default_service,
-            pkg.default_service,
+            f"    sudo systemctl stop {pkg.default_service}\n"
+            f"    sudo systemctl disable {pkg.default_service}"
         )
         return True
 

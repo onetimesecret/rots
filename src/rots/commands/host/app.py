@@ -180,9 +180,9 @@ def push(
         raise SystemExit(1)
 
     mode = "DRY RUN" if dry_run else "PUSH"
-    logger.info("[%s] %s -> %s", mode, resolved_dir, ssh_host)
-    logger.info("  rsync: %s (%s)", rsync_info.path, rsync_info.version)
-    logger.info("  files: %s", len(files))
+    logger.info(f"[{mode}] {resolved_dir} -> {ssh_host}")
+    logger.info(f"  rsync: {rsync_info.path} ({rsync_info.version})")
+    logger.info(f"  files: {len(files)}")
 
     any_failed = False
     for local_path, entry in files:
@@ -194,12 +194,12 @@ def push(
             dry_run=dry_run,
             backup=True,
         )
-        logger.info("  %s -> %s", entry.local_name, entry.remote_path)
+        logger.info(f"  {entry.local_name} -> {entry.remote_path}")
 
         result = run_rsync(cmd, quiet=quiet)
         if result.returncode != 0:
             any_failed = True
-            logger.error("  [FAIL] %s (exit %s)", entry.local_name, result.returncode)
+            logger.error(f"  [FAIL] {entry.local_name} (exit {result.returncode})")
 
     if dry_run:
         logger.info("Dry-run complete. Pass --apply to push changes.")
@@ -239,7 +239,7 @@ def diff(
         logger.error("No config files found to diff.")
         raise SystemExit(1)
 
-    logger.info("Comparing %s <-> %s", resolved_dir, ssh_host)
+    logger.info(f"Comparing {resolved_dir} <-> {ssh_host}")
 
     any_diff = False
     for local_path, entry in files:
@@ -261,7 +261,7 @@ def diff(
         remote_content = result.stdout
 
         if local_content == remote_content:
-            logger.info("  [identical] %s", entry.local_name)
+            logger.info(f"  [identical] {entry.local_name}")
             continue
 
         # Unified diff
@@ -308,7 +308,7 @@ def pull(
     manifest = resolve_manifest(resolved_dir)
 
     mode = "DRY RUN" if dry_run else "PULL"
-    logger.info("[%s] %s -> %s", mode, ssh_host, resolved_dir)
+    logger.info(f"[{mode}] {ssh_host} -> {resolved_dir}")
 
     any_failed = False
     pulled = 0
@@ -319,28 +319,28 @@ def pull(
         result = ex.run(["cat", str(entry.remote_path)], timeout=30)
 
         if result.returncode != 0:
-            logger.info("  [skip] %s (not on remote)", entry.remote_path)
+            logger.info(f"  [skip] {entry.remote_path} (not on remote)")
             continue
 
         remote_content = result.stdout
 
         if local_path.exists() and local_path.read_text() == remote_content:
-            logger.info("  [identical] %s", entry.local_name)
+            logger.info(f"  [identical] {entry.local_name}")
             continue
 
         if dry_run:
             action = "would overwrite" if local_path.exists() else "would create"
-            logger.info("  [%s] %s <- %s", action, entry.local_name, entry.remote_path)
+            logger.info(f"  [{action}] {entry.local_name} <- {entry.remote_path}")
         else:
             local_path.write_text(remote_content)
             action = "updated" if local_path.exists() else "created"
-            logger.info("  [%s] %s <- %s", action, entry.local_name, entry.remote_path)
+            logger.info(f"  [{action}] {entry.local_name} <- {entry.remote_path}")
         pulled += 1
 
     if dry_run:
-        logger.info("Dry-run: %s file(s) would be written. Pass --apply to apply.", pulled)
+        logger.info(f"Dry-run: {pulled} file(s) would be written. Pass --apply to apply.")
     else:
-        logger.info("Pulled %s file(s).", pulled)
+        logger.info(f"Pulled {pulled} file(s).")
 
     if any_failed:
         raise SystemExit(1)
@@ -437,7 +437,7 @@ def init_env(
 
     content = generate_env_template(host=host, tag=tag)
     env_path.write_text(content)
-    logger.info("Created %s", env_path)
+    logger.info(f"Created {env_path}")
     if not host:
         logger.info("  Hint: edit OTS_HOST to set the target SSH host alias")
     if not tag:

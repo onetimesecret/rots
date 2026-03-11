@@ -198,9 +198,7 @@ def add(
     existing = get_dns_current(db, hostname, executor=ex)
     if existing:
         logger.error(
-            "Record already exists for %s. Use 'rots dns update %s' to modify it.",
-            hostname,
-            hostname,
+            f"Record already exists for {hostname}. Use 'rots dns update {hostname}' to modify it."
         )
         raise SystemExit(EXIT_PRECOND)
 
@@ -220,15 +218,15 @@ def add(
     base_domain, name = parse_hostname(hostname)
 
     if dry_run:
-        logger.info("[dry-run] Would create %s record:", type)
-        logger.info("  Hostname: %s", hostname)
-        logger.info("  Type:     %s", type)
-        logger.info("  Value:    %s", resolved_ip)
-        logger.info("  TTL:      %s", ttl)
-        logger.info("  Provider: %s", resolved_provider)
-        logger.info("  Domain:   %s", base_domain)
+        logger.info(f"[dry-run] Would create {type} record:")
+        logger.info(f"  Hostname: {hostname}")
+        logger.info(f"  Type:     {type}")
+        logger.info(f"  Value:    {resolved_ip}")
+        logger.info(f"  TTL:      {ttl}")
+        logger.info(f"  Provider: {resolved_provider}")
+        logger.info(f"  Domain:   {base_domain}")
         if name:
-            logger.info("  Name:     %s", name)
+            logger.info(f"  Name:     {name}")
         return
 
     # Create via lexicon
@@ -236,7 +234,7 @@ def add(
     success = client.add_record(type, name or hostname, resolved_ip)
 
     if not success:
-        logger.error("Failed to create DNS record for %s", hostname)
+        logger.error(f"Failed to create DNS record for {hostname}")
         record_dns_action(
             db,
             hostname,
@@ -279,9 +277,9 @@ def add(
             )
         )
     else:
-        logger.info("Created %s record: %s -> %s", type, hostname, resolved_ip)
-        logger.info("  TTL:      %ss", ttl)
-        logger.info("  Provider: %s", resolved_provider)
+        logger.info(f"Created {type} record: {hostname} -> {resolved_ip}")
+        logger.info(f"  TTL:      {ttl}s")
+        logger.info(f"  Provider: {resolved_provider}")
 
 
 @app.command
@@ -403,16 +401,16 @@ def update(
 
     if dry_run:
         action = "update" if existing else "create"
-        logger.info("[dry-run] Would %s %s record:", action, type)
-        logger.info("  Hostname: %s", hostname)
-        logger.info("  Type:     %s", type)
-        logger.info("  Value:    %s", resolved_ip)
-        logger.info("  TTL:      %s", ttl)
-        logger.info("  Provider: %s", resolved_provider)
+        logger.info(f"[dry-run] Would {action} {type} record:")
+        logger.info(f"  Hostname: {hostname}")
+        logger.info(f"  Type:     {type}")
+        logger.info(f"  Value:    {resolved_ip}")
+        logger.info(f"  TTL:      {ttl}")
+        logger.info(f"  Provider: {resolved_provider}")
         if existing:
             logger.info("Current values:")
-            logger.info("  Value:    %s", existing.value)
-            logger.info("  TTL:      %s", existing.ttl)
+            logger.info(f"  Value:    {existing.value}")
+            logger.info(f"  TTL:      {existing.ttl}")
         return
 
     # Update or create via lexicon
@@ -425,7 +423,7 @@ def update(
     action = "update" if existing else "add"
 
     if not success:
-        logger.error("Failed to %s DNS record for %s", action, hostname)
+        logger.error(f"Failed to {action} DNS record for {hostname}")
         record_dns_action(
             db,
             hostname,
@@ -472,17 +470,17 @@ def update(
         print(json.dumps(data, indent=2))
     else:
         if existing:
-            logger.info("Updated %s record: %s", type, hostname)
+            logger.info(f"Updated {type} record: {hostname}")
             if existing.value != resolved_ip:
-                logger.info("  Value: %s -> %s", existing.value, resolved_ip)
+                logger.info(f"  Value: {existing.value} -> {resolved_ip}")
             if existing.ttl != ttl:
-                logger.info("  TTL:   %s -> %s", existing.ttl, ttl)
+                logger.info(f"  TTL:   {existing.ttl} -> {ttl}")
             if existing.provider != resolved_provider:
-                logger.info("  Provider: %s -> %s", existing.provider, resolved_provider)
+                logger.info(f"  Provider: {existing.provider} -> {resolved_provider}")
         else:
-            logger.info("Created %s record: %s -> %s", type, hostname, resolved_ip)
-            logger.info("  TTL:      %ss", ttl)
-            logger.info("  Provider: %s", resolved_provider)
+            logger.info(f"Created {type} record: {hostname} -> {resolved_ip}")
+            logger.info(f"  TTL:      {ttl}s")
+            logger.info(f"  Provider: {resolved_provider}")
 
 
 @app.command
@@ -514,14 +512,14 @@ def remove(
 
     existing = get_dns_current(db, hostname, executor=ex)
     if not existing:
-        logger.error("No DNS record found for %s.", hostname)
+        logger.error(f"No DNS record found for {hostname}.")
         raise SystemExit(EXIT_PRECOND)
 
     if dry_run:
-        logger.info("[dry-run] Would remove %s record:", existing.record_type)
-        logger.info("  Hostname: %s", hostname)
-        logger.info("  Value:    %s", existing.value)
-        logger.info("  Provider: %s", existing.provider)
+        logger.info(f"[dry-run] Would remove {existing.record_type} record:")
+        logger.info(f"  Hostname: {hostname}")
+        logger.info(f"  Value:    {existing.value}")
+        logger.info(f"  Provider: {existing.provider}")
         return
 
     if not yes:
@@ -537,7 +535,7 @@ def remove(
     success = client.delete_record(existing.record_type, name or hostname, existing.value)
 
     if not success:
-        logger.error("Failed to delete DNS record for %s", hostname)
+        logger.error(f"Failed to delete DNS record for {hostname}")
         record_dns_action(
             db,
             hostname,
@@ -565,4 +563,4 @@ def remove(
         executor=ex,
     )
 
-    logger.info("Removed %s record: %s (%s)", existing.record_type, hostname, existing.value)
+    logger.info(f"Removed {existing.record_type} record: {hostname} ({existing.value})")

@@ -97,7 +97,7 @@ def backup(
         if json_output:
             print(json_mod.dumps({"success": False, "error": msg}))
         else:
-            logger.error("%s", msg)
+            logger.error(f"{msg}")
         raise SystemExit(1)
 
     target = dest or _default_backup_path(db_path)
@@ -113,7 +113,7 @@ def backup(
             if json_output:
                 print(json_mod.dumps({"success": False, "error": msg}))
             else:
-                logger.error("%s", msg)
+                logger.error(f"{msg}")
             raise SystemExit(1)
 
         size = _db_size(target, ex)
@@ -131,7 +131,7 @@ def backup(
             if json_output:
                 print(json_mod.dumps({"success": False, "error": msg}))
             else:
-                logger.error("%s", msg)
+                logger.error(f"{msg}")
             raise SystemExit(1)
 
         size = target.stat().st_size
@@ -145,9 +145,9 @@ def backup(
     if json_output:
         print(json_mod.dumps(result_data, indent=2))
     else:
-        logger.info("Backup created: %s", target)
-        logger.info("  Source:  %s", db_path)
-        logger.info("  Size:    %s bytes", f"{size:,}")
+        logger.info(f"Backup created: {target}")
+        logger.info(f"  Source:  {db_path}")
+        logger.info(f"  Size:    {f'{size:,}'} bytes")
 
 
 @app.command
@@ -191,7 +191,7 @@ def restore(
         if json_output:
             print(json_mod.dumps({"success": False, "error": msg}))
         else:
-            logger.error("%s", msg)
+            logger.error(f"{msg}")
         raise SystemExit(1)
 
     # Validate the backup is a valid SQLite DB with expected tables
@@ -208,7 +208,7 @@ def restore(
         if json_output:
             print(json_mod.dumps({"success": False, "error": msg}))
         else:
-            logger.error("%s", msg)
+            logger.error(f"{msg}")
         raise SystemExit(1)
 
     missing = required_tables - present
@@ -217,7 +217,7 @@ def restore(
         if json_output:
             print(json_mod.dumps({"success": False, "error": msg}))
         else:
-            logger.error("%s", msg)
+            logger.error(f"{msg}")
         raise SystemExit(1)
 
     ex, live_db = _get_executor_and_db()
@@ -263,7 +263,7 @@ def restore(
             if json_output:
                 print(json_mod.dumps({"success": False, "error": msg}))
             else:
-                logger.error("%s", msg)
+                logger.error(f"{msg}")
             raise SystemExit(1)
     else:
         # Local restore
@@ -292,7 +292,7 @@ def restore(
             if json_output:
                 print(json_mod.dumps({"success": False, "error": msg}))
             else:
-                logger.error("%s", msg)
+                logger.error(f"{msg}")
             raise SystemExit(1)
 
     result_data = {
@@ -304,9 +304,9 @@ def restore(
     if json_output:
         print(json_mod.dumps(result_data, indent=2))
     else:
-        logger.info("Restored: %s -> %s", src, live_db)
+        logger.info(f"Restored: {src} -> {live_db}")
         if pre_restore_backup:
-            logger.info("  Pre-restore backup: %s", pre_restore_backup)
+            logger.info(f"  Pre-restore backup: {pre_restore_backup}")
 
 
 @app.command
@@ -349,7 +349,7 @@ def deployments(
         if json_output:
             print(json_mod.dumps({"success": False, "error": msg}))
         else:
-            logger.error("%s", msg)
+            logger.error(f"{msg}")
             logger.info("Run 'ots init' or deploy an instance first to create the database.")
         raise SystemExit(1)
 
