@@ -40,11 +40,11 @@ class TestGetContainerHealthMap:
         output = json.dumps(
             [
                 {
-                    "Names": ["systemd-onetime-web_7043"],
+                    "Names": ["onetime-web@7043"],
                     "Status": "Up 3 days (healthy)",
                 },
                 {
-                    "Names": ["systemd-onetime-worker_1"],
+                    "Names": ["onetime-worker@1"],
                     "Status": "Up 3 days (unhealthy)",
                 },
             ]
@@ -55,12 +55,12 @@ class TestGetContainerHealthMap:
         assert result[("web", "7043")] == {"health": "healthy", "uptime": "Up 3 days"}
         assert result[("worker", "1")] == {"health": "unhealthy", "uptime": "Up 3 days"}
 
-    def test_parse_double_dash_separator(self, mocker):
-        """Should handle -- separator (Quadlet naming)."""
+    def test_parse_scheduler_container(self, mocker):
+        """Should parse scheduler container with @ naming."""
         output = json.dumps(
             [
                 {
-                    "Names": ["systemd-onetime-scheduler--main"],
+                    "Names": ["onetime-scheduler@main"],
                     "Status": "Up 2 hours (healthy)",
                 },
             ]
@@ -75,7 +75,7 @@ class TestGetContainerHealthMap:
         output = json.dumps(
             [
                 {
-                    "Names": ["systemd-onetime-web_7044"],
+                    "Names": ["onetime-web@7044"],
                     "Status": "Up 5 minutes",
                 },
             ]
@@ -90,7 +90,7 @@ class TestGetContainerHealthMap:
         output = json.dumps(
             [
                 {
-                    "Names": ["systemd-onetime-web_7043"],
+                    "Names": ["onetime-web@7043"],
                     "Status": "Up 10 seconds (starting)",
                 },
             ]
@@ -122,7 +122,7 @@ class TestGetContainerHealthMap:
         output = json.dumps(
             [
                 {
-                    "Name": "systemd-onetime-web_7043",
+                    "Name": "onetime-web@7043",
                     "Status": "Up 1 day (healthy)",
                 },
             ]
@@ -141,7 +141,7 @@ class TestGetContainerHealthMap:
                     "Status": "Up 1 day",
                 },
                 {
-                    "Names": ["systemd-onetime-web_7043"],
+                    "Names": ["onetime-web@7043"],
                     "Status": "Up 1 day (healthy)",
                 },
             ]
@@ -320,7 +320,7 @@ class TestPsCommand:
 
         mock_podman_ps.assert_called_once()
         call_kwargs = mock_podman_ps.call_args
-        assert call_kwargs.kwargs["filter"] == "name=systemd-onetime"
+        assert call_kwargs.kwargs["filter"] == "name=onetime-"
 
     def test_ps_filters_by_web(self, mocker):
         """ps --web should filter to web containers."""
@@ -339,7 +339,7 @@ class TestPsCommand:
         instance.ps(web=True)
 
         call_kwargs = mock_podman_ps.call_args
-        assert call_kwargs.kwargs["filter"] == "name=systemd-onetime-web"
+        assert call_kwargs.kwargs["filter"] == "name=onetime-web@"
 
     def test_ps_filters_by_scheduler(self, mocker):
         """ps --scheduler should filter to scheduler containers."""
@@ -358,7 +358,7 @@ class TestPsCommand:
         instance.ps(scheduler=True)
 
         call_kwargs = mock_podman_ps.call_args
-        assert call_kwargs.kwargs["filter"] == "name=systemd-onetime-scheduler"
+        assert call_kwargs.kwargs["filter"] == "name=onetime-scheduler@"
 
     def test_ps_filters_by_worker(self, mocker):
         """ps --worker should filter to worker containers."""
@@ -377,7 +377,7 @@ class TestPsCommand:
         instance.ps(worker=True)
 
         call_kwargs = mock_podman_ps.call_args
-        assert call_kwargs.kwargs["filter"] == "name=systemd-onetime-worker"
+        assert call_kwargs.kwargs["filter"] == "name=onetime-worker@"
 
     def test_ps_uses_table_format(self, mocker):
         """ps should use table format with expected columns."""

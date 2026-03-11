@@ -372,7 +372,7 @@ def get_container_health_map(
             "--format",
             "json",
             "--filter",
-            "name=systemd-onetime",
+            "name=onetime-",
         ],
         timeout=15,
     )
@@ -387,8 +387,8 @@ def get_container_health_map(
         return {}
 
     health_map: dict[tuple[str, str], dict[str, str]] = {}
-    # Match container names like systemd-onetime-web_7043 or systemd-onetime-worker--1
-    name_pattern = re.compile(r"systemd-onetime-(web|worker|scheduler)[_-]+(.+)")
+    # Match container names like onetime-web@7043 or onetime-worker@1
+    name_pattern = re.compile(r"onetime-(web|worker|scheduler)@(.+)")
 
     for container in containers:
         # podman JSON uses "Names" (list) or "Name" (string) depending on version
@@ -419,23 +419,16 @@ def get_container_health_map(
 
 
 def unit_to_container_name(unit: str) -> str:
-    """Convert systemd unit name to Quadlet container name.
+    """Convert systemd unit name to the explicit ``ContainerName=`` we set.
 
-    Quadlet names containers as: systemd-{unit_with_separator}
-    Example: onetime-web@7044 -> systemd-onetime-web--7044
+    We set ``ContainerName=`` in each Quadlet template using the same
+    ``@`` convention as the systemd unit itself::
 
-    Uses ``--`` (double dash) as the separator between the template base name
-    and the instance identifier.  A single ``_`` was previously used but is
-    ambiguous because ``_`` can also appear in unit names, making it impossible
-    to distinguish ``onetime-web@7043`` from a hypothetical ``onetime-web_7043``.
-    Double dashes are the conventional systemd escaping character and will not
-    collide with naturally occurring underscores in unit names.
+        onetime-web@7043.service  ->  onetime-web@7043
+        onetime-worker@1          ->  onetime-worker@1
+        onetime-scheduler@main    ->  onetime-scheduler@main
     """
-    # Remove .service suffix if present
-    name = unit.removesuffix(".service")
-    # Replace @ with -- (distinctive separator that won't collide with underscores)
-    name = name.replace("@", "--")
-    return f"systemd-{name}"
+    return unit.removesuffix(".service")
 
 
 def recreate(unit: str, *, executor: Executor | None = None) -> None:
@@ -455,7 +448,7 @@ def recreate(unit: str, *, executor: Executor | None = None) -> None:
     # Stop the systemd unit
     _run_systemctl("stop", unit, executor=executor)
 
-    # Remove the container (Quadlet uses systemd-{name} format with @ -> --)
+    # Remove the container (ContainerName= set to onetime-{type}@{id})
     container_name = unit_to_container_name(unit)
     rm_cmd = ["podman", "rm", "--ignore", container_name]
     logger.debug("  $ sudo -- %s", " ".join(rm_cmd))

@@ -615,7 +615,7 @@ class TestExecShellFallback:
         )
         mocker.patch(
             "rots.commands.instance.app.systemd.unit_to_container_name",
-            return_value="systemd-onetime-web_7043",
+            return_value="onetime-web@7043",
         )
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value = subprocess.CompletedProcess([], 0)
