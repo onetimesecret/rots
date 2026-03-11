@@ -294,12 +294,13 @@ class TestConfigTransformCommand:
         mocker.patch("subprocess.run", side_effect=mock_run_side_effect)
 
         # Call config_transform (dry-run is default)
-        instance.config_transform(command="transform", quiet=True)
+        instance.config_transform(command="transform")
 
-        # Verify diff was shown
+        # Verify diff was shown (stdout) and dry-run message logged (stderr)
         captured = capsys.readouterr()
         assert "old_value" in captured.out
         assert "new_value" in captured.out
+        assert "dry run" in captured.err.lower() or "no changes made" in captured.err.lower()
 
         # File should not be modified
         assert (mock_config.config_dir / "config.yaml").read_text() == "key: old_value\n"

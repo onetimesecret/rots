@@ -403,7 +403,7 @@ def run(
             if rc != 0:
                 raise SystemExit(rc)
     except KeyboardInterrupt:
-        logger.info("\nStopped")
+        logger.info("Stopped")
 
 
 @app.command
