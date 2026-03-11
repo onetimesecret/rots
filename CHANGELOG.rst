@@ -12,6 +12,45 @@ Versioning <https://semver.org/spec/v2.0.0.html>`__.
 
    <!--scriv-insert-here-->
 
+.. _changelog-0.5.1:
+
+0.5.1 — 2026-03-11
+==================
+
+Added
+-----
+
+- Add ``rots dns`` command group for multi-provider DNS record management
+  via dns-lexicon. Commands: ``add``, ``show``, ``update``, ``remove``,
+  ``list``. Supports Cloudflare, Route53, DigitalOcean, Gandi, GoDaddy,
+  Hetzner, Linode, Namecheap, Porkbun, Vultr, and DNSimple.
+- Auto-detect public IP and DNS provider from native env vars
+  (e.g. ``CLOUDFLARE_API_TOKEN``, ``AWS_ACCESS_KEY_ID``)
+- Track DNS mutations in SQLite audit trail (``dns_records`` and
+  ``dns_current`` tables)
+
+Changed
+-------
+
+- Align pyright pre-commit hook with project dependencies by adding
+  ``dns-lexicon`` and ``ots-shared`` to ``additional_dependencies``
+
+- Standardize all logger calls on f-strings (modern Python 3 convention),
+  converting 267 %-style format calls across 18 source modules
+- Route diagnostic output through Python logging instead of bare print()
+- Add CLIFormatter that omits level/module prefix for INFO messages,
+  preserving the existing UX for status output
+- Add flush_output() and apply_quiet() utilities for subprocess handoff
+  and per-command quiet mode
+
+Fixed
+-----
+
+- Remove leading newline from "Stopped" log message in instance run command
+- Restore dry-run test assertion in test_config_transform using stderr capture
+- Fix container name pattern to match Quadlet ContainerName= convention
+- Fix image/tag/registry resolution for CLI overrides
+
 .. _changelog-0.4.0:
 
 0.4.0 — 2026-03-02
