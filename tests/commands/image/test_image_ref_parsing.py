@@ -84,7 +84,7 @@ class TestPullDigestReferences:
 
         mock_podman.pull.assert_called_once()
         called_image = mock_podman.pull.call_args[0][0]
-        assert called_image == "ghcr.io/org/app:@sha256:abc123def"
+        assert called_image == "ghcr.io/org/app@sha256:abc123def"
 
     def test_pull_tag_flag_overrides_digest(self, mocker, tmp_path):
         """--tag flag should override digest from positional ref in pull command.

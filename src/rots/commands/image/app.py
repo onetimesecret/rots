@@ -24,7 +24,7 @@ from typing import Annotated
 import cyclopts
 
 from rots import context, db
-from rots.config import Config, parse_image_reference
+from rots.config import Config, join_image_tag, parse_image_reference
 from rots.podman import Podman
 
 from ..common import JsonOutput, Lines, Quiet, Yes
@@ -119,7 +119,8 @@ def pull(
         alias = db.get_alias(cfg.db_path, tag_key, executor=ex)
         if alias:
             logger.error(
-                f"'{resolved_tag}' is a DB alias pointing to {alias.image}:{alias.tag}.\n"
+                f"'{resolved_tag}' is a DB alias pointing to"
+                f" {join_image_tag(alias.image, alias.tag)}.\n"
                 f"To pull that version, use:  ots image pull --tag {alias.tag}"
             )
         else:
@@ -137,7 +138,7 @@ def pull(
             raise SystemExit(1)
         resolved_image = cfg.private_image
 
-    full_image = f"{resolved_image}:{resolved_tag}"
+    full_image = join_image_tag(resolved_image, resolved_tag)
 
     logger.info(f"Pulling {full_image}...")
 
@@ -180,12 +181,12 @@ def pull(
     # Set as current if requested
     if set_as_current:
         # Tag in podman before updating the database
-        source_ref = f"{resolved_image}:{resolved_tag}"
+        source_ref = join_image_tag(resolved_image, resolved_tag)
         current_alias = db.get_current_image(cfg.db_path, executor=ex)
         try:
             p.tag(
                 source_ref,
-                f"{resolved_image}:current",
+                join_image_tag(resolved_image, "current"),
                 check=True,
                 capture_output=True,
                 text=True,
@@ -193,8 +194,8 @@ def pull(
             if current_alias:
                 prev_image, prev_tag = current_alias
                 p.tag(
-                    f"{prev_image}:{prev_tag}",
-                    f"{prev_image}:rollback",
+                    join_image_tag(prev_image, prev_tag),
+                    join_image_tag(prev_image, "rollback"),
                     check=True,
                     capture_output=True,
                     text=True,
@@ -283,7 +284,7 @@ def ls(
     if aliases:
         print("\nAliases:")
         for alias in aliases:
-            print(f"  {alias.alias}: {alias.image}:{alias.tag} (set {alias.set_at})")
+            print(f"  {alias.alias}: {join_image_tag(alias.image, alias.tag)} (set {alias.set_at})")
 
 
 @app.command(name="list-remote")
@@ -391,7 +392,7 @@ def set_current(
     p = Podman(executor=ex)
 
     resolved_image = image or cfg.image
-    source_ref = f"{resolved_image}:{tag}"
+    source_ref = join_image_tag(resolved_image, tag)
 
     # Verify the source image exists locally before proceeding
     try:
@@ -407,7 +408,7 @@ def set_current(
     try:
         p.tag(
             source_ref,
-            f"{resolved_image}:current",
+            join_image_tag(resolved_image, "current"),
             check=True,
             capture_output=True,
             text=True,
@@ -415,8 +416,8 @@ def set_current(
         if current_alias:
             prev_image, prev_tag = current_alias
             p.tag(
-                f"{prev_image}:{prev_tag}",
-                f"{prev_image}:rollback",
+                join_image_tag(prev_image, prev_tag),
+                join_image_tag(prev_image, "rollback"),
                 check=True,
                 capture_output=True,
                 text=True,
@@ -427,7 +428,7 @@ def set_current(
 
     previous = db.set_current(cfg.db_path, resolved_image, tag, executor=ex)
 
-    logger.info(f"CURRENT set to {resolved_image}:{tag}")
+    logger.info(f"CURRENT set to {join_image_tag(resolved_image, tag)}")
     if previous:
         logger.info(f"ROLLBACK set to previous: {previous}")
     else:
@@ -479,7 +480,7 @@ def rollback(
     # Show current state
     current = db.get_current_image(cfg.db_path, executor=ex)
     if current:
-        logger.info(f"Current: {current[0]}:{current[1]}")
+        logger.info(f"Current: {join_image_tag(current[0], current[1])}")
     else:
         logger.error("No CURRENT alias set")
         raise SystemExit(1)
@@ -490,7 +491,7 @@ def rollback(
         logger.error("No previous deployment to roll back to")
         raise SystemExit(1)
 
-    logger.info(f"Rolling back to: {previous[1][0]}:{previous[1][1]}")
+    logger.info(f"Rolling back to: {join_image_tag(previous[1][0], previous[1][1])}")
     logger.info(f"  (last deployed: {previous[1][2]})")
 
     result = db.rollback(cfg.db_path, executor=ex)
@@ -499,15 +500,15 @@ def rollback(
         # Update podman tags to reflect the new alias state
         try:
             p.tag(
-                f"{image}:{tag}",
-                f"{image}:current",
+                join_image_tag(image, tag),
+                join_image_tag(image, "current"),
                 check=True,
                 capture_output=True,
                 text=True,
             )
             p.tag(
-                f"{current[0]}:{current[1]}",
-                f"{current[0]}:rollback",
+                join_image_tag(current[0], current[1]),
+                join_image_tag(current[0], "rollback"),
                 check=True,
                 capture_output=True,
                 text=True,
@@ -515,14 +516,14 @@ def rollback(
         except Exception as e:
             logger.warning(f"podman tag failed ({e}), aliases updated in DB only")
         logger.info("Rollback complete.")
-        logger.info(f"  CURRENT: {image}:{tag}")
-        logger.info(f"  ROLLBACK: {current[0]}:{current[1]}")
+        logger.info(f"  CURRENT: {join_image_tag(image, tag)}")
+        logger.info(f"  ROLLBACK: {join_image_tag(current[0], current[1])}")
 
         if apply:
             logger.info("Applying rollback: redeploying all running instances...")
             from ..instance.app import redeploy
 
-            redeploy(identifiers=(), delay=delay)
+            redeploy(delay=delay)
         else:
             logger.info("To apply: ots instance redeploy")
     else:
@@ -585,7 +586,7 @@ def history(
     if aliases:
         print("Current aliases:")
         for alias in aliases:
-            print(f"  {alias.alias}: {alias.image}:{alias.tag}")
+            print(f"  {alias.alias}: {join_image_tag(alias.image, alias.tag)}")
         print()
 
     # Show deployment history
@@ -646,7 +647,7 @@ def aliases(json_output: JsonOutput = False):
     print("-" * 60)
     for alias in aliases_list:
         print(f"  {alias.alias}:")
-        print(f"    Image: {alias.image}:{alias.tag}")
+        print(f"    Image: {join_image_tag(alias.image, alias.tag)}")
         print(f"    Set:   {alias.set_at}")
     print("-" * 60)
 
@@ -654,11 +655,11 @@ def aliases(json_output: JsonOutput = False):
     print("\nResolution:")
     current = db.get_current_image(cfg.db_path, executor=ex)
     if current:
-        print(f"  TAG=current  -> {current[0]}:{current[1]}")
+        print(f"  TAG=current  -> {join_image_tag(current[0], current[1])}")
 
     rollback_img = db.get_rollback_image(cfg.db_path, executor=ex)
     if rollback_img:
-        print(f"  TAG=rollback -> {rollback_img[0]}:{rollback_img[1]}")
+        print(f"  TAG=rollback -> {join_image_tag(rollback_img[0], rollback_img[1])}")
 
 
 # --- Private Registry Commands ---
@@ -811,8 +812,8 @@ def push(
     src = source_image or cfg.image
     # Derive target image name from source basename (strip host prefix if present)
     src_basename = src.split("/")[-1]
-    source_full = f"{src}:{resolved_tag}"
-    target_full = f"{reg}/{src_basename}:{resolved_tag}"
+    source_full = join_image_tag(src, resolved_tag)
+    target_full = join_image_tag(f"{reg}/{src_basename}", resolved_tag)
 
     logger.info(f"Tagging {source_full} -> {target_full}")
 
@@ -932,12 +933,12 @@ def rm(
         # Try common image patterns, including configured image
         image_basename = cfg.image.split("/")[-1]
         images_to_try = [
-            f"{image_basename}:{tag}",
-            f"{cfg.image}:{tag}",
-            f"localhost/{image_basename}:{tag}",
+            join_image_tag(image_basename, tag),
+            join_image_tag(cfg.image, tag),
+            join_image_tag(f"localhost/{image_basename}", tag),
         ]
         if cfg.private_image:
-            images_to_try.append(f"{cfg.private_image}:{tag}")
+            images_to_try.append(join_image_tag(cfg.private_image, tag))
 
         removed = False
         for image in images_to_try:
@@ -1187,7 +1188,7 @@ def _build_variant(
 ) -> str:
     """Build one variant. Returns the local image tag."""
     suffix = variant.get("suffix", "")
-    local_image = f"{image_name}{suffix}:{build_tag}"
+    local_image = join_image_tag(f"{image_name}{suffix}", build_tag)
 
     build_kwargs: dict = {
         "platform": platform,
@@ -1436,7 +1437,9 @@ def _build_with_oci_config(
         logger.error("No variants to build (check .oci-build.json)")
         raise SystemExit(1)
 
-    names = [f"{image_name}{v.get('suffix', '')}:{build_tag}" for v in variants_to_build]
+    names = [
+        join_image_tag(f"{image_name}{v.get('suffix', '')}", build_tag) for v in variants_to_build
+    ]
     logger.info(f"Building {len(variants_to_build)} variant(s): {', '.join(names)}")
     logger.info(f"  Project: {proj_dir}")
     logger.info(f"  Platform: {resolved_platform}")
@@ -1554,7 +1557,7 @@ def _build_legacy(
     # Image name with optional suffix (use basename of configured image)
     image_basename = cfg.image.rsplit("/", 1)[-1]
     image_name = f"{image_basename}{suffix or ''}"
-    local_image = f"{image_name}:{build_tag}"
+    local_image = join_image_tag(image_name, build_tag)
 
     logger.info(f"Building {local_image}")
     logger.info(f"  Project: {proj_dir}")
@@ -1634,7 +1637,7 @@ def _push_images(
     for local_image in images:
         # Extract image name (without tag) from local_image
         image_name_part = local_image.rsplit(":", 1)[0]
-        target_image = f"{reg}/{image_name_part}:{build_tag}"
+        target_image = join_image_tag(f"{reg}/{image_name_part}", build_tag)
 
         logger.info(f"Tagging {local_image} -> {target_image}")
 

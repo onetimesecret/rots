@@ -837,7 +837,7 @@ class TestRollbackPodmanTag:
             rollback(apply=True, delay=0)
 
         # Should have called redeploy to apply the rollback
-        mock_redeploy.assert_called_once_with(identifiers=(), delay=0)
+        mock_redeploy.assert_called_once_with(delay=0)
         assert "Applying rollback" in caplog.text
         assert "To apply: ots instance redeploy" not in caplog.text
 
@@ -1174,7 +1174,7 @@ class TestPullPrivateRegistry:
         # The podman subprocess should receive the private registry image
         cmd = mock_run.call_args[0][0]
         full_ref = " ".join(cmd)
-        assert "registry.example.com/onetimesecret:v1.0.0" in full_ref
+        assert "registry.example.com/onetimesecret/onetimesecret:v1.0.0" in full_ref
 
     def test_pull_private_without_registry_exits(self, mocker, monkeypatch, tmp_path, caplog):
         """Scenario 17: pull --private without OTS_REGISTRY should exit with error."""

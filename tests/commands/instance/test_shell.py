@@ -455,7 +455,7 @@ class TestShellPrivateRegistry:
         instance.shell(quiet=True)
 
         cmd = _get_cmd_from_executor(mock_executor, interactive=True)
-        assert "container-registry.infra.onetime.co/onetimesecret:edge" in cmd
+        assert "container-registry.infra.onetime.co/onetimesecret/onetimesecret:edge" in cmd
 
     def test_shell_no_registry_uses_default_image(self, mocker, tmp_path):
         """shell without OTS_REGISTRY should use default image path."""

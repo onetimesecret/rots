@@ -84,7 +84,7 @@ class TestDeployImageReference:
         """deploy without reference or tag should use Config defaults."""
         mock_config, replace_calls = _setup_deploy_mocks(mocker, tmp_path)
 
-        instance.deploy(identifiers=("7043",), web=True, quiet=True)
+        instance.deploy(web="7043", quiet=True)
 
         # No dataclasses.replace should have been called
         assert len(replace_calls) == 0
@@ -97,8 +97,7 @@ class TestDeployImageReference:
 
         instance.deploy(
             reference="ghcr.io/custom/image:v2.0.0",
-            identifiers=("7043",),
-            web=True,
+            web="7043",
             quiet=True,
         )
 
@@ -112,8 +111,7 @@ class TestDeployImageReference:
 
         instance.deploy(
             reference="ghcr.io/custom/image",
-            identifiers=("7043",),
-            web=True,
+            web="7043",
             quiet=True,
         )
 
@@ -127,8 +125,7 @@ class TestDeployImageReference:
         mock_config, replace_calls = _setup_deploy_mocks(mocker, tmp_path)
 
         instance.deploy(
-            identifiers=("7043",),
-            web=True,
+            web="7043",
             tag="v0.24.0",
             quiet=True,
         )
@@ -144,8 +141,7 @@ class TestDeployImageReference:
 
         instance.deploy(
             reference="ghcr.io/custom/image:v3.0.0",
-            identifiers=("7043",),
-            web=True,
+            web="7043",
             tag="v0.24.0",
             quiet=True,
         )
@@ -161,8 +157,7 @@ class TestDeployImageReference:
 
         instance.deploy(
             reference="ghcr.io/custom/image",
-            identifiers=("7043",),
-            web=True,
+            web="7043",
             tag="v0.24.0",
             quiet=True,
         )
@@ -177,8 +172,7 @@ class TestDeployImageReference:
 
         instance.deploy(
             reference="registry:5000/org/image:v1.0",
-            identifiers=("7043",),
-            web=True,
+            web="7043",
             quiet=True,
         )
 
@@ -203,7 +197,7 @@ class TestDeployImageReference:
         mocker.patch("rots.commands.instance.app.systemd.start")
         mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.deploy(identifiers=("7043",), web=True, quiet=True)
+        instance.deploy(web="7043", quiet=True)
 
         # Config should have used the env vars
         assert mock_config.image == "ghcr.io/env/image"
@@ -217,7 +211,7 @@ class TestRedeployImageReference:
         """redeploy without reference or tag should use Config defaults."""
         mock_config, replace_calls = _setup_redeploy_mocks(mocker, tmp_path)
 
-        instance.redeploy(identifiers=("7043",), web=True, quiet=True)
+        instance.redeploy(web="7043", quiet=True)
 
         assert len(replace_calls) == 0
         mock_config.resolve_image_tag.assert_called_once()
@@ -228,8 +222,7 @@ class TestRedeployImageReference:
 
         instance.redeploy(
             reference="ghcr.io/custom/image:v2.0.0",
-            identifiers=("7043",),
-            web=True,
+            web="7043",
             quiet=True,
         )
 
@@ -242,8 +235,7 @@ class TestRedeployImageReference:
         mock_config, replace_calls = _setup_redeploy_mocks(mocker, tmp_path)
 
         instance.redeploy(
-            identifiers=("7043",),
-            web=True,
+            web="7043",
             tag="v0.24.0",
             quiet=True,
         )
@@ -258,8 +250,7 @@ class TestRedeployImageReference:
 
         instance.redeploy(
             reference="ghcr.io/custom/image:v3.0.0",
-            identifiers=("7043",),
-            web=True,
+            web="7043",
             tag="v0.24.0",
             quiet=True,
         )
@@ -273,8 +264,7 @@ class TestRedeployImageReference:
 
         instance.redeploy(
             reference="ghcr.io/org/image@sha256:abc123def",
-            identifiers=("7043",),
-            web=True,
+            web="7043",
             quiet=True,
         )
 

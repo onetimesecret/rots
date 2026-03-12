@@ -8,7 +8,7 @@ from typing import Annotated
 
 import cyclopts
 
-from rots.config import Config
+from rots.config import Config, join_image_tag
 
 from .common import JsonOutput
 
@@ -460,7 +460,7 @@ def info(
         if aliases:
             print("  Aliases:")
             for a in aliases:
-                print(f"    {a.alias}: {a.image}:{a.tag} (set {a.set_at})")
+                print(f"    {a.alias}: {join_image_tag(a.image, a.tag)} (set {a.set_at})")
         else:
             print("  Aliases:     none (CURRENT/ROLLBACK not set)")
         print()

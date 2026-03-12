@@ -12,6 +12,37 @@ Versioning <https://semver.org/spec/v2.0.0.html>`__.
 
    <!--scriv-insert-here-->
 
+.. _changelog-0.5.2:
+
+0.5.2 — 2026-03-11
+==================
+
+Changed
+-------
+
+- Change ``--web``, ``--worker``, ``--scheduler`` instance flags from
+  boolean switches to comma-separated identifiers
+  (e.g. ``--web 7043,7044``), eliminating positional argument ambiguity (#29)
+- Centralize all image:tag composition through ``join_image_tag()``
+  across config, image, instance, and db commands (~28 call sites) (#29)
+- Reject ``IMAGE`` values with embedded tags (e.g. ``IMAGE=ghcr.io/org/app:v1.0``)
+  at validation time — tag must be set separately via ``TAG`` or ``--tag`` (#29)
+
+Fixed
+-----
+
+- Fix image path truncation that dropped multi-segment paths
+  (e.g. ``onetimesecret/onetimesecret`` became ``onetimesecret``).
+  Add ``_strip_registry_prefix()`` that uses OCI convention: only strip
+  the first component when it contains a ``.`` or ``:`` (#29)
+- Fix ``--reference`` flag conflict with variadic positional identifiers
+  in ``deploy``/``redeploy`` commands (#29)
+- Fix digest references (``@sha256:...``) producing malformed OCI strings
+  when joined with ``:`` separator. Add ``join_image_tag()`` that uses
+  ``@`` for digest/sentinel tags and ``:`` for named tags (#29)
+- Filter empty strings from comma-separated instance flag parsing,
+  preventing ghost identifiers from trailing commas (#29)
+
 .. _changelog-0.5.1:
 
 0.5.1 — 2026-03-11

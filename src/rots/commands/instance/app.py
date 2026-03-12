@@ -11,7 +11,7 @@ from typing import Annotated
 import cyclopts
 
 from rots import assets, context, db, quadlet, systemd
-from rots.config import Config, parse_image_reference
+from rots.config import Config, join_image_tag, parse_image_reference
 from rots.podman import Podman
 
 from ..common import (
@@ -39,7 +39,6 @@ from ._helpers import (
 )
 from .annotations import (
     Delay,
-    Identifiers,
     InstanceType,
     SchedulerFlag,
     TypeSelector,
@@ -175,7 +174,7 @@ def _list_instances_impl(
                 )
             if deployments:
                 dep = deployments[0]
-                image_tag = f"{dep.image}:{dep.tag}"
+                image_tag = join_image_tag(dep.image, dep.tag)
                 # Format timestamp - strip microseconds and 'T'
                 deployed = dep.timestamp.split(".")[0].replace("T", " ")
                 action = dep.action
@@ -194,9 +193,9 @@ def _list_instances_impl(
 @app.command
 def ps(
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
 ):
     """Show running OTS containers (podman view).
 
@@ -208,7 +207,7 @@ def ps(
         ots instances ps --web              # Web containers only
         ots instances ps --scheduler        # Scheduler containers only
     """
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, _ids = resolve_instance_type(instance_type, web, worker, scheduler)
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
     p = Podman(executor=ex)
@@ -227,11 +226,10 @@ def ps(
 @app.default
 @app.command(name="list")
 def list_instances(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
     json_output: JsonOutput = False,
 ):
     """List instances with status, image, and deployment info.
@@ -242,12 +240,12 @@ def list_instances(
         ots instances                            # List all instances (default)
         ots instances list                       # List all instances (explicit)
         ots instances --web                      # List web instances only
-        ots instances list --web 7043 7044       # List specific web instances
+        ots instances list --web 7043,7044       # List specific web instances
         ots instances --worker                   # List worker instances
         ots instances --scheduler                # List scheduler instances
         ots instances --json                     # JSON output
     """
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     _list_instances_impl(identifiers, itype, json_output)
 
 
@@ -409,11 +407,10 @@ def run(
 @app.command
 def deploy(
     reference: ImageRef = None,
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
     tag: TagFlag = None,
     delay: Delay = 5,
     dry_run: DryRun = False,
@@ -480,8 +477,8 @@ def deploy(
     Records deployment to timeline for audit and rollback support.
 
     Examples:
-        ots instances deploy --web 7043 7044        # Deploy web on ports
-        ots instances deploy --worker 1 2           # Deploy workers 1, 2
+        ots instances deploy --web 7043,7044        # Deploy web on ports
+        ots instances deploy --worker 1,2           # Deploy workers 1, 2
         ots instances deploy --worker billing       # Deploy 'billing' worker
         ots instances deploy --scheduler main       # Deploy scheduler
         ots instances deploy --web 7043 --force     # Skip secrets check (not recommended)
@@ -495,7 +492,7 @@ def deploy(
     import datetime
     import json as json_mod
 
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
 
     # Disambiguate positional args: a bare value like "7043" is an identifier,
     # not an image reference.  Image references contain "/" or ":" or "@".
@@ -530,7 +527,7 @@ def deploy(
     image, resolved_tag = cfg.resolve_image_tag(executor=ex)
     apply_quiet(quiet)
     if not json_output:
-        logger.info(f"Image: {image}:{resolved_tag}")
+        logger.info(f"Image: {join_image_tag(image, resolved_tag)}")
         if cfg.registry:
             logger.info(f"Registry: {cfg.registry}")
         config_files = cfg.get_existing_config_files(executor=ex)
@@ -748,11 +745,10 @@ def deploy(
 @app.command
 def redeploy(
     reference: ImageRef = None,
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
     tag: TagFlag = None,
     delay: Delay = 30,
     force: Annotated[
@@ -821,7 +817,7 @@ def redeploy(
     Examples:
         ots instances redeploy                      # Redeploy all running
         ots instances redeploy --web                # Redeploy web instances
-        ots instances redeploy --web 7043 7044      # Redeploy specific web
+        ots instances redeploy --web 7043,7044      # Redeploy specific web
         ots instances redeploy --scheduler main     # Redeploy specific scheduler
         ots instances redeploy --force              # Force teardown+recreate
         ots instances redeploy --wait-timeout 60    # Wait up to 60s for systemd active
@@ -834,7 +830,7 @@ def redeploy(
     import datetime
     import json as json_mod
 
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
 
     # Disambiguate positional args (same as deploy)
     if reference and not any(c in reference for c in "/:@"):
@@ -871,7 +867,7 @@ def redeploy(
     # Resolve image/tag (handles CURRENT/ROLLBACK aliases)
     image, tag = cfg.resolve_image_tag(executor=ex)
     if not json_output:
-        logger.info(f"Image: {image}:{tag}")
+        logger.info(f"Image: {join_image_tag(image, tag)}")
         if cfg.registry:
             logger.info(f"Registry: {cfg.registry}")
         config_files = cfg.get_existing_config_files(executor=ex)
@@ -1118,11 +1114,10 @@ def redeploy(
 
 @app.command
 def undeploy(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
     delay: Delay = 5,
     dry_run: DryRun = False,
     yes: Yes = False,
@@ -1139,7 +1134,7 @@ def undeploy(
     Examples:
         ots instances undeploy                      # Undeploy all running
         ots instances undeploy --web                # Undeploy web instances
-        ots instances undeploy --web 7043 7044      # Undeploy specific web
+        ots instances undeploy --web 7043,7044      # Undeploy specific web
         ots instances undeploy --scheduler main     # Undeploy specific scheduler
         ots instances undeploy -y                   # Skip confirmation
         ots instances undeploy --json               # JSON output
@@ -1149,7 +1144,7 @@ def undeploy(
 
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
@@ -1266,11 +1261,10 @@ def undeploy(
 
 @app.command
 def start(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
 ):
     """Start systemd unit(s) for instance(s).
 
@@ -1279,12 +1273,12 @@ def start(
     Examples:
         ots instances start                         # Start all configured
         ots instances start --web                   # Start web instances
-        ots instances start --web 7043 7044         # Start specific web
+        ots instances start --web 7043,7044         # Start specific web
         ots instances start --scheduler main        # Start specific scheduler
     """
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
@@ -1305,11 +1299,10 @@ def start(
 
 @app.command
 def stop(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
 ):
     """Stop systemd unit(s) for instance(s).
 
@@ -1319,12 +1312,12 @@ def stop(
     Examples:
         ots instances stop                          # Stop all running
         ots instances stop --web                    # Stop web instances
-        ots instances stop --web 7043 7044          # Stop specific web
+        ots instances stop --web 7043,7044          # Stop specific web
         ots instances stop --scheduler              # Stop scheduler instances
     """
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
@@ -1341,11 +1334,10 @@ def stop(
 
 @app.command
 def restart(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
     delay: Delay = 30,
 ):
     """Restart systemd unit(s) for instance(s).
@@ -1357,13 +1349,13 @@ def restart(
     Examples:
         ots instances restart                       # Restart all running
         ots instances restart --web                 # Restart web instances
-        ots instances restart --web 7043 7044       # Restart specific web
+        ots instances restart --web 7043,7044       # Restart specific web
         ots instances restart --scheduler main      # Restart specific scheduler
         ots instances restart --delay 10            # Longer wait between restarts
     """
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
@@ -1380,11 +1372,10 @@ def restart(
 
 @app.command
 def enable(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
 ):
     """Enable instance(s) to start at boot.
 
@@ -1393,12 +1384,12 @@ def enable(
     Examples:
         ots instances enable                        # Enable all configured
         ots instances enable --web                  # Enable web instances
-        ots instances enable --web 7043 7044        # Enable specific web
+        ots instances enable --web 7043,7044        # Enable specific web
         ots instances enable --scheduler main       # Enable specific scheduler
     """
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
@@ -1418,11 +1409,10 @@ def enable(
 
 @app.command
 def disable(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
     yes: Yes = False,
 ):
     """Disable instance(s) from starting at boot.
@@ -1432,12 +1422,12 @@ def disable(
     Examples:
         ots instances disable                       # Disable all configured
         ots instances disable --web                 # Disable web instances
-        ots instances disable --web 7043 7044 -y    # Disable specific web
+        ots instances disable --web 7043,7044 -y    # Disable specific web
         ots instances disable --scheduler main -y   # Disable specific scheduler
     """
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
@@ -1467,11 +1457,10 @@ def disable(
 
 @app.command
 def status(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
     json_output: JsonOutput = False,
 ):
     """Show systemd status for instance(s).
@@ -1479,7 +1468,7 @@ def status(
     Examples:
         ots instances status                        # Status of all configured
         ots instances status --web                  # Status of web instances
-        ots instances status --web 7043 7044        # Status of specific web
+        ots instances status --web 7043,7044        # Status of specific web
         ots instances status --scheduler            # Status of scheduler instances
         ots instances status --json                 # JSON output
     """
@@ -1487,7 +1476,7 @@ def status(
 
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
@@ -1524,11 +1513,10 @@ def status(
 
 @app.command
 def logs(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
     lines: Lines = 50,
     follow: Follow = False,
 ):
@@ -1543,7 +1531,7 @@ def logs(
     """
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
     if not instances:
@@ -1643,11 +1631,10 @@ def show_env():
 
 @app.command(name="exec")
 def exec_shell(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
     command: Annotated[
         str,
         cyclopts.Parameter(name=["--command", "-c"], help="Command to run (default: $SHELL)"),
@@ -1667,7 +1654,7 @@ def exec_shell(
 
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     if not instances:
@@ -2176,11 +2163,10 @@ def cleanup(
 
 @app.command
 def metrics(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
     json_output: JsonOutput = False,
 ):
     """Show resource usage metrics for instance(s).
@@ -2199,7 +2185,7 @@ def metrics(
     """
     import json as json_mod
 
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
 
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
@@ -2293,11 +2279,10 @@ def metrics(
 
 @app.command
 def rollback(
-    identifiers: Identifiers = (),
     instance_type: TypeSelector = None,
-    web: WebFlag = False,
-    worker: WorkerFlag = False,
-    scheduler: SchedulerFlag = False,
+    web: WebFlag = None,
+    worker: WorkerFlag = None,
+    scheduler: SchedulerFlag = None,
     delay: Delay = 30,
     dry_run: DryRun = False,
     yes: Yes = False,
@@ -2317,7 +2302,7 @@ def rollback(
     Examples:
         ots instances rollback                        # Rollback all running
         ots instances rollback --web                  # Rollback web instances
-        ots instances rollback --web 7043 7044        # Rollback specific web
+        ots instances rollback --web 7043,7044        # Rollback specific web
         ots instances rollback --dry-run              # Preview only
         ots instances rollback -y                     # Skip confirmation
         ots instances rollback --json                 # JSON output
@@ -2325,7 +2310,7 @@ def rollback(
     import datetime
     import json as json_mod
 
-    itype = resolve_instance_type(instance_type, web, worker, scheduler)
+    itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     cfg = Config()
     ex = cfg.get_executor(host=context.host_var.get(None))
 
@@ -2355,10 +2340,10 @@ def rollback(
         if json_output:
             print(json_mod.dumps(result, indent=2))
         else:
-            logger.info(f"[dry-run] Would roll back from {current_image}:{current_tag}")
-            logger.info(
-                f"         to {rollback_image}:{rollback_tag} (last deployed: {rollback_ts})"
-            )
+            current_ref = join_image_tag(current_image, current_tag)
+            rollback_ref = join_image_tag(rollback_image, rollback_tag)
+            logger.info(f"[dry-run] Would roll back from {current_ref}")
+            logger.info(f"         to {rollback_ref} (last deployed: {rollback_ts})")
             if instances:
                 for inst_type_key, ids in instances.items():
                     logger.info(f"[dry-run] Would redeploy {inst_type_key.value}: {', '.join(ids)}")
@@ -2368,8 +2353,10 @@ def rollback(
 
     # Confirm unless --yes or --json
     if not yes and not json_output:
-        print(f"Rolling back from {current_image}:{current_tag}")
-        print(f"           to    {rollback_image}:{rollback_tag} (last deployed: {rollback_ts})")
+        current_ref = join_image_tag(current_image, current_tag)
+        rollback_ref = join_image_tag(rollback_image, rollback_tag)
+        print(f"Rolling back from {current_ref}")
+        print(f"           to    {rollback_ref} (last deployed: {rollback_ts})")
         response = input("Continue? [y/N] ")
         if response.lower() not in ("y", "yes"):
             print("Aborted")
@@ -2389,8 +2376,8 @@ def rollback(
 
     if not json_output:
         logger.info(
-            f"Aliases updated: CURRENT={new_image}:{new_tag},"
-            f" ROLLBACK={current_image}:{current_tag}"
+            f"Aliases updated: CURRENT={join_image_tag(new_image, new_tag)},"
+            f" ROLLBACK={join_image_tag(current_image, current_tag)}"
         )
 
     # Redeploy running instances with the rolled-back image/tag

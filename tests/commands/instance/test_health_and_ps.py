@@ -336,7 +336,7 @@ class TestPsCommand:
             return_value=mock_podman_instance,
         )
 
-        instance.ps(web=True)
+        instance.ps(web="")
 
         call_kwargs = mock_podman_ps.call_args
         assert call_kwargs.kwargs["filter"] == "name=onetime-web@"
@@ -355,7 +355,7 @@ class TestPsCommand:
             return_value=mock_podman_instance,
         )
 
-        instance.ps(scheduler=True)
+        instance.ps(scheduler="")
 
         call_kwargs = mock_podman_ps.call_args
         assert call_kwargs.kwargs["filter"] == "name=onetime-scheduler@"
@@ -374,7 +374,7 @@ class TestPsCommand:
             return_value=mock_podman_instance,
         )
 
-        instance.ps(worker=True)
+        instance.ps(worker="")
 
         call_kwargs = mock_podman_ps.call_args
         assert call_kwargs.kwargs["filter"] == "name=onetime-worker@"

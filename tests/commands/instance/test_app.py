@@ -269,19 +269,19 @@ class TestDeployCommand:
         mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         # Should not raise SystemExit - validation no longer blocks deploy
-        instance.deploy(identifiers=("7143",), web=True)
+        instance.deploy(web="7143")
 
     def test_deploy_requires_identifiers(self, mocker, capsys):
         """deploy without identifiers should fail."""
         with pytest.raises(SystemExit) as exc_info:
-            instance.deploy(identifiers=(), web=True)
+            instance.deploy(web="")
         assert "Identifiers required" in str(exc_info.value)
 
     def test_deploy_requires_type(self, mocker, capsys):
-        """deploy with identifiers but no type should fail."""
+        """deploy without type flag should fail (identifiers are embedded in flags)."""
         with pytest.raises(SystemExit) as exc_info:
-            instance.deploy(identifiers=("7143",))
-        assert "Instance type required" in str(exc_info.value)
+            instance.deploy()
+        assert "Identifiers required" in str(exc_info.value)
 
     def test_deploy_calls_assets_update(self, mocker, tmp_path):
         """deploy should update assets for web containers."""
@@ -300,7 +300,7 @@ class TestDeployCommand:
         mocker.patch("rots.commands.instance.app.systemd.start")
         mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.deploy(identifiers=("7143",), web=True)
+        instance.deploy(web="7143")
 
         from unittest.mock import ANY
 
@@ -328,7 +328,7 @@ class TestDeployWorkerCommand:
         mocker.patch("rots.commands.instance.app.systemd.start")
         mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.deploy(identifiers=("1",), worker=True)
+        instance.deploy(worker="1")
 
         from unittest.mock import ANY
 
@@ -352,7 +352,7 @@ class TestDeployWorkerCommand:
         mocker.patch("rots.commands.instance.app.systemd.start")
         mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.deploy(identifiers=("1",), worker=True)
+        instance.deploy(worker="1")
 
         mock_assets.assert_not_called()
 
@@ -373,7 +373,7 @@ class TestDeployWorkerCommand:
         mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
         mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.deploy(identifiers=("1",), worker=True)
+        instance.deploy(worker="1")
 
         mock_start.assert_called_once_with("onetime-worker@1", executor=mock_config.get_executor())
 
@@ -396,7 +396,7 @@ class TestRedeployCommand:
             return_value=[],
         )
 
-        instance.redeploy(identifiers=())
+        instance.redeploy()
 
         captured = capsys.readouterr()
         assert "No running instances found" in captured.err
@@ -435,7 +435,7 @@ class TestRedeployCommand:
         )
 
         # Should not raise AttributeError
-        instance.redeploy(identifiers=())
+        instance.redeploy()
 
 
 class TestShowEnvCommand:
@@ -495,7 +495,7 @@ class TestExecCommand:
             "rots.commands.instance._helpers.systemd.discover_scheduler_instances",
             return_value=[],
         )
-        instance.exec_shell(identifiers=())
+        instance.exec_shell()
         captured = capsys.readouterr()
         assert "No running instances found" in captured.err
 
@@ -507,7 +507,7 @@ class TestExecCommand:
         mock_ex.run_interactive.return_value = 0
         mocker.patch.dict("os.environ", {"SHELL": "/bin/bash"})
 
-        instance.exec_shell(identifiers=("7043",), web=True)
+        instance.exec_shell(web="7043")
 
         mock_ex.run_interactive.assert_called_once()
         call_args = mock_ex.run_interactive.call_args[0][0]
@@ -614,7 +614,7 @@ class TestEnableCommand:
         )
         mock_enable = mocker.patch("rots.commands.instance.app.systemd.enable")
 
-        instance.enable(identifiers=("7043",), web=True)
+        instance.enable(web="7043")
 
         mock_enable.assert_called_once_with("onetime-web@7043", executor=None)
 
@@ -634,7 +634,7 @@ class TestStopCommand:
         """stop should call systemd.stop for each instance."""
         mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
-        instance.stop(identifiers=("7043",), web=True)
+        instance.stop(web="7043")
 
         mock_stop.assert_called_once_with("onetime-web@7043", executor=None)
         captured = capsys.readouterr()
@@ -656,7 +656,7 @@ class TestStopCommand:
         )
         mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
-        instance.stop(identifiers=())
+        instance.stop()
 
         assert mock_stop.call_count == 3
         calls = [c[0][0] for c in mock_stop.call_args_list]
@@ -677,7 +677,7 @@ class TestRestartCommand:
         """restart should call systemd.restart for each instance."""
         mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
 
-        instance.restart(identifiers=("7043",), web=True)
+        instance.restart(web="7043")
 
         mock_restart.assert_called_once_with("onetime-web@7043", executor=None)
         captured = capsys.readouterr()
@@ -688,7 +688,7 @@ class TestRestartCommand:
         mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
         mock_sleep = mocker.patch("rots.commands.instance._helpers.time.sleep")
 
-        instance.restart(identifiers=("7043", "7044", "7045"), web=True)
+        instance.restart(web="7043,7044,7045")
 
         assert mock_restart.call_count == 3
         calls = [c[0][0] for c in mock_restart.call_args_list]
@@ -725,7 +725,7 @@ class TestLogsCommand:
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
 
-        instance.logs(identifiers=())
+        instance.logs()
 
         # The executor (LocalExecutor) shells out via subprocess.run
         mock_run.assert_called_once()
@@ -763,7 +763,7 @@ class TestDisableCommand:
         )
         mocker.patch("builtins.input", return_value="n")
 
-        instance.disable(identifiers=(), web=True, yes=False)
+        instance.disable(web="", yes=False)
 
         captured = capsys.readouterr()
         assert "Aborted" in captured.out
@@ -784,7 +784,7 @@ class TestDisableCommand:
         )
         mock_disable = mocker.patch("rots.commands.instance._helpers.systemd.disable")
 
-        instance.disable(identifiers=("7043",), web=True, yes=True)
+        instance.disable(web="7043", yes=True)
 
         mock_disable.assert_called_once()
         call_args = mock_disable.call_args
@@ -801,52 +801,50 @@ class TestResolveInstanceType:
         """Should return None when no type specified."""
         from rots.commands.instance.annotations import resolve_instance_type
 
-        result = resolve_instance_type(None, web=False, worker=False, scheduler=False)
-        assert result is None
+        result = resolve_instance_type(None, web=None, worker=None, scheduler=None)
+        assert result == (None, ())
 
     def test_returns_type_from_explicit_param(self):
         """Should return type from --type parameter."""
         from rots.commands.instance.annotations import resolve_instance_type
 
-        result = resolve_instance_type(
-            InstanceType.WORKER, web=False, worker=False, scheduler=False
-        )
-        assert result == InstanceType.WORKER
+        result = resolve_instance_type(InstanceType.WORKER, web=None, worker=None, scheduler=None)
+        assert result == (InstanceType.WORKER, ())
 
     def test_returns_web_from_flag(self):
         """Should return WEB when --web flag set."""
         from rots.commands.instance.annotations import resolve_instance_type
 
-        result = resolve_instance_type(None, web=True, worker=False, scheduler=False)
-        assert result == InstanceType.WEB
+        result = resolve_instance_type(None, web="", worker=None, scheduler=None)
+        assert result == (InstanceType.WEB, ())
 
     def test_returns_worker_from_flag(self):
         """Should return WORKER when --worker flag set."""
         from rots.commands.instance.annotations import resolve_instance_type
 
-        result = resolve_instance_type(None, web=False, worker=True, scheduler=False)
-        assert result == InstanceType.WORKER
+        result = resolve_instance_type(None, web=None, worker="", scheduler=None)
+        assert result == (InstanceType.WORKER, ())
 
     def test_returns_scheduler_from_flag(self):
         """Should return SCHEDULER when --scheduler flag set."""
         from rots.commands.instance.annotations import resolve_instance_type
 
-        result = resolve_instance_type(None, web=False, worker=False, scheduler=True)
-        assert result == InstanceType.SCHEDULER
+        result = resolve_instance_type(None, web=None, worker=None, scheduler="")
+        assert result == (InstanceType.SCHEDULER, ())
 
     def test_raises_on_multiple_flags(self):
         """Should raise when multiple shorthand flags set."""
         from rots.commands.instance.annotations import resolve_instance_type
 
         with pytest.raises(SystemExit):
-            resolve_instance_type(None, web=True, worker=True, scheduler=False)
+            resolve_instance_type(None, web="", worker="", scheduler=None)
 
     def test_raises_on_type_plus_flag(self):
         """Should raise when both --type and shorthand flag used."""
         from rots.commands.instance.annotations import resolve_instance_type
 
         with pytest.raises(SystemExit):
-            resolve_instance_type(InstanceType.WEB, web=False, worker=True, scheduler=False)
+            resolve_instance_type(InstanceType.WEB, web=None, worker="", scheduler=None)
 
 
 class TestSchedulerCommands:
@@ -856,7 +854,7 @@ class TestSchedulerCommands:
         """stop --scheduler should call systemd.stop for scheduler instances."""
         mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
-        instance.stop(identifiers=("main",), scheduler=True)
+        instance.stop(scheduler="main")
 
         mock_stop.assert_called_once_with("onetime-scheduler@main", executor=None)
         captured = capsys.readouterr()
@@ -866,7 +864,7 @@ class TestSchedulerCommands:
         """restart --scheduler should call systemd.restart for scheduler instances."""
         mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
 
-        instance.restart(identifiers=("main",), scheduler=True)
+        instance.restart(scheduler="main")
 
         mock_restart.assert_called_once_with("onetime-scheduler@main", executor=None)
         captured = capsys.readouterr()
@@ -876,7 +874,7 @@ class TestSchedulerCommands:
         """start --scheduler should call systemd.start for scheduler instances."""
         mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
 
-        instance.start(identifiers=("main",), scheduler=True)
+        instance.start(scheduler="main")
 
         mock_start.assert_called_once_with("onetime-scheduler@main", executor=None)
         captured = capsys.readouterr()
@@ -888,7 +886,7 @@ class TestSchedulerCommands:
             "rots.commands.instance.app.systemd.status",
         )
 
-        instance.status(identifiers=("main",), scheduler=True)
+        instance.status(scheduler="main")
 
         # Should call systemd.status for the scheduler unit
         mock_status.assert_called_once_with("onetime-scheduler@main", executor=None)
@@ -898,7 +896,7 @@ class TestSchedulerCommands:
         mock_run = mocker.patch("subprocess.run")
         mock_run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
 
-        instance.logs(identifiers=("main",), scheduler=True)
+        instance.logs(scheduler="main")
 
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
@@ -909,7 +907,7 @@ class TestSchedulerCommands:
         """enable --scheduler should call systemd.enable for scheduler instances."""
         mock_enable = mocker.patch("rots.commands.instance.app.systemd.enable")
 
-        instance.enable(identifiers=("main",), scheduler=True)
+        instance.enable(scheduler="main")
 
         mock_enable.assert_called_once_with("onetime-scheduler@main", executor=None)
 
@@ -917,7 +915,7 @@ class TestSchedulerCommands:
         """disable --scheduler should call systemd.disable for scheduler instances."""
         mock_disable = mocker.patch("rots.commands.instance.app.systemd.disable")
 
-        instance.disable(identifiers=("main",), scheduler=True, yes=True)
+        instance.disable(scheduler="main", yes=True)
 
         mock_disable.assert_called_once_with("onetime-scheduler@main", executor=None)
 
@@ -929,7 +927,7 @@ class TestSchedulerCommands:
         )
         mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
-        instance.stop(identifiers=(), scheduler=True)
+        instance.stop(scheduler="")
 
         assert mock_stop.call_count == 2
         calls = [c[0][0] for c in mock_stop.call_args_list]
@@ -944,7 +942,7 @@ class TestSchedulerCommands:
         )
         mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
 
-        instance.restart(identifiers=(), scheduler=True)
+        instance.restart(scheduler="")
 
         mock_restart.assert_called_once_with("onetime-scheduler@main", executor=None)
 
@@ -952,7 +950,7 @@ class TestSchedulerCommands:
         """Commands should handle multiple scheduler identifiers."""
         mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
-        instance.stop(identifiers=("main", "cron", "backup"), scheduler=True)
+        instance.stop(scheduler="main,cron,backup")
 
         assert mock_stop.call_count == 3
         calls = [c[0][0] for c in mock_stop.call_args_list]
@@ -964,7 +962,7 @@ class TestSchedulerCommands:
         """Commands should work with --type scheduler instead of --scheduler flag."""
         mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
-        instance.stop(identifiers=("main",), instance_type=InstanceType.SCHEDULER)
+        instance.stop(scheduler="main")
 
         mock_stop.assert_called_once_with("onetime-scheduler@main", executor=None)
 
@@ -972,7 +970,7 @@ class TestSchedulerCommands:
         """Scheduler should accept string identifiers (not just numeric)."""
         mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
 
-        instance.restart(identifiers=("daily-cleanup", "weekly-reports"), scheduler=True)
+        instance.restart(scheduler="daily-cleanup,weekly-reports")
 
         assert mock_restart.call_count == 2
         calls = [c[0][0] for c in mock_restart.call_args_list]
@@ -1008,7 +1006,7 @@ class TestDeployEnvVarResolution:
             return_value=tmp_path / "deployments.db",
         )
 
-        instance.deploy(identifiers=("7043",), web=True, dry_run=True)
+        instance.deploy(web="7043", dry_run=True)
 
         captured = capsys.readouterr()
         combined = captured.out + captured.err
@@ -1037,7 +1035,7 @@ class TestDeployEnvVarResolution:
         )
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.deploy(identifiers=("7043",), web=True)
+        instance.deploy(web="7043")
 
         # Verify db.record_deployment was called with the custom image/tag
         mock_record.assert_called_once()
@@ -1078,7 +1076,7 @@ class TestRedeployEnvVarResolution:
             return_value={InstanceType.WEB: ["7043"]},
         )
 
-        instance.redeploy(identifiers=("7043",), web=True, dry_run=True)
+        instance.redeploy(web="7043", dry_run=True)
 
         captured = capsys.readouterr()
         combined = captured.out + captured.err
@@ -1113,7 +1111,7 @@ class TestRedeployEnvVarResolution:
         mocker.patch("rots.commands.instance.app.systemd.recreate")
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.redeploy(identifiers=("7043",), web=True)
+        instance.redeploy(web="7043")
 
         # Verify db.record_deployment was called with the custom image/tag
         mock_record.assert_called_once()
@@ -1150,7 +1148,7 @@ class TestDeployPermissionError:
         )
 
         with pytest.raises(PermissionError):
-            instance.deploy(identifiers=("7143",), web=True)
+            instance.deploy(web="7143")
 
     def test_deploy_quadlet_write_permission_denied_does_not_start_unit(self, mocker, tmp_path):
         """When quadlet write fails, systemd.start must not be called."""
@@ -1175,7 +1173,7 @@ class TestDeployPermissionError:
         mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
 
         with pytest.raises(PermissionError):
-            instance.deploy(identifiers=("7143",), web=True)
+            instance.deploy(web="7143")
 
         mock_start.assert_not_called()
 
@@ -1215,7 +1213,7 @@ class TestDeployPortConflict:
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         with pytest.raises(SystemExit):
-            instance.deploy(identifiers=("7143",), web=True)
+            instance.deploy(web="7143")
 
         # db.record_deployment must have been called at least once with success=False
         assert mock_record.called
@@ -1248,7 +1246,7 @@ class TestDeployPortConflict:
         mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         with pytest.raises(SystemExit):
-            instance.deploy(identifiers=("7143", "7144"), web=True)
+            instance.deploy(web="7143,7144")
 
         # Only one start should have been attempted
         assert mock_start.call_count == 1
@@ -1284,7 +1282,7 @@ class TestDeployPartialFailure:
         mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
 
         with pytest.raises(PermissionError):
-            instance.deploy(identifiers=("7143",), web=True)
+            instance.deploy(web="7143")
 
         # Assets ran to completion
         from unittest.mock import ANY
@@ -1315,7 +1313,7 @@ class TestDeployPartialFailure:
 
         exc = None
         try:
-            instance.deploy(identifiers=("7143",), web=True)
+            instance.deploy(web="7143")
         except PermissionError as e:
             exc = e
 
@@ -1350,7 +1348,7 @@ class TestDeployWaitFlag:
         mocker.patch("rots.commands.instance.app.db.record_deployment")
         mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
-        instance.deploy(identifiers=("7043",), web=True, wait=True)
+        instance.deploy(web="7043", wait=True)
 
         mock_http_healthy.assert_called_once_with(
             7043, timeout=60, executor=mock_config.get_executor()
@@ -1366,7 +1364,7 @@ class TestDeployWaitFlag:
         mocker.patch("rots.commands.instance.app.db.record_deployment")
         mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
-        instance.deploy(identifiers=("7043",), web=True, wait=False)
+        instance.deploy(web="7043", wait=False)
 
         mock_http_healthy.assert_not_called()
 
@@ -1388,7 +1386,7 @@ class TestDeployWaitFlag:
         mocker.patch("rots.commands.instance.app.db.record_deployment")
         mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
-        instance.deploy(identifiers=("1",), worker=True, wait=True)
+        instance.deploy(worker="1", wait=True)
 
         mock_http_healthy.assert_not_called()
 
@@ -1410,7 +1408,7 @@ class TestDeployWaitFlag:
         mocker.patch("rots.commands.instance.app.db.record_deployment")
         mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
-        instance.deploy(identifiers=("main",), scheduler=True, wait=True)
+        instance.deploy(scheduler="main", wait=True)
 
         mock_http_healthy.assert_not_called()
 
@@ -1430,7 +1428,7 @@ class TestDeployWaitFlag:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            instance.deploy(identifiers=("7043",), web=True, wait=True)
+            instance.deploy(web="7043", wait=True)
 
         assert exc_info.value.code == 1
         # Should have recorded a failure in deployment history
@@ -1488,7 +1486,7 @@ class TestRedeployWaitFlag:
         )
         mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
-        instance.redeploy(identifiers=(), web=True, wait=True)
+        instance.redeploy(web="", wait=True)
 
         mock_http_healthy.assert_called_once()
         call_args = mock_http_healthy.call_args
@@ -1511,7 +1509,7 @@ class TestRedeployWaitFlag:
         )
         mock_http_healthy = mocker.patch("rots.commands.instance.app.systemd.wait_for_http_healthy")
 
-        instance.redeploy(identifiers=(), web=True, wait=False)
+        instance.redeploy(web="", wait=False)
 
         mock_http_healthy.assert_not_called()
 
@@ -1536,7 +1534,7 @@ class TestRedeployWaitFlag:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            instance.redeploy(identifiers=(), web=True, wait=True)
+            instance.redeploy(web="", wait=True)
 
         assert exc_info.value.code == 1
         calls = mock_record.call_args_list
@@ -1647,7 +1645,7 @@ class TestRollbackCommand:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            instance.rollback(web=True)
+            instance.rollback(web="")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -1662,7 +1660,7 @@ class TestRollbackCommand:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            instance.rollback(web=True)
+            instance.rollback(web="")
 
         assert exc_info.value.code == 1
 
@@ -1682,7 +1680,7 @@ class TestRollbackCommand:
         )
         mock_recreate = mocker.patch("rots.commands.instance.app.systemd.recreate")
 
-        instance.rollback(web=True, dry_run=True)
+        instance.rollback(web="", dry_run=True)
 
         captured = capsys.readouterr()
         assert "v2.0.0" in captured.err
@@ -1707,7 +1705,7 @@ class TestRollbackCommand:
             return_value={},
         )
 
-        instance.rollback(web=True, dry_run=True, json_output=True)
+        instance.rollback(web="", dry_run=True, json_output=True)
 
         captured = capsys.readouterr()
         data = json.loads(captured.out)
@@ -1743,7 +1741,7 @@ class TestRollbackCommand:
         mock_recreate = mocker.patch("rots.commands.instance.app.systemd.recreate")
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.rollback(web=True, yes=True)
+        instance.rollback(web="", yes=True)
 
         mock_db_rollback.assert_called_once()
         mock_recreate.assert_called_once()
@@ -1765,7 +1763,7 @@ class TestRollbackCommand:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            instance.rollback(web=True, yes=True)
+            instance.rollback(web="", yes=True)
 
         assert exc_info.value.code == 1
 
@@ -1789,7 +1787,7 @@ class TestRollbackCommand:
         )
         mock_recreate = mocker.patch("rots.commands.instance.app.systemd.recreate")
 
-        instance.rollback(web=True, yes=True)
+        instance.rollback(web="", yes=True)
 
         # Should succeed without redeploying
         mock_recreate.assert_not_called()
@@ -1824,7 +1822,7 @@ class TestDeployHooks:
         mocker.patch("rots.commands.instance.app.db.record_deployment")
         mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
-        instance.deploy(identifiers=("7043",), web=True, pre_hook="./scan.sh")
+        instance.deploy(web="7043", pre_hook="./scan.sh")
 
         mock_run_hook.assert_called_once()
         args, kwargs = mock_run_hook.call_args
@@ -1842,7 +1840,7 @@ class TestDeployHooks:
         mocker.patch("rots.commands.instance.app.db.record_deployment")
         mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
-        instance.deploy(identifiers=("7043",), web=True, post_hook="./notify.sh")
+        instance.deploy(web="7043", post_hook="./notify.sh")
 
         mock_run_hook.assert_called_once()
         args, kwargs = mock_run_hook.call_args
@@ -1861,7 +1859,7 @@ class TestDeployHooks:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            instance.deploy(identifiers=("7043",), web=True, pre_hook="./failing-scan.sh")
+            instance.deploy(web="7043", pre_hook="./failing-scan.sh")
 
         assert exc_info.value.code == 1
         # systemd.start should never have been called
@@ -1876,7 +1874,7 @@ class TestDeployHooks:
         mocker.patch("rots.commands.instance.app.quadlet.render_web_template", return_value="")
         mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
-        instance.deploy(identifiers=("7043",), web=True, pre_hook="./scan.sh", dry_run=True)
+        instance.deploy(web="7043", pre_hook="./scan.sh", dry_run=True)
 
         mock_run_hook.assert_not_called()
 
@@ -1889,7 +1887,7 @@ class TestDeployHooks:
         mocker.patch("rots.commands.instance.app.quadlet.render_web_template", return_value="")
         mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
-        instance.deploy(identifiers=("7043",), web=True, post_hook="./notify.sh", dry_run=True)
+        instance.deploy(web="7043", post_hook="./notify.sh", dry_run=True)
 
         mock_run_hook.assert_not_called()
 
@@ -1940,7 +1938,7 @@ class TestRedeployHooks:
         )
         mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
-        instance.redeploy(identifiers=(), web=True, pre_hook="./scan.sh")
+        instance.redeploy(web="", pre_hook="./scan.sh")
 
         mock_run_hook.assert_called_once()
         args, kwargs = mock_run_hook.call_args
@@ -1963,7 +1961,7 @@ class TestRedeployHooks:
         )
         mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
-        instance.redeploy(identifiers=(), web=True, post_hook="./notify.sh")
+        instance.redeploy(web="", post_hook="./notify.sh")
 
         mock_run_hook.assert_called_once()
         args, kwargs = mock_run_hook.call_args
@@ -1983,7 +1981,7 @@ class TestRedeployHooks:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            instance.redeploy(identifiers=(), web=True, pre_hook="./failing-scan.sh")
+            instance.redeploy(web="", pre_hook="./failing-scan.sh")
 
         assert exc_info.value.code == 1
         mock_recreate.assert_not_called()
@@ -2079,7 +2077,7 @@ class TestEnableDisableRequireSystemctl:
         mocker.patch("shutil.which", return_value=None)
 
         with pytest.raises(SystemExit) as exc_info:
-            instance.enable(identifiers=("7043",), web=True)
+            instance.enable(web="7043")
 
         assert exc_info.value.code == 1
 
@@ -2088,7 +2086,7 @@ class TestEnableDisableRequireSystemctl:
         mocker.patch("shutil.which", return_value=None)
 
         with pytest.raises(SystemExit) as exc_info:
-            instance.disable(identifiers=("7043",), web=True, yes=True)
+            instance.disable(web="7043", yes=True)
 
         assert exc_info.value.code == 1
 
@@ -2108,7 +2106,7 @@ class TestEnableDisableRequireSystemctl:
         )
         mock_enable = mocker.patch("rots.commands.instance.app.systemd.enable")
 
-        instance.enable(identifiers=("7043",), web=True)
+        instance.enable(web="7043")
 
         mock_enable.assert_called_once_with("onetime-web@7043", executor=None)
 
@@ -2128,7 +2126,7 @@ class TestEnableDisableRequireSystemctl:
         )
         mock_disable = mocker.patch("rots.commands.instance.app.systemd.disable")
 
-        instance.disable(identifiers=("7043",), web=True, yes=True)
+        instance.disable(web="7043", yes=True)
 
         mock_disable.assert_called_once_with("onetime-web@7043", executor=None)
 
@@ -2537,7 +2535,7 @@ class TestExecShellCommand:
             return_value=[],
         )
 
-        instance.exec_shell(web=True)
+        instance.exec_shell(web="")
 
         mock_ex.run_interactive.assert_called_once()
         cmd = mock_ex.run_interactive.call_args[0][0]
@@ -2565,7 +2563,7 @@ class TestExecShellCommand:
             return_value=[],
         )
 
-        instance.exec_shell(web=True, command="/bin/sh")
+        instance.exec_shell(web="", command="/bin/sh")
 
         cmd = mock_ex.run_interactive.call_args[0][0]
         assert "/bin/sh" in cmd
@@ -2672,7 +2670,7 @@ class TestMetricsCommand:
 
         mock_executor.run.side_effect = mock_run_side_effect
 
-        instance.metrics(web=True)
+        instance.metrics(web="")
 
         captured = capsys.readouterr()
         assert "TYPE" in captured.out
@@ -2823,7 +2821,7 @@ class TestRemoteExecutorPropagation:
         mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.deploy(identifiers=("7143",), web=True)
+        instance.deploy(web="7143")
 
         # Verify executor was passed through
         mock_start.assert_called_once()
@@ -2855,7 +2853,7 @@ class TestRemoteExecutorPropagation:
         mock_recreate = mocker.patch("rots.commands.instance.app.systemd.recreate")
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.redeploy(identifiers=(), web=True)
+        instance.redeploy(web="")
 
         mock_recreate.assert_called_once()
         assert mock_recreate.call_args.kwargs["executor"] is mock_executor
@@ -2887,7 +2885,7 @@ class TestRemoteExecutorPropagation:
         mock_recreate = mocker.patch("rots.commands.instance.app.systemd.recreate")
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.rollback(web=True, yes=True)
+        instance.rollback(web="", yes=True)
 
         # db.get_previous_tags and db.rollback receive executor
         mock_get_tags.assert_called_once()
@@ -2912,7 +2910,7 @@ class TestRemoteExecutorPropagation:
         mock_reset = mocker.patch("rots.commands.instance.app.systemd.reset_failed")
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
-        instance.undeploy(identifiers=("7043",), web=True, yes=True)
+        instance.undeploy(web="7043", yes=True)
 
         mock_stop.assert_called_once()
         assert mock_stop.call_args.kwargs["executor"] is mock_executor
@@ -2932,7 +2930,7 @@ class TestRemoteExecutorPropagation:
         )
         mock_start = mocker.patch("rots.commands.instance.app.systemd.start")
 
-        instance.start(identifiers=("7043",), web=True)
+        instance.start(web="7043")
 
         mock_start.assert_called_once()
         assert mock_start.call_args.kwargs["executor"] is mock_executor
@@ -2946,7 +2944,7 @@ class TestRemoteExecutorPropagation:
         )
         mock_stop = mocker.patch("rots.commands.instance.app.systemd.stop")
 
-        instance.stop(identifiers=("7043",), web=True)
+        instance.stop(web="7043")
 
         mock_stop.assert_called_once()
         assert mock_stop.call_args.kwargs["executor"] is mock_executor
@@ -2960,7 +2958,7 @@ class TestRemoteExecutorPropagation:
         )
         mock_restart = mocker.patch("rots.commands.instance.app.systemd.restart")
 
-        instance.restart(identifiers=("7043",), web=True, delay=0)
+        instance.restart(web="7043", delay=0)
 
         mock_restart.assert_called_once()
         assert mock_restart.call_args.kwargs["executor"] is mock_executor
@@ -2974,7 +2972,7 @@ class TestRemoteExecutorPropagation:
         )
         mock_enable = mocker.patch("rots.commands.instance.app.systemd.enable")
 
-        instance.enable(identifiers=("7043",), web=True)
+        instance.enable(web="7043")
 
         mock_enable.assert_called_once()
         assert mock_enable.call_args.kwargs["executor"] is mock_executor
@@ -2988,7 +2986,7 @@ class TestRemoteExecutorPropagation:
         )
         mock_disable = mocker.patch("rots.commands.instance.app.systemd.disable")
 
-        instance.disable(identifiers=("7043",), web=True, yes=True)
+        instance.disable(web="7043", yes=True)
 
         mock_disable.assert_called_once()
         assert mock_disable.call_args.kwargs["executor"] is mock_executor
@@ -3005,7 +3003,7 @@ class TestRemoteExecutorPropagation:
             return_value="active",
         )
 
-        instance.status(identifiers=("7043",), web=True, json_output=True)
+        instance.status(web="7043", json_output=True)
 
         mock_is_active.assert_called_once()
         assert mock_is_active.call_args.kwargs["executor"] is mock_executor
@@ -3019,7 +3017,7 @@ class TestRemoteExecutorPropagation:
         )
         mock_status = mocker.patch("rots.commands.instance.app.systemd.status")
 
-        instance.status(identifiers=("7043",), web=True, json_output=False)
+        instance.status(web="7043", json_output=False)
 
         mock_status.assert_called_once()
         assert mock_status.call_args.kwargs["executor"] is mock_executor
@@ -3041,7 +3039,7 @@ class TestRemoteExecutorPropagation:
         mock_result.stderr = ""
         mock_executor.run.return_value = mock_result
 
-        instance.logs(identifiers=("7043",), web=True, follow=False)
+        instance.logs(web="7043", follow=False)
 
         mock_executor.run.assert_called_once()
         cmd = mock_executor.run.call_args[0][0]
@@ -3176,7 +3174,7 @@ class TestStreamingCommands:
             return_value=[],
         )
 
-        instance.exec_shell(web=True)
+        instance.exec_shell(web="")
 
         mock_ex.run_interactive.assert_called_once()
         mock_ex.run_stream.assert_not_called()
@@ -3235,7 +3233,7 @@ class TestStreamingCommands:
             return_value=[],
         )
 
-        instance.logs(web=True, follow=True)
+        instance.logs(web="", follow=True)
 
         mock_ex.run_stream.assert_called_once()
         # run() should NOT be called for follow mode
