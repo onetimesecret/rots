@@ -9,7 +9,7 @@
 
 [project]
 name = "rots"
-version = "0.5.2"
+version = "0.5.3"
 description = "Service orchestration for OneTimeSecret: Podman Quadlets and systemd service management"
 readme = "README.md"
 requires-python = ">=3.11"

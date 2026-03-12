@@ -12,9 +12,9 @@ Versioning <https://semver.org/spec/v2.0.0.html>`__.
 
    <!--scriv-insert-here-->
 
-.. _changelog-0.5.2:
+.. _changelog-0.5.3:
 
-0.5.2 — 2026-03-11
+0.5.3 — 2026-03-12
 ==================
 
 Changed
