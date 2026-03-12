@@ -1425,6 +1425,7 @@ class TestWriteTemplateRemote:
         cfg.config_dir = "/etc/onetimesecret"
         cfg.memory_max = None
         cfg.cpu_quota = None
+        cfg.registry = "ghcr.io"
         cfg.web_template_path = tmp_path / "onetime-web@.container"
 
         path = tmp_path / "onetime-web@.container"
@@ -1436,7 +1437,8 @@ class TestWriteTemplateRemote:
         tee_call = [c for c in mock_ex.run.call_args_list if c[0][0][0] == "tee"]
         assert len(tee_call) == 1
         assert tee_call[0][0][0] == ["tee", str(path)]
-        assert "ghcr.io/ots:latest" in tee_call[0][1]["input"]
+        # With registry set, image resolves to onetime.image (companion .image unit)
+        assert "Image=onetime.image" in tee_call[0][1]["input"]
 
         # Should NOT write to local filesystem
         assert not path.exists()

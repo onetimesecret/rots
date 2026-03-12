@@ -210,6 +210,7 @@ class Config:
     web_template_path: Path = Path("/etc/containers/systemd/onetime-web@.container")
     worker_template_path: Path = Path("/etc/containers/systemd/onetime-worker@.container")
     scheduler_template_path: Path = Path("/etc/containers/systemd/onetime-scheduler@.container")
+    image_template_path: Path = Path("/etc/containers/systemd/onetime.image")
 
     # Private registry configuration (optional, set via OTS_REGISTRY env var)
     registry: str | None = field(default_factory=lambda: os.environ.get("OTS_REGISTRY"))

@@ -91,7 +91,7 @@ TimeoutStopSec=30
 [Container]
 ContainerName=onetime-web-%i
 Image={image}
-{auth_section}Network=host
+Network=host
 
 # Syslog tag for per-instance log filtering: journalctl -t onetime-web-7043 -f
 PodmanArgs=--log-opt tag=onetime-web-%i
@@ -325,7 +325,6 @@ def _get_valkey_unit_dependencies(cfg: Config) -> tuple[str, str]:
 
 
 def _build_fmt_vars(
-    template: str,
     cfg: Config,
     env_file_path: Path | None,
     *,
@@ -342,14 +341,12 @@ def _build_fmt_vars(
     config_volumes_section = get_config_volumes_section(cfg, executor=executor)
 
     if cfg.registry:
-        auth_file = cfg.get_registry_auth_file(executor=executor)
-        auth_section = f"AuthFile={auth_file}\n"
+        image = "onetime.image"
     else:
-        auth_section = ""
+        image = cfg.resolved_image_with_tag(executor=executor)
 
     fmt_vars: dict = {
-        "image": cfg.resolved_image_with_tag(executor=executor),
-        "auth_section": auth_section,
+        "image": image,
         "config_dir": cfg.config_dir,
         "secrets_section": secrets_section,
         "config_volumes_section": config_volumes_section,
@@ -373,7 +370,6 @@ def render_web_template(
     """
     valkey_after, valkey_wants = _get_valkey_unit_dependencies(cfg)
     fmt_vars = _build_fmt_vars(
-        WEB_TEMPLATE,
         cfg,
         env_file_path,
         force=force,
@@ -391,7 +387,7 @@ def render_worker_template(
     executor: Executor | None = None,
 ) -> str:
     """Render the worker quadlet template content without writing to disk."""
-    fmt_vars = _build_fmt_vars(WORKER_TEMPLATE, cfg, env_file_path, force=force, executor=executor)
+    fmt_vars = _build_fmt_vars(cfg, env_file_path, force=force, executor=executor)
     return WORKER_TEMPLATE.format(**fmt_vars)
 
 
@@ -403,9 +399,7 @@ def render_scheduler_template(
     executor: Executor | None = None,
 ) -> str:
     """Render the scheduler quadlet template content without writing to disk."""
-    fmt_vars = _build_fmt_vars(
-        SCHEDULER_TEMPLATE, cfg, env_file_path, force=force, executor=executor
-    )
+    fmt_vars = _build_fmt_vars(cfg, env_file_path, force=force, executor=executor)
     return SCHEDULER_TEMPLATE.format(**fmt_vars)
 
 
@@ -438,7 +432,7 @@ def _write_template(
         executor: Optional executor for remote file writes.
     """
     fmt_vars = _build_fmt_vars(
-        template, cfg, env_file_path, force=force, extra_vars=extra_vars, executor=executor
+        cfg, env_file_path, force=force, extra_vars=extra_vars, executor=executor
     )
     content = template.format(**fmt_vars)
     if _is_remote(executor):
@@ -465,6 +459,8 @@ def write_web_template(
         force: If True, allow deployment even when secrets are not configured.
         executor: Optional executor for remote writes.
     """
+    if cfg.registry:
+        write_image_template(cfg, executor=executor)
     valkey_after, valkey_wants = _get_valkey_unit_dependencies(cfg)
     _write_template(
         WEB_TEMPLATE,
@@ -531,7 +527,7 @@ TimeoutStopSec=90
 [Container]
 ContainerName=onetime-worker-%i
 Image={image}
-{auth_section}Network=host
+Network=host
 
 # Syslog tag for per-instance log filtering: journalctl -t onetime-worker-1 -f
 PodmanArgs=--log-opt tag=onetime-worker-%i
@@ -577,6 +573,8 @@ def write_worker_template(
         force: If True, allow deployment even when secrets are not configured.
         executor: Optional executor for remote writes.
     """
+    if cfg.registry:
+        write_image_template(cfg, executor=executor)
     _write_template(
         WORKER_TEMPLATE,
         cfg.worker_template_path,
@@ -641,7 +639,7 @@ TimeoutStopSec=60
 [Container]
 ContainerName=onetime-scheduler-%i
 Image={image}
-{auth_section}Network=host
+Network=host
 
 # Syslog tag for per-instance log filtering: journalctl -t onetime-scheduler-main -f
 PodmanArgs=--log-opt tag=onetime-scheduler-%i
@@ -672,6 +670,63 @@ WantedBy=multi-user.target
 """
 
 
+IMAGE_TEMPLATE = """\
+# OneTimeSecret Image Unit - pulls container image with registry authentication
+# Location: /etc/containers/systemd/onetime.image
+#
+# This file is generated when OTS_REGISTRY is set. It ensures the image is
+# pulled from the private registry with authentication before any container
+# starts. Quadlet auto-creates a dependency: each .container referencing
+# Image=onetime.image will wait for onetime-image.service to complete.
+#
+# OPERATIONS:
+#   Pull now:  systemctl start onetime-image.service
+#   Status:    systemctl status onetime-image.service
+
+[Image]
+Image={image}
+AuthFile={auth_file}
+"""
+
+
+def render_image_template(
+    cfg: Config,
+    *,
+    executor: Executor | None = None,
+) -> str:
+    """Render the image quadlet unit content without writing to disk.
+
+    Used by dry-run to preview what would be written. Only meaningful
+    when cfg.registry is set.
+    """
+    return IMAGE_TEMPLATE.format(
+        image=cfg.resolved_image_with_tag(executor=executor),
+        auth_file=cfg.get_registry_auth_file(executor=executor),
+    )
+
+
+def write_image_template(
+    cfg: Config,
+    *,
+    executor: Executor | None = None,
+) -> None:
+    """Write the image quadlet unit for private registry authentication.
+
+    Only called when cfg.registry is set. The generated onetime.image unit
+    pulls the image with AuthFile= credentials. All .container units that
+    reference Image=onetime.image will auto-depend on onetime-image.service.
+    """
+    content = render_image_template(cfg, executor=executor)
+    path = cfg.image_template_path
+    if _is_remote(executor):
+        executor.run(["mkdir", "-p", str(path.parent)])  # type: ignore[union-attr]
+        executor.run(["tee", str(path)], input=content)  # type: ignore[union-attr]
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    systemd.daemon_reload(executor=executor)
+
+
 def write_scheduler_template(
     cfg: Config,
     env_file_path: Path | None = None,
@@ -687,6 +742,8 @@ def write_scheduler_template(
         force: If True, allow deployment even when secrets are not configured.
         executor: Optional executor for remote writes.
     """
+    if cfg.registry:
+        write_image_template(cfg, executor=executor)
     _write_template(
         SCHEDULER_TEMPLATE,
         cfg.scheduler_template_path,

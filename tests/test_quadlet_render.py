@@ -231,21 +231,29 @@ class TestBuildFmtVars:
         from rots import quadlet
 
         cfg = _make_cfg(mocker, tmp_path)
-        # Use WORKER_TEMPLATE which needs no extra_vars
-        result = quadlet._build_fmt_vars(quadlet.WORKER_TEMPLATE, cfg, None, force=True)
+        # _build_fmt_vars no longer takes template as first arg
+        result = quadlet._build_fmt_vars(cfg, None, force=True)
         assert "image" in result
         assert "secrets_section" in result
         assert "config_volumes_section" in result
         assert "resource_limits_section" in result
 
-    def test_image_matches_cfg(self, mocker, tmp_path):
-        """_build_fmt_vars image value should come from cfg.resolved_image_with_tag."""
+    def test_image_matches_cfg_no_registry(self, mocker, tmp_path):
+        """_build_fmt_vars image should be FQIN when registry is not set."""
         from rots import quadlet
 
         cfg = _make_cfg(mocker, tmp_path)
         cfg.resolved_image_with_tag.return_value = "custom.registry/app:v9.9.9"
-        result = quadlet._build_fmt_vars(quadlet.WORKER_TEMPLATE, cfg, None, force=True)
+        result = quadlet._build_fmt_vars(cfg, None, force=True)
         assert result["image"] == "custom.registry/app:v9.9.9"
+
+    def test_image_matches_cfg_with_registry(self, mocker, tmp_path):
+        """_build_fmt_vars image should be onetime.image when registry is set."""
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path, registry="registry.example.com")
+        result = quadlet._build_fmt_vars(cfg, None, force=True)
+        assert result["image"] == "onetime.image"
 
     def test_accepts_extra_vars(self, mocker, tmp_path):
         """_build_fmt_vars should merge extra_vars into the result."""
@@ -253,7 +261,6 @@ class TestBuildFmtVars:
 
         cfg = _make_cfg(mocker, tmp_path)
         result = quadlet._build_fmt_vars(
-            quadlet.WEB_TEMPLATE,
             cfg,
             None,
             force=True,
@@ -269,7 +276,6 @@ class TestBuildFmtVars:
         cfg = _make_cfg(mocker, tmp_path)
         sentinel = "sentinel_value_xyz"
         result = quadlet._build_fmt_vars(
-            quadlet.WORKER_TEMPLATE,
             cfg,
             None,
             force=True,
@@ -282,9 +288,7 @@ class TestBuildFmtVars:
         from rots import quadlet
 
         cfg = _make_cfg(mocker, tmp_path)
-        result = quadlet._build_fmt_vars(
-            quadlet.WORKER_TEMPLATE, cfg, None, force=True, extra_vars=None
-        )
+        result = quadlet._build_fmt_vars(cfg, None, force=True, extra_vars=None)
         assert isinstance(result, dict)
         assert "image" in result
 
@@ -316,8 +320,8 @@ class TestAuthFileInTemplates:
         result = quadlet.render_scheduler_template(cfg, force=True)
         assert "AuthFile=" not in result
 
-    def test_registry_adds_authfile_web(self, mocker, tmp_path):
-        """With registry, web template should contain AuthFile line."""
+    def test_registry_uses_image_unit_web(self, mocker, tmp_path):
+        """With registry, web .container should reference onetime.image, not AuthFile."""
         from pathlib import Path
 
         from rots import quadlet
@@ -325,10 +329,11 @@ class TestAuthFileInTemplates:
         cfg = _make_cfg(mocker, tmp_path, registry="registry.example.com")
         cfg.get_registry_auth_file.return_value = Path("/etc/containers/auth.json")
         result = quadlet.render_web_template(cfg, force=True)
-        assert "AuthFile=/etc/containers/auth.json" in result
+        assert "AuthFile=" not in result
+        assert "Image=onetime.image" in result
 
-    def test_registry_adds_authfile_worker(self, mocker, tmp_path):
-        """With registry, worker template should contain AuthFile line."""
+    def test_registry_uses_image_unit_worker(self, mocker, tmp_path):
+        """With registry, worker .container should reference onetime.image, not AuthFile."""
         from pathlib import Path
 
         from rots import quadlet
@@ -336,10 +341,11 @@ class TestAuthFileInTemplates:
         cfg = _make_cfg(mocker, tmp_path, registry="registry.example.com")
         cfg.get_registry_auth_file.return_value = Path("/etc/containers/auth.json")
         result = quadlet.render_worker_template(cfg, force=True)
-        assert "AuthFile=/etc/containers/auth.json" in result
+        assert "AuthFile=" not in result
+        assert "Image=onetime.image" in result
 
-    def test_registry_adds_authfile_scheduler(self, mocker, tmp_path):
-        """With registry, scheduler template should contain AuthFile line."""
+    def test_registry_uses_image_unit_scheduler(self, mocker, tmp_path):
+        """With registry, scheduler .container should reference onetime.image, not AuthFile."""
         from pathlib import Path
 
         from rots import quadlet
@@ -347,17 +353,63 @@ class TestAuthFileInTemplates:
         cfg = _make_cfg(mocker, tmp_path, registry="registry.example.com")
         cfg.get_registry_auth_file.return_value = Path("/etc/containers/auth.json")
         result = quadlet.render_scheduler_template(cfg, force=True)
-        assert "AuthFile=/etc/containers/auth.json" in result
+        assert "AuthFile=" not in result
+        assert "Image=onetime.image" in result
 
-    def test_authfile_appears_after_image_line(self, mocker, tmp_path):
-        """AuthFile should appear immediately after Image= in the rendered template."""
+
+class TestRenderImageTemplate:
+    """Tests for render_image_template (companion .image unit)."""
+
+    def test_returns_content_with_image_section(self, mocker, tmp_path):
+        """render_image_template should return content with an [Image] section."""
         from pathlib import Path
 
         from rots import quadlet
 
-        cfg = _make_cfg(mocker, tmp_path, registry="reg.io")
+        cfg = _make_cfg(mocker, tmp_path, registry="registry.example.com")
         cfg.get_registry_auth_file.return_value = Path("/etc/containers/auth.json")
+        result = quadlet.render_image_template(cfg)
+        assert "[Image]" in result
+
+    def test_includes_fqin_and_authfile(self, mocker, tmp_path):
+        """render_image_template should include Image= with FQIN and AuthFile=."""
+        from pathlib import Path
+
+        from rots import quadlet
+
+        cfg = _make_cfg(
+            mocker,
+            tmp_path,
+            image="registry.example.com/app",
+            tag="v2.0.0",
+            registry="registry.example.com",
+        )
+        cfg.get_registry_auth_file.return_value = Path("/etc/containers/auth.json")
+        result = quadlet.render_image_template(cfg)
+        assert "Image=registry.example.com/app:v2.0.0" in result
+        assert "AuthFile=/etc/containers/auth.json" in result
+
+    def test_no_disk_write(self, mocker, tmp_path):
+        """render_image_template must not write any file or call daemon_reload."""
+        from pathlib import Path
+
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path, registry="registry.example.com")
+        cfg.get_registry_auth_file.return_value = Path("/etc/containers/auth.json")
+        mock_daemon = mocker.patch("rots.quadlet.systemd.daemon_reload")
+        quadlet.render_image_template(cfg)
+        mock_daemon.assert_not_called()
+
+
+class TestNoRegistryDirectFQIN:
+    """When registry is NOT set, .container Image= should use the direct FQIN."""
+
+    def test_web_template_uses_fqin_without_registry(self, mocker, tmp_path):
+        """render_web_template should use direct FQIN when registry is not set."""
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path, image="ghcr.io/onetimesecret/onetimesecret", tag="v1.2.3")
         result = quadlet.render_web_template(cfg, force=True)
-        lines = result.splitlines()
-        image_idx = next(i for i, line in enumerate(lines) if line.startswith("Image="))
-        assert lines[image_idx + 1] == "AuthFile=/etc/containers/auth.json"
+        assert "Image=ghcr.io/onetimesecret/onetimesecret:v1.2.3" in result
+        assert "onetime.image" not in result
