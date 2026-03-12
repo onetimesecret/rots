@@ -387,8 +387,8 @@ def get_container_health_map(
         return {}
 
     health_map: dict[tuple[str, str], dict[str, str]] = {}
-    # Match container names like onetime-web@7043 or onetime-worker@1
-    name_pattern = re.compile(r"onetime-(web|worker|scheduler)@(.+)")
+    # Match container names like onetime-web-7043 or onetime-worker-1
+    name_pattern = re.compile(r"onetime-(web|worker|scheduler)-(.+)")
 
     for container in containers:
         # podman JSON uses "Names" (list) or "Name" (string) depending on version

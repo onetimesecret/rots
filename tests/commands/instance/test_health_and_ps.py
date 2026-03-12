@@ -40,11 +40,11 @@ class TestGetContainerHealthMap:
         output = json.dumps(
             [
                 {
-                    "Names": ["onetime-web@7043"],
+                    "Names": ["onetime-web-7043"],
                     "Status": "Up 3 days (healthy)",
                 },
                 {
-                    "Names": ["onetime-worker@1"],
+                    "Names": ["onetime-worker-1"],
                     "Status": "Up 3 days (unhealthy)",
                 },
             ]
@@ -56,11 +56,11 @@ class TestGetContainerHealthMap:
         assert result[("worker", "1")] == {"health": "unhealthy", "uptime": "Up 3 days"}
 
     def test_parse_scheduler_container(self, mocker):
-        """Should parse scheduler container with @ naming."""
+        """Should parse scheduler container with - naming."""
         output = json.dumps(
             [
                 {
-                    "Names": ["onetime-scheduler@main"],
+                    "Names": ["onetime-scheduler-main"],
                     "Status": "Up 2 hours (healthy)",
                 },
             ]
@@ -75,7 +75,7 @@ class TestGetContainerHealthMap:
         output = json.dumps(
             [
                 {
-                    "Names": ["onetime-web@7044"],
+                    "Names": ["onetime-web-7044"],
                     "Status": "Up 5 minutes",
                 },
             ]
@@ -90,7 +90,7 @@ class TestGetContainerHealthMap:
         output = json.dumps(
             [
                 {
-                    "Names": ["onetime-web@7043"],
+                    "Names": ["onetime-web-7043"],
                     "Status": "Up 10 seconds (starting)",
                 },
             ]
@@ -122,7 +122,7 @@ class TestGetContainerHealthMap:
         output = json.dumps(
             [
                 {
-                    "Name": "onetime-web@7043",
+                    "Name": "onetime-web-7043",
                     "Status": "Up 1 day (healthy)",
                 },
             ]
@@ -141,7 +141,7 @@ class TestGetContainerHealthMap:
                     "Status": "Up 1 day",
                 },
                 {
-                    "Names": ["onetime-web@7043"],
+                    "Names": ["onetime-web-7043"],
                     "Status": "Up 1 day (healthy)",
                 },
             ]
@@ -339,7 +339,7 @@ class TestPsCommand:
         instance.ps(web="")
 
         call_kwargs = mock_podman_ps.call_args
-        assert call_kwargs.kwargs["filter"] == "name=onetime-web@"
+        assert call_kwargs.kwargs["filter"] == "name=onetime-web-"
 
     def test_ps_filters_by_scheduler(self, mocker):
         """ps --scheduler should filter to scheduler containers."""
@@ -358,7 +358,7 @@ class TestPsCommand:
         instance.ps(scheduler="")
 
         call_kwargs = mock_podman_ps.call_args
-        assert call_kwargs.kwargs["filter"] == "name=onetime-scheduler@"
+        assert call_kwargs.kwargs["filter"] == "name=onetime-scheduler-"
 
     def test_ps_filters_by_worker(self, mocker):
         """ps --worker should filter to worker containers."""
@@ -377,7 +377,7 @@ class TestPsCommand:
         instance.ps(worker="")
 
         call_kwargs = mock_podman_ps.call_args
-        assert call_kwargs.kwargs["filter"] == "name=onetime-worker@"
+        assert call_kwargs.kwargs["filter"] == "name=onetime-worker-"
 
     def test_ps_uses_table_format(self, mocker):
         """ps should use table format with expected columns."""
