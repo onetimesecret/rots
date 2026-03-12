@@ -71,7 +71,7 @@ WEB_TEMPLATE = """\
 # TROUBLESHOOTING:
 #   List secrets:  podman secret ls
 #   Inspect:       podman secret inspect ots_hmac_secret
-#   Container:     podman exec -it onetime-web@7043 /bin/sh
+#   Container:     podman exec -it onetime-web-7043 /bin/sh
 
 [Unit]
 Description=OneTimeSecret Web Container %i
@@ -89,7 +89,7 @@ RestartSec=5
 TimeoutStopSec=30
 {resource_limits_section}
 [Container]
-ContainerName=onetime-web@%i
+ContainerName=onetime-web-%i
 Image={image}
 {auth_section}Network=host
 
@@ -515,7 +515,7 @@ WORKER_TEMPLATE = """\
 # TROUBLESHOOTING:
 #   List secrets:  podman secret ls
 #   Inspect:       podman secret inspect ots_hmac_secret
-#   Container:     podman exec -it onetime-worker@1 /bin/sh
+#   Container:     podman exec -it onetime-worker-1 /bin/sh
 
 [Unit]
 Description=OneTimeSecret Worker %i
@@ -529,7 +529,7 @@ RestartSec=5
 TimeoutStopSec=90
 {resource_limits_section}
 [Container]
-ContainerName=onetime-worker@%i
+ContainerName=onetime-worker-%i
 Image={image}
 {auth_section}Network=host
 
@@ -625,7 +625,7 @@ SCHEDULER_TEMPLATE = """\
 # TROUBLESHOOTING:
 #   List secrets:  podman secret ls
 #   Inspect:       podman secret inspect ots_hmac_secret
-#   Container:     podman exec -it onetime-scheduler@main /bin/sh
+#   Container:     podman exec -it onetime-scheduler-main /bin/sh
 
 [Unit]
 Description=OneTimeSecret Scheduler %i
@@ -639,7 +639,7 @@ RestartSec=5
 TimeoutStopSec=60
 {resource_limits_section}
 [Container]
-ContainerName=onetime-scheduler@%i
+ContainerName=onetime-scheduler-%i
 Image={image}
 {auth_section}Network=host
 

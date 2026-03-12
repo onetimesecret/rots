@@ -213,7 +213,7 @@ def ps(
     p = Podman(executor=ex)
 
     if itype is not None:
-        name_filter = f"name=onetime-{itype.value}@"
+        name_filter = f"name=onetime-{itype.value}-"
     else:
         name_filter = "name=onetime-"
 

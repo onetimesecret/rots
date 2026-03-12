@@ -387,8 +387,8 @@ def get_container_health_map(
         return {}
 
     health_map: dict[tuple[str, str], dict[str, str]] = {}
-    # Match container names like onetime-web@7043 or onetime-worker@1
-    name_pattern = re.compile(r"onetime-(web|worker|scheduler)@(.+)")
+    # Match container names like onetime-web-7043 or onetime-worker-1
+    name_pattern = re.compile(r"onetime-(web|worker|scheduler)-(.+)")
 
     for container in containers:
         # podman JSON uses "Names" (list) or "Name" (string) depending on version
@@ -421,14 +421,14 @@ def get_container_health_map(
 def unit_to_container_name(unit: str) -> str:
     """Convert systemd unit name to the explicit ``ContainerName=`` we set.
 
-    We set ``ContainerName=`` in each Quadlet template using the same
-    ``@`` convention as the systemd unit itself::
+    Quadlet ``ContainerName=`` uses ``-`` instead of ``@`` because
+    podman container names don't allow ``@``::
 
-        onetime-web@7043.service  ->  onetime-web@7043
-        onetime-worker@1          ->  onetime-worker@1
-        onetime-scheduler@main    ->  onetime-scheduler@main
+        onetime-web@7043.service  ->  onetime-web-7043
+        onetime-worker@1          ->  onetime-worker-1
+        onetime-scheduler@main    ->  onetime-scheduler-main
     """
-    return unit.removesuffix(".service")
+    return unit.removesuffix(".service").replace("@", "-")
 
 
 def recreate(unit: str, *, executor: Executor | None = None) -> None:
@@ -448,7 +448,7 @@ def recreate(unit: str, *, executor: Executor | None = None) -> None:
     # Stop the systemd unit
     _run_systemctl("stop", unit, executor=executor)
 
-    # Remove the container (ContainerName= set to onetime-{type}@{id})
+    # Remove the container (ContainerName= set to onetime-{type}-{id})
     container_name = unit_to_container_name(unit)
     rm_cmd = ["podman", "rm", "--ignore", container_name]
     logger.debug(f"  $ sudo -- {' '.join(rm_cmd)}")

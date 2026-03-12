@@ -512,8 +512,8 @@ class TestExecCommand:
         mock_ex.run_interactive.assert_called_once()
         call_args = mock_ex.run_interactive.call_args[0][0]
         assert call_args[:3] == ["podman", "exec", "-it"]
-        # Container name matches unit name via ContainerName= in quadlet
-        assert "onetime-web@7043" in call_args
+        # Container name uses - instead of @ (podman doesn't allow @ in names)
+        assert "onetime-web-7043" in call_args
         assert "/bin/bash" in call_args
 
 
