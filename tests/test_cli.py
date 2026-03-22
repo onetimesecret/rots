@@ -288,11 +288,11 @@ class TestDoctorCommand:
         mocker.patch("rots.config.Config", return_value=cfg_mock)
 
         env_file = tmp_path / "onetimesecret_env"
-        env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc\n")
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=abc\n")
         mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
 
         parsed_mock = mocker.MagicMock()
-        parsed_mock.secret_variable_names = ["HMAC_SECRET"]
+        parsed_mock.secret_variable_names = ["AUTH_SECRET"]
         mocker.patch("rots.environment_file.EnvFile.parse", return_value=parsed_mock)
         mocker.patch("rots.environment_file.secret_exists", return_value=True)
 

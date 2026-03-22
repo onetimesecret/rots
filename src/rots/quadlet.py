@@ -183,7 +183,7 @@ def get_secrets_section(
             f"ERROR: No secrets configured in {env_path}\n"
             "\n"
             "SECRET_VARIABLE_NAMES is not set or is empty. The application requires\n"
-            "secrets (HMAC_SECRET, SECRET, SESSION_SECRET, etc.) to function.\n"
+            "secrets (AUTH_SECRET, SECRET, SESSION_SECRET, etc.) to function.\n"
             "\n"
             "To configure secrets:\n"
             f"  sudo vi {env_path}  # set SECRET_VARIABLE_NAMES and secret values\n"

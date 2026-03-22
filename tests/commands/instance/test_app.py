@@ -186,7 +186,7 @@ class TestRunCommand:
 
         # Create env file with secrets
         env_file = tmp_path / "onetimesecret"
-        env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\n")
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY\n")
         mocker.patch(
             "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             env_file,
@@ -196,7 +196,7 @@ class TestRunCommand:
         from rots.environment_file import SecretSpec
 
         mock_secrets = [
-            SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
+            SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
             SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
         ]
         mocker.patch(

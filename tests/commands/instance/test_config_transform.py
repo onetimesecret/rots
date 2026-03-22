@@ -562,7 +562,7 @@ class TestConfigTransformCommand:
 
         # Create env file with secrets
         env_file = tmp_path / "onetimesecret"
-        env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET\n")
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")
         mocker.patch(
             "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             env_file,
@@ -570,7 +570,7 @@ class TestConfigTransformCommand:
 
         # Mock get_secrets_from_env_file
         mock_secrets = [
-            SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
+            SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
         ]
         mocker.patch(
             "rots.commands.instance._helpers.get_secrets_from_env_file",

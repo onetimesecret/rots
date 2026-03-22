@@ -76,7 +76,7 @@ class TestIsKeyAllowed:
         """Keys in FORBIDDEN_KEYS are not allowed even if they match patterns."""
         assert is_key_allowed("SECRET") is False
         assert is_key_allowed("SESSION_SECRET") is False
-        assert is_key_allowed("HMAC_SECRET") is False
+        assert is_key_allowed("AUTH_SECRET") is False
         assert is_key_allowed("COLONEL") is False
 
     def test_forbidden_overrides_allowed(self):

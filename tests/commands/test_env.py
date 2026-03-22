@@ -122,19 +122,19 @@ class TestEnvCommandExecutorWiring:
         mock_ex = LocalExecutor()
         mocker.patch("rots.commands.env.app.Config.get_executor", return_value=mock_ex)
 
-        env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc123\n"
+        env_content = "SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=abc123\n"
         env_file = _make_env_file(tmp_path, env_content)
 
         mock_parse = mocker.patch("rots.commands.env.app.EnvFile.parse")
         mock_parsed = MagicMock()
-        mock_parsed.secret_variable_names = ["HMAC_SECRET"]
-        mock_parsed.get.return_value = "HMAC_SECRET"
-        mock_parsed.has.side_effect = lambda k: k == "HMAC_SECRET"
+        mock_parsed.secret_variable_names = ["AUTH_SECRET"]
+        mock_parsed.get.return_value = "AUTH_SECRET"
+        mock_parsed.has.side_effect = lambda k: k == "AUTH_SECRET"
         mock_parse.return_value = mock_parsed
 
         mock_extract = mocker.patch("rots.commands.env.app.extract_secrets")
         mock_extract.return_value = (
-            [SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret")],
+            [SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret")],
             [],
         )
 
@@ -156,18 +156,18 @@ class TestEnvCommandExecutorWiring:
         mock_ex = LocalExecutor()
         mocker.patch("rots.commands.env.app.Config.get_executor", return_value=mock_ex)
 
-        env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\nHMAC_SECRET=abc\nAPI_KEY=xyz\n"
+        env_content = "SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY\nAUTH_SECRET=abc\nAPI_KEY=xyz\n"
         env_file = _make_env_file(tmp_path, env_content)
 
         mock_parse = mocker.patch("rots.commands.env.app.EnvFile.parse")
         mock_parsed = MagicMock()
-        mock_parsed.secret_variable_names = ["HMAC_SECRET", "API_KEY"]
+        mock_parsed.secret_variable_names = ["AUTH_SECRET", "API_KEY"]
         mock_parse.return_value = mock_parsed
 
         mock_extract = mocker.patch("rots.commands.env.app.extract_secrets")
         mock_extract.return_value = (
             [
-                SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
+                SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
                 SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
             ],
             [],
@@ -220,13 +220,13 @@ class TestEnvProcess:
     def test_env_process_happy_path(self, mock_process, tmp_path, capsys):
         """process should report secrets created successfully."""
         env_content = (
-            "SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\nHMAC_SECRET=abc123\nAPI_KEY=xyz789\n"
+            "SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY\nAUTH_SECRET=abc123\nAPI_KEY=xyz789\n"
         )
         env_file = _make_env_file(tmp_path, env_content)
 
         mock_process.return_value = (
             [
-                SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
+                SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
                 SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
             ],
             ["secret created: ots_hmac_secret", "secret created: ots_api_key"],
@@ -242,11 +242,11 @@ class TestEnvProcess:
     @patch("rots.commands.env.app.process_env_file")
     def test_env_process_dry_run(self, mock_process, tmp_path, capsys):
         """process --dry-run should report dry-run and not write secrets."""
-        env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc123\n"
+        env_content = "SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=abc123\n"
         env_file = _make_env_file(tmp_path, env_content)
 
         mock_process.return_value = (
-            [SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret")],
+            [SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret")],
             [],
         )
 
@@ -313,11 +313,11 @@ class TestEnvShow:
         """show --json should output valid JSON with secret status."""
         import json
 
-        env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc123\n"
+        env_content = "SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=abc123\n"
         env_file = _make_env_file(tmp_path, env_content)
 
         mock_extract.return_value = (
-            [SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret", value="abc123")],
+            [SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret", value="abc123")],
             [],
         )
         mock_exists.return_value = True
@@ -327,7 +327,7 @@ class TestEnvShow:
         data = json.loads(captured.out)
         assert "secrets" in data
         assert len(data["secrets"]) == 1
-        assert data["secrets"][0]["env_var"] == "HMAC_SECRET"
+        assert data["secrets"][0]["env_var"] == "AUTH_SECRET"
         assert data["secrets"][0]["podman_status"] == "exists"
 
     @patch("rots.commands.env.app.secret_exists")
@@ -376,13 +376,13 @@ class TestEnvVerify:
     def test_env_verify_all_exist(self, mock_extract, mock_exists, tmp_path, capsys):
         """verify should succeed when all secrets exist."""
         env_content = (
-            "SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\nHMAC_SECRET=abc123\nAPI_KEY=xyz789\n"
+            "SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY\nAUTH_SECRET=abc123\nAPI_KEY=xyz789\n"
         )
         env_file = _make_env_file(tmp_path, env_content)
 
         mock_extract.return_value = (
             [
-                SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
+                SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
                 SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
             ],
             [],
@@ -397,11 +397,11 @@ class TestEnvVerify:
     @patch("rots.commands.env.app.extract_secrets")
     def test_env_verify_missing_secrets(self, mock_extract, mock_exists, tmp_path, capsys):
         """verify should raise SystemExit(1) when a secret is missing."""
-        env_content = "SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc123\n"
+        env_content = "SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=abc123\n"
         env_file = _make_env_file(tmp_path, env_content)
 
         mock_extract.return_value = (
-            [SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret")],
+            [SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret")],
             [],
         )
         mock_exists.return_value = False
@@ -443,13 +443,13 @@ class TestEnvQuadletLines:
     def test_quadlet_lines_outputs_secret_directives(self, mock_extract, tmp_path, capsys):
         """quadlet-lines should print Secret= directives for each secret."""
         env_content = (
-            "SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\nHMAC_SECRET=abc123\nAPI_KEY=xyz789\n"
+            "SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY\nAUTH_SECRET=abc123\nAPI_KEY=xyz789\n"
         )
         env_file = _make_env_file(tmp_path, env_content)
 
         mock_extract.return_value = (
             [
-                SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
+                SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
                 SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
             ],
             [],
@@ -457,7 +457,7 @@ class TestEnvQuadletLines:
 
         quadlet_lines(env_file=env_file)
         captured = capsys.readouterr()
-        assert "Secret=ots_hmac_secret,type=env,target=HMAC_SECRET" in captured.out
+        assert "Secret=ots_hmac_secret,type=env,target=AUTH_SECRET" in captured.out
         assert "Secret=ots_api_key,type=env,target=API_KEY" in captured.out
 
     def test_quadlet_lines_missing_file(self, tmp_path):

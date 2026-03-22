@@ -153,7 +153,7 @@ class Config:
         /opt/onetimesecret/config/Caddyfile.template -> /etc/onetimesecret/Caddyfile.template
 
     Secrets (via podman secret):
-        ots_hmac_secret              - HMAC_SECRET env var
+        ots_hmac_secret              - AUTH_SECRET env var
         ots_secret                   - SECRET env var
         ots_session_secret           - SESSION_SECRET env var
     """

@@ -130,12 +130,12 @@ class TestShellCommand:
         from rots.environment_file import SecretSpec
 
         env_file = tmp_path / "onetimesecret"
-        env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET,API_KEY\n")
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY\n")
 
         _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path, env_file=env_file)
 
         mock_secrets = [
-            SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
+            SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
             SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
         ]
         mocker.patch(
@@ -434,10 +434,10 @@ class TestBuildSecretArgs:
         from rots.environment_file import SecretSpec
 
         env_file = tmp_path / "env"
-        env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET\n")
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")
 
         mock_secrets = [
-            SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
+            SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
         ]
         mocker.patch(
             "rots.commands.instance._helpers.get_secrets_from_env_file",
@@ -447,7 +447,7 @@ class TestBuildSecretArgs:
         result = build_secret_args(env_file)
         assert result == [
             "--secret",
-            "ots_hmac_secret,type=env,target=HMAC_SECRET",
+            "ots_hmac_secret,type=env,target=AUTH_SECRET",
         ]
 
     def test_build_secret_args_handles_multiple_secrets(self, mocker, tmp_path):

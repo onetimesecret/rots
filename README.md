@@ -1,4 +1,4 @@
-# ots-containers
+# rots - Remote OTS Commander
 
 Service orchestration CLI for [OneTimeSecret](https://github.com/onetimesecret/onetimesecret) infrastructure.
 
@@ -32,8 +32,8 @@ pipx install .
 ## Usage
 
 ```bash
-ots-containers --help
-ots-containers --version
+rots --help
+rots --version
 ```
 
 ### Instance Types
@@ -50,89 +50,89 @@ Three container types with explicit systemd unit naming:
 
 ```bash
 # List all instances
-ots-containers instances
-ots-containers instances --json
+rots instances
+rots instances --json
 
 # List by type
-ots-containers instances --web
-ots-containers instances --worker
-ots-containers instances --scheduler
+rots instances --web
+rots instances --worker
+rots instances --scheduler
 
 # Deploy instances
-ots-containers instances deploy --web 7043 7044
-ots-containers instances deploy --worker billing emails
-ots-containers instances deploy --scheduler main
+rots instances deploy --web 7043 7044
+rots instances deploy --worker billing emails
+rots instances deploy --scheduler main
 
 # Redeploy (regenerate quadlet and restart)
-ots-containers instances redeploy                    # all running
-ots-containers instances redeploy --web 7043         # specific
+rots instances redeploy                    # all running
+rots instances redeploy --web 7043         # specific
 
 # Start/stop/restart
-ots-containers instances start --web 7043
-ots-containers instances stop --scheduler main
-ots-containers instances restart                     # all running
+rots instances start --web 7043
+rots instances stop --scheduler main
+rots instances restart                     # all running
 
 # Status and logs
-ots-containers instances status
-ots-containers instances logs --web 7043 -f
-ots-containers instances logs --scheduler main -f
+rots instances status
+rots instances logs --web 7043 -f
+rots instances logs --scheduler main -f
 
 # Enable/disable at boot
-ots-containers instances enable --web 7043
-ots-containers instances disable --scheduler main -y
+rots instances enable --web 7043
+rots instances disable --scheduler main -y
 
 # Interactive shell
-ots-containers instances exec --web 7043
+rots instances exec --web 7043
 ```
 
 ### Managing systemd Services (Valkey, Redis)
 
 ```bash
 # Initialize new service instance
-ots-containers service init valkey 6379
-ots-containers service init redis 6380 --bind 0.0.0.0
+rots service init valkey 6379
+rots service init redis 6380 --bind 0.0.0.0
 
 # Start/stop/restart
-ots-containers service start valkey 6379
-ots-containers service stop redis 6380
-ots-containers service restart valkey 6379
+rots service start valkey 6379
+rots service stop redis 6380
+rots service restart valkey 6379
 
 # Status and logs
-ots-containers service status valkey 6379
-ots-containers service logs valkey 6379 --follow
+rots service status valkey 6379
+rots service logs valkey 6379 --follow
 
 # Enable/disable at boot
-ots-containers service enable valkey 6379
-ots-containers service disable redis 6380
+rots service enable valkey 6379
+rots service disable redis 6380
 
 # List available service packages
-ots-containers service
+rots service
 ```
 
 ### Generating Cloud-Init Configurations
 
 ```bash
 # Generate basic cloud-init config
-ots-containers cloudinit generate > user-data.yaml
+rots cloudinit generate > user-data.yaml
 
 # Include PostgreSQL repository
-ots-containers cloudinit generate --include-postgresql --postgresql-key /path/to/pgdg.asc
+rots cloudinit generate --include-postgresql --postgresql-key /path/to/pgdg.asc
 
 # Include Valkey repository
-ots-containers cloudinit generate --include-valkey --valkey-key /path/to/valkey.gpg
+rots cloudinit generate --include-valkey --valkey-key /path/to/valkey.gpg
 
 # Validate configuration
-ots-containers cloudinit validate user-data.yaml
+rots cloudinit validate user-data.yaml
 ```
 
 ## Environment Variables
 
 ```bash
 # Use a specific image tag
-TAG=v0.23.0 ots-containers instances redeploy --web 7043
+TAG=v0.23.0 rots instances redeploy --web 7043
 
 # Use a different image
-IMAGE=ghcr.io/onetimesecret/onetimesecret TAG=latest ots-containers instances deploy --web 7044
+IMAGE=ghcr.io/onetimesecret/onetimesecret TAG=latest rots instances deploy --web 7044
 ```
 
 ## Prerequisites
@@ -198,11 +198,11 @@ FHS-compliant directory structure:
 
 ```bash
 # Check instance status
-ots-containers instances status
+rots instances status
 systemctl status onetime-web@7043
 
 # View logs
-ots-containers instances logs --web 7043 -f
+rots instances logs --web 7043 -f
 journalctl -u onetime-web@7043 -f
 
 # Unified log filtering (all instance types)
@@ -240,10 +240,10 @@ pre-commit install
 
 ```bash
 # Use full path
-sudo /home/youruser/.local/bin/ots-containers instances status
+sudo /home/youruser/.local/bin/rots instances status
 
 # Or create symlink
-sudo ln -s /home/youruser/.local/bin/ots-containers /usr/local/bin/ots-containers
+sudo ln -s /home/youruser/.local/bin/rots /usr/local/bin/ots-containers
 ```
 
 ## License

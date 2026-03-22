@@ -1097,6 +1097,9 @@ def undeploy(
     To reclaim disk space after all instances are stopped, run:
         ots instances cleanup
 
+    Use `stat /var/www/public` to see the status of the directory. If "Links: 0"
+    it is a stale mount and needs to be rmdir /var/www/public.
+
     Examples:
         ots instances undeploy                      # Undeploy all running
         ots instances undeploy --web                # Undeploy web instances

@@ -70,7 +70,7 @@ FORBIDDEN_KEYS: frozenset[str] = frozenset(
         # Core secrets should use podman secrets, not env vars
         "SECRET",
         "SESSION_SECRET",
-        "HMAC_SECRET",
+        "AUTH_SECRET",
         # OAuth tokens
         "CLAUDE_CODE_OAUTH_TOKEN",
         "GITHUB_CLIENT_SECRET",
