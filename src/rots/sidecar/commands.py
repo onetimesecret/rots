@@ -11,13 +11,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class Command(str, Enum):
+class Command(StrEnum):
     """All supported sidecar commands.
 
     Commands are grouped by category:
