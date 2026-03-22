@@ -250,3 +250,72 @@ class TestAllowedBlockedConsistency:
                         f"Blocked {blocked} is prefix of allowed {allowed} - "
                         "the allowed command would be unreachable"
                     )
+
+
+class TestNonListArgs:
+    """Tests for non-list args parameter handling."""
+
+    def test_single_string_arg_converted(self):
+        """Single string arg should be wrapped in a list."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        with patch(
+            "rots.sidecar.handlers_rots.subprocess.run", return_value=mock_result
+        ) as mock_run:
+            with patch("rots.sidecar.handlers_rots.shutil.which", return_value="/usr/bin/rots"):
+                invoke_rots("rots.doctor", {"args": "--verbose"})
+
+        called_cmd = mock_run.call_args[0][0]
+        assert "--verbose" in called_cmd
+
+
+class TestDispatchIntegration:
+    """Tests for handlers.dispatch routing rots.* commands."""
+
+    def test_dispatch_routes_rots_commands(self):
+        """dispatch() should route rots.* commands to invoke_rots."""
+        from rots.sidecar.handlers import dispatch
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "version output"
+        mock_result.stderr = ""
+
+        with patch("rots.sidecar.handlers_rots.subprocess.run", return_value=mock_result):
+            with patch("rots.sidecar.handlers_rots.shutil.which", return_value="/usr/bin/rots"):
+                result = dispatch("rots.version", {})
+
+        assert result["status"] == "ok"
+        assert result["stdout"] == "version output"
+
+    def test_dispatch_routes_builtin_commands(self):
+        """dispatch() should still route built-in commands to their handlers."""
+        from rots.sidecar.handlers import dispatch
+
+        result = dispatch("health", {})
+        assert result["status"] == "ok"
+        assert result["health"] == "healthy"
+
+    def test_dispatch_unknown_shows_both_command_sets(self):
+        """Unknown command should list both built-in and rots.* commands."""
+        from rots.sidecar.handlers import dispatch
+
+        result = dispatch("unknown.command", {})
+        assert result["status"] == "error"
+        available = result["available_commands"]
+        # Should include built-in handlers
+        assert "health" in available
+        assert "status" in available
+        # Should include rots.* commands
+        assert any(cmd.startswith("rots.") for cmd in available)
+
+    def test_dispatch_blocked_rots_command(self):
+        """Blocked rots.* commands should be rejected."""
+        from rots.sidecar.handlers import dispatch
+
+        result = dispatch("rots.sidecar.run", {})
+        assert result["status"] == "error"
+        assert "not allowed" in result["error"]
