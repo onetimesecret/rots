@@ -484,17 +484,26 @@ def send(
         rots sidecar send status --rabbitmq
         rots sidecar send restart.web identifier=7043
     """
+    from typing import Any
 
     if socket and rabbitmq:
         print("Error: Cannot specify both --socket and --rabbitmq")
         raise SystemExit(1)
 
-    # Parse args into payload
-    payload: dict[str, str] = {}
+    # Parse args into payload (repeated keys become lists)
+    payload: dict[str, Any] = {}
     for arg in args:
         if "=" in arg:
             key, value = arg.split("=", 1)
-            payload[key] = value
+            if key in payload:
+                # Convert to list or append to existing list
+                existing = payload[key]
+                if isinstance(existing, list):
+                    existing.append(value)
+                else:
+                    payload[key] = [existing, value]
+            else:
+                payload[key] = value
         else:
             print(f"Warning: Ignoring invalid argument (no =): {arg}")
 
