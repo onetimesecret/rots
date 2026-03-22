@@ -5,6 +5,7 @@
 Generates cloud-init YAML with Debian 13 (Trixie) DEB822-style apt sources.
 """
 
+import logging
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -12,6 +13,8 @@ from typing import Annotated
 import cyclopts
 
 from .templates import DEFAULT_CADDY_VERSION, generate_cloudinit_config
+
+logger = logging.getLogger(__name__)
 
 app = cyclopts.App(
     name="cloudinit",
@@ -129,7 +132,7 @@ def generate(
     # Output
     if output:
         Path(output).write_text(config)
-        print(f"[created] {output}")
+        logger.info(f"[created] {output}")
     else:
         print(config)
 
@@ -180,7 +183,7 @@ def validate(
                 print(f"  - {error}", file=sys.stderr)
             raise SystemExit(1)
         else:
-            print(f"[ok] {file_path} is valid")
+            logger.info(f"[ok] {file_path} is valid")
 
     except yaml.YAMLError as e:
         print(f"Invalid YAML in {file_path}:", file=sys.stderr)

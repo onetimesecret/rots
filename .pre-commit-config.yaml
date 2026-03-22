@@ -90,6 +90,8 @@ repos:
         files: ^src/
         additional_dependencies:
           - cyclopts>=3.9
+          - dns-lexicon>=3.17
+          - ots-shared>=0.1.0
           - pytest>=8.0
 
   # Ruff - fast linting and formatting
@@ -100,13 +102,19 @@ repos:
         args: [--fix]
       - id: ruff-format
 
-  # pytest - run before push with coverage and last-failed optimization
-  # Skipped on commit for speed; full suite gates push instead
+  # pytest - fast smoke test on commit, full suite on push (coverage in CI)
   - repo: local
     hooks:
-      - id: pytest-cov
-        name: pytest-cov
-        entry: .venv/bin/pytest tests/ -x -q --ff --cov=rots --cov-report=term-missing --cov-fail-under=70
+      - id: pytest-quick
+        name: pytest-quick
+        entry: .venv/bin/pytest tests/ -x -q --ff --no-cov
+        language: system
+        pass_filenames: false
+        files: ^(src/|tests/).*\.py$
+        stages: [pre-commit]
+      - id: pytest-push
+        name: pytest-push
+        entry: .venv/bin/pytest tests/ -x -q --ff --no-cov
         language: system
         pass_filenames: false
         files: ^(src/|tests/).*\.py$

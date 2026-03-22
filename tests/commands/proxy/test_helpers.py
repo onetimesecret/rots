@@ -1,7 +1,11 @@
 # tests/commands/proxy/test_helpers.py
 """Tests for proxy command helpers."""
 
+import json
+import socket
 import subprocess
+import urllib.request
+from datetime import UTC
 
 import pytest
 
@@ -192,6 +196,153 @@ class TestReloadCaddy:
         assert "Failed to reload" in str(exc_info.value)
 
 
+class TestAdaptToJson:
+    """Test adapt_to_json function."""
+
+    def test_adapt_to_json_returns_sorted_json(self, tmp_path, mocker):
+        """Should run caddy adapt and return sorted JSON."""
+        from rots.commands.proxy._helpers import adapt_to_json
+
+        config = tmp_path / "Caddyfile"
+        config.write_text("localhost { }")
+
+        # caddy adapt returns unsorted JSON
+        raw_json = '{"z_key": 1, "a_key": 2}'
+        mock_result = mocker.Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = raw_json
+        mock_result.stderr = ""
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        result = adapt_to_json(config)
+
+        import json
+
+        parsed = json.loads(result)
+        assert parsed == {"a_key": 2, "z_key": 1}
+        # Keys should be sorted in output
+        keys = list(json.loads(result).keys())
+        assert keys == ["a_key", "z_key"]
+
+    def test_adapt_to_json_missing_file_raises(self, tmp_path):
+        """Should raise ProxyError when config file not found."""
+        from rots.commands.proxy._helpers import ProxyError, adapt_to_json
+
+        missing = tmp_path / "nonexistent.conf"
+
+        with pytest.raises(ProxyError, match="Config file not found"):
+            adapt_to_json(missing)
+
+    def test_adapt_to_json_caddy_failure_raises(self, tmp_path, mocker):
+        """Should raise ProxyError when caddy adapt fails."""
+        from rots.commands.proxy._helpers import ProxyError, adapt_to_json
+
+        config = tmp_path / "Caddyfile"
+        config.write_text("invalid {{{")
+
+        mock_result = mocker.Mock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "adapt: parse error"
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        with pytest.raises(ProxyError, match="caddy adapt failed"):
+            adapt_to_json(config)
+
+    def test_adapt_to_json_invalid_json_raises(self, tmp_path, mocker):
+        """Should raise ProxyError when caddy adapt returns invalid JSON."""
+        from rots.commands.proxy._helpers import ProxyError, adapt_to_json
+
+        config = tmp_path / "Caddyfile"
+        config.write_text("localhost { }")
+
+        mock_result = mocker.Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "not json at all"
+        mock_result.stderr = ""
+        mocker.patch("subprocess.run", return_value=mock_result)
+
+        with pytest.raises(ProxyError, match="invalid JSON"):
+            adapt_to_json(config)
+
+    def test_adapt_to_json_caddy_not_found_raises(self, tmp_path, mocker):
+        """Should raise ProxyError when caddy not in PATH."""
+        from rots.commands.proxy._helpers import ProxyError, adapt_to_json
+
+        config = tmp_path / "Caddyfile"
+        config.write_text("localhost { }")
+
+        mocker.patch("subprocess.run", side_effect=FileNotFoundError("caddy not found"))
+
+        with pytest.raises(ProxyError, match="caddy not found"):
+            adapt_to_json(config)
+
+    def test_adapt_to_json_calls_caddy_adapt_correctly(self, tmp_path, mocker):
+        """Should call caddy adapt with --config and --adapter caddyfile."""
+        from rots.commands.proxy._helpers import adapt_to_json
+
+        config = tmp_path / "Caddyfile"
+        config.write_text("localhost { }")
+
+        mock_result = mocker.Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "{}"
+        mock_result.stderr = ""
+        mock_run = mocker.patch("subprocess.run", return_value=mock_result)
+
+        adapt_to_json(config)
+
+        call_args = mock_run.call_args[0][0]
+        assert call_args == ["caddy", "adapt", "--config", str(config), "--adapter", "caddyfile"]
+
+
+class TestRemoteAdaptToJson:
+    """Test adapt_to_json with a remote executor."""
+
+    def _make_executor(self, mocker, responses):
+        from ots_shared.ssh.executor import Result
+
+        mock_ex = mocker.MagicMock()
+        mock_ex.run.side_effect = [
+            Result(command=r[0], returncode=r[1], stdout=r[2], stderr=r[3]) for r in responses
+        ]
+        return mock_ex
+
+    def test_adapt_to_json_remote(self, mocker):
+        """Should run caddy adapt on remote and return sorted JSON."""
+        from pathlib import Path
+
+        from rots.commands.proxy._helpers import adapt_to_json
+
+        ex = self._make_executor(
+            mocker,
+            [
+                ("test -f /etc/caddy/Caddyfile", 0, "", ""),
+                ("caddy adapt ...", 0, '{"z": 1, "a": 2}', ""),
+            ],
+        )
+
+        result = adapt_to_json(Path("/etc/caddy/Caddyfile"), executor=ex)
+
+        import json
+
+        assert list(json.loads(result).keys()) == ["a", "z"]
+
+    def test_adapt_to_json_remote_missing(self, mocker):
+        """Should raise ProxyError when remote file not found."""
+        from pathlib import Path
+
+        from rots.commands.proxy._helpers import ProxyError, adapt_to_json
+
+        ex = self._make_executor(
+            mocker,
+            [("test -f /missing", 1, "", "")],
+        )
+
+        with pytest.raises(ProxyError, match="Config file not found"):
+            adapt_to_json(Path("/missing"), executor=ex)
+
+
 class TestRemoteRenderTemplate:
     """Test render_template with a remote executor."""
 
@@ -342,3 +493,859 @@ class TestRemoteReloadCaddy:
             timeout=30,
             check=True,
         )
+
+
+class TestFindFreePort:
+    """Test find_free_port function."""
+
+    def test_returns_int_in_valid_range(self):
+        """Should return an integer port in the ephemeral range."""
+        from rots.commands.proxy._helpers import find_free_port
+
+        port = find_free_port()
+        assert isinstance(port, int)
+        assert 1024 < port < 65536
+
+    def test_port_is_bindable(self):
+        """Returned port should be immediately bindable."""
+        from rots.commands.proxy._helpers import find_free_port
+
+        port = find_free_port()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", port))  # should not raise
+
+
+class TestPatchCaddyJson:
+    """Test patch_caddy_json function."""
+
+    def _minimal_config(self, *, upstreams: str = "app:3000") -> dict:
+        """Build a minimal Caddy JSON config for testing."""
+        return {
+            "apps": {
+                "http": {
+                    "servers": {
+                        "srv0": {
+                            "listen": [":443"],
+                            "routes": [
+                                {
+                                    "handle": [
+                                        {
+                                            "handler": "reverse_proxy",
+                                            "upstreams": [{"dial": upstreams}],
+                                        }
+                                    ]
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+
+    def test_replaces_listen_port(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        result = patch_caddy_json(self._minimal_config(), caddy_port=9999, echo_addr="x:1")
+        srv = result["apps"]["http"]["servers"]["srv0"]
+        assert srv["listen"] == ["127.0.0.1:9999"]
+
+    def test_replaces_upstreams(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        result = patch_caddy_json(
+            self._minimal_config(), caddy_port=9999, echo_addr="127.0.0.1:8888"
+        )
+        route_handlers = result["apps"]["http"]["servers"]["srv0"]["routes"][0]["handle"]
+        # First handler is the injected X-Trace-Route marker
+        assert route_handlers[0]["handler"] == "headers"
+        assert route_handlers[1]["upstreams"][0]["dial"] == "127.0.0.1:8888"
+
+    def test_disables_https(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        result = patch_caddy_json(self._minimal_config(), caddy_port=9999, echo_addr="x:1")
+        srv = result["apps"]["http"]["servers"]["srv0"]
+        assert srv["automatic_https"] == {"disable": True}
+
+    def test_disables_admin(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        result = patch_caddy_json(self._minimal_config(), caddy_port=9999, echo_addr="x:1")
+        assert result["admin"]["disabled"] is True
+
+    def test_does_not_mutate_input(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        original = self._minimal_config()
+        import copy
+
+        frozen = copy.deepcopy(original)
+        patch_caddy_json(original, caddy_port=9999, echo_addr="x:1")
+        assert original == frozen
+
+    def test_handles_nested_subroutes(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        config = {
+            "apps": {
+                "http": {
+                    "servers": {
+                        "srv0": {
+                            "listen": [":443"],
+                            "routes": [
+                                {
+                                    "handle": [
+                                        {
+                                            "handler": "subroute",
+                                            "routes": [
+                                                {
+                                                    "handle": [
+                                                        {
+                                                            "handler": "reverse_proxy",
+                                                            "upstreams": [{"dial": "app:3000"}],
+                                                        }
+                                                    ]
+                                                }
+                                            ],
+                                        }
+                                    ]
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+        result = patch_caddy_json(config, caddy_port=9999, echo_addr="127.0.0.1:7777")
+        # handle[0] is the injected marker, handle[1] is the subroute
+        nested = result["apps"]["http"]["servers"]["srv0"]["routes"][0]["handle"][1]
+        proxy = nested["routes"][0]["handle"][0]
+        assert proxy["upstreams"][0]["dial"] == "127.0.0.1:7777"
+
+    def test_merges_multiple_servers(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        config = {
+            "apps": {
+                "http": {
+                    "servers": {
+                        "srv0": {
+                            "listen": [":443"],
+                            "routes": [{"handle": [{"handler": "static_response"}]}],
+                        },
+                        "srv1": {
+                            "listen": [":8443"],
+                            "routes": [{"handle": [{"handler": "encode"}]}],
+                        },
+                    }
+                }
+            }
+        }
+        result = patch_caddy_json(config, caddy_port=5555, echo_addr="x:1")
+        servers = result["apps"]["http"]["servers"]
+        assert len(servers) == 1
+        srv = servers["srv0"]
+        assert srv["listen"] == ["127.0.0.1:5555"]
+        # Routes from both original servers are merged
+        assert len(srv["routes"]) == 2
+
+    def test_strips_tls_app(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        config = {
+            "apps": {
+                "http": {
+                    "servers": {
+                        "srv0": {"listen": [":443"], "routes": []},
+                    }
+                },
+                "tls": {"automation": {"policies": [{"issuers": [{"module": "acme"}]}]}},
+            }
+        }
+        result = patch_caddy_json(config, caddy_port=9999, echo_addr="x:1")
+        assert "tls" not in result["apps"]
+
+    def test_strips_tls_connection_policies(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        config = {
+            "apps": {
+                "http": {
+                    "servers": {
+                        "srv0": {
+                            "listen": [":443"],
+                            "routes": [],
+                            "tls_connection_policies": [{"match": {}}],
+                        },
+                    }
+                }
+            }
+        }
+        result = patch_caddy_json(config, caddy_port=9999, echo_addr="x:1")
+        assert "tls_connection_policies" not in result["apps"]["http"]["servers"]["srv0"]
+
+    def test_injects_trace_header_with_hosts(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        config = {
+            "apps": {
+                "http": {
+                    "servers": {
+                        "srv0": {
+                            "listen": [":443"],
+                            "routes": [
+                                {
+                                    "match": [{"host": ["a.example.com", "b.example.com"]}],
+                                    "handle": [{"handler": "static_response"}],
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+        result = patch_caddy_json(config, caddy_port=9999, echo_addr="x:1")
+        marker = result["apps"]["http"]["servers"]["srv0"]["routes"][0]["handle"][0]
+        assert marker["handler"] == "headers"
+        label = marker["response"]["set"]["X-Trace-Route"][0]
+        assert label == ":443 a.example.com, b.example.com"
+
+    def test_injects_trace_header_catchall(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        result = patch_caddy_json(self._minimal_config(), caddy_port=9999, echo_addr="x:1")
+        marker = result["apps"]["http"]["servers"]["srv0"]["routes"][0]["handle"][0]
+        assert marker["handler"] == "headers"
+        label = marker["response"]["set"]["X-Trace-Route"][0]
+        # No host matcher → wildcard
+        assert label == ":443 *"
+
+    def test_live_mode_preserves_upstreams(self):
+        from rots.commands.proxy._helpers import patch_caddy_json
+
+        result = patch_caddy_json(
+            self._minimal_config(upstreams="app:3000"),
+            caddy_port=9999,
+            echo_addr=None,
+        )
+        routes = result["apps"]["http"]["servers"]["srv0"]["routes"]
+        # Find the reverse_proxy handler (skip injected trace header)
+        proxy = next(
+            h for r in routes for h in r.get("handle", []) if h.get("handler") == "reverse_proxy"
+        )
+        assert proxy["upstreams"][0]["dial"] == "app:3000"
+
+    def test_raises_on_missing_servers(self):
+        from rots.commands.proxy._helpers import ProxyError, patch_caddy_json
+
+        with pytest.raises(ProxyError, match="No apps.http.servers"):
+            patch_caddy_json({}, caddy_port=9999, echo_addr="x:1")
+
+        with pytest.raises(ProxyError, match="No apps.http.servers"):
+            patch_caddy_json({"apps": {"http": {}}}, caddy_port=9999, echo_addr="x:1")
+
+
+class TestParseTraceUrl:
+    """Test parse_trace_url function."""
+
+    def test_full_url_parsed(self):
+        """Should parse a full https URL and expose semantic attributes."""
+        from rots.commands.proxy._helpers import parse_trace_url
+
+        parsed = parse_trace_url("https://us.onetime.co/api/v2/status")
+        assert parsed.scheme == "https"
+        assert parsed.hostname == "us.onetime.co"
+        assert parsed.path == "/api/v2/status"
+        assert parsed.query == ""
+
+    def test_bare_host_path_gets_scheme(self):
+        """Should prepend https:// when no scheme is provided."""
+        from rots.commands.proxy._helpers import parse_trace_url
+
+        parsed = parse_trace_url("us.onetime.co/api/v2/status")
+        assert parsed.scheme == "https"
+        assert parsed.hostname == "us.onetime.co"
+        assert parsed.path == "/api/v2/status"
+
+    def test_preserves_query_string(self):
+        """Should preserve query parameters as a separate attribute."""
+        from rots.commands.proxy._helpers import parse_trace_url
+
+        parsed = parse_trace_url("https://example.com/search?q=test&page=2")
+        assert parsed.hostname == "example.com"
+        assert parsed.path == "/search"
+        assert parsed.query == "q=test&page=2"
+
+    def test_no_hostname_raises(self):
+        """Should raise ProxyError when URL has no hostname."""
+        from rots.commands.proxy._helpers import ProxyError, parse_trace_url
+
+        with pytest.raises(ProxyError, match="no hostname"):
+            parse_trace_url("https:///no-host")
+
+    def test_bare_host_no_path(self):
+        """Should handle a bare hostname with no path."""
+        from rots.commands.proxy._helpers import parse_trace_url
+
+        parsed = parse_trace_url("example.com")
+        assert parsed.hostname == "example.com"
+        assert parsed.path == ""
+
+    def test_http_scheme_preserved(self):
+        """Should not override an explicit http:// scheme."""
+        from rots.commands.proxy._helpers import parse_trace_url
+
+        parsed = parse_trace_url("http://localhost:8080/health")
+        assert parsed.scheme == "http"
+        assert parsed.hostname == "localhost"
+        assert parsed.port == 8080
+        assert parsed.path == "/health"
+
+
+class TestRunEchoServer:
+    """Test run_echo_server context manager."""
+
+    def test_returns_json_body(self):
+        from rots.commands.proxy._helpers import find_free_port, run_echo_server
+
+        port = find_free_port()
+        with run_echo_server(port) as (addr, _received):
+            resp = urllib.request.urlopen(f"http://{addr}/test")  # noqa: S310
+            body = json.loads(resp.read())
+            assert body["method"] == "GET"
+            assert body["path"] == "/test"
+
+    def test_captures_host_header(self):
+        from rots.commands.proxy._helpers import find_free_port, run_echo_server
+
+        port = find_free_port()
+        with run_echo_server(port) as (addr, received):
+            req = urllib.request.Request(f"http://{addr}/hello")
+            req.add_header("Host", "example.com")
+            urllib.request.urlopen(req)  # noqa: S310
+            assert len(received) == 1
+            assert received[0]["headers"]["Host"] == "example.com"
+
+    def test_shuts_down_after_context_exit(self):
+        from rots.commands.proxy._helpers import find_free_port, run_echo_server
+
+        port = find_free_port()
+        with run_echo_server(port):
+            pass  # server active inside
+        # After exiting, port should be unbound (server shut down)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", port))  # should not raise
+
+
+class TestBuildCurlArgs:
+    """Test build_curl_args function."""
+
+    def test_minimal_url(self):
+        """Should produce base curl command with just the URL."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com")
+        assert args[0] == "curl"
+        assert "-sS" in args
+        assert "-D" in args
+        assert args[-2] == "--"
+        assert args[-1] == "https://example.com"
+        assert "--max-time" in args
+        idx = args.index("--max-time")
+        assert args[idx + 1] == "30"
+
+    def test_resolve_flag(self):
+        """Should add --resolve when specified."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", resolve="example.com:443:10.0.0.5")
+        assert "--resolve" in args
+        idx = args.index("--resolve")
+        assert args[idx + 1] == "example.com:443:10.0.0.5"
+
+    def test_connect_to_flag(self):
+        """Should add --connect-to when specified."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", connect_to="example.com:443:staging:443")
+        assert "--connect-to" in args
+        idx = args.index("--connect-to")
+        assert args[idx + 1] == "example.com:443:staging:443"
+
+    def test_cacert_flag(self):
+        """Should add --cacert with path."""
+        from pathlib import Path
+
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", cacert=Path("/tmp/ca.pem"))
+        assert "--cacert" in args
+        idx = args.index("--cacert")
+        assert args[idx + 1] == "/tmp/ca.pem"
+
+    def test_cert_status_flag(self):
+        """Should add --cert-status when True."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", cert_status=True)
+        assert "--cert-status" in args
+
+    def test_extra_headers(self):
+        """Should add -H for each extra header."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args(
+            "https://example.com",
+            extra_headers=("Origin: https://example.com", "X-Custom: test"),
+        )
+        h_indices = [i for i, a in enumerate(args) if a == "-H"]
+        assert len(h_indices) == 2
+        assert args[h_indices[0] + 1] == "Origin: https://example.com"
+        assert args[h_indices[1] + 1] == "X-Custom: test"
+
+    def test_method_flag(self):
+        """Should add -X when method is specified."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", method="HEAD")
+        assert "-X" in args
+        idx = args.index("-X")
+        assert args[idx + 1] == "HEAD"
+
+    def test_method_default_omits_x(self):
+        """Should not include -X when method is None."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com")
+        assert "-X" not in args
+
+    def test_insecure_flag(self):
+        """Should add -k when insecure is True."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", insecure=True)
+        assert "-k" in args
+
+    def test_insecure_false_omits_k(self):
+        """Should not include -k when insecure is False."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com")
+        assert "-k" not in args
+
+    def test_follow_flag(self):
+        """Should add -L when follow_redirects is True."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com", follow_redirects=True)
+        assert "-L" in args
+
+    def test_follow_default_no_L(self):
+        """Should not include -L when follow_redirects is False."""
+        from rots.commands.proxy._helpers import build_curl_args
+
+        args = build_curl_args("https://example.com")
+        assert "-L" not in args
+
+
+class TestParseCurlOutput:
+    """Test parse_curl_output function."""
+
+    def _make_output(self, headers: str = "", curl_json: dict | None = None) -> str:
+        """Build fake curl stdout with sentinel-separated sections."""
+        if curl_json is None:
+            curl_json = {
+                "http_code": 200,
+                "ssl_verify_result": 0,
+                "http_version": "2",
+                "url_effective": "https://example.com/",
+                "time_namelookup": 0.005,
+                "time_connect": 0.020,
+                "time_appconnect": 0.080,
+                "time_starttransfer": 0.150,
+                "time_total": 0.180,
+                "certs": (
+                    "Issuer: R11\nSubject: CN=example.com\nExpire date: Aug 17 23:59:59 2026 GMT\n"
+                ),
+            }
+        if not headers:
+            headers = "HTTP/2 200\r\ncontent-type: text/html\r\nx-frame-options: DENY\r\n"
+        return f"{headers}\n%%CURL_JSON%%\n{json.dumps(curl_json)}"
+
+    def test_parses_headers_and_json(self):
+        """Should parse response headers and curl JSON blob."""
+        from rots.commands.proxy._helpers import parse_curl_output
+
+        result = parse_curl_output(self._make_output())
+        assert result.http_code == 200
+        assert result.ssl_verify_ok is True
+        assert result.cert_issuer == "R11"
+        assert result.cert_subject == "CN=example.com"
+        assert result.cert_expiry == "Aug 17 23:59:59 2026 GMT"
+        assert result.response_headers["x-frame-options"] == ["DENY"]
+        assert result.time_total == pytest.approx(0.180)
+
+    def test_missing_sentinel_raises(self):
+        """Should raise ProxyError when sentinel is missing."""
+        from rots.commands.proxy._helpers import ProxyError, parse_curl_output
+
+        with pytest.raises(ProxyError, match="missing sentinel"):
+            parse_curl_output("just some text without sentinel")
+
+    def test_malformed_json_raises(self):
+        """Should raise ProxyError when JSON section is malformed."""
+        from rots.commands.proxy._helpers import ProxyError, parse_curl_output
+
+        bad_output = "HTTP/2 200\r\n\n%%CURL_JSON%%\n{not valid json"
+        with pytest.raises(ProxyError, match="JSON output malformed"):
+            parse_curl_output(bad_output)
+
+
+class TestParseCertExpiryDays:
+    """Test _parse_cert_expiry_days helper."""
+
+    def test_valid_future_date(self):
+        """Should return positive days for future cert."""
+        from datetime import datetime, timedelta
+
+        from rots.commands.proxy._helpers import _parse_cert_expiry_days
+
+        future = datetime.now(UTC) + timedelta(days=90)
+        date_str = future.strftime("%b %d %H:%M:%S %Y GMT")
+        result = _parse_cert_expiry_days(date_str)
+        assert result is not None
+        assert 89 <= result <= 90
+
+    def test_expired_cert(self):
+        """Should return negative days for expired cert."""
+        from rots.commands.proxy._helpers import _parse_cert_expiry_days
+
+        result = _parse_cert_expiry_days("Jan 01 00:00:00 2020 GMT")
+        assert result is not None
+        assert result < 0
+
+    def test_empty_string_returns_none(self):
+        """Should return None for empty cert expiry."""
+        from rots.commands.proxy._helpers import _parse_cert_expiry_days
+
+        assert _parse_cert_expiry_days("") is None
+
+    def test_malformed_date_returns_none(self):
+        """Should return None for unparseable date."""
+        from rots.commands.proxy._helpers import _parse_cert_expiry_days
+
+        assert _parse_cert_expiry_days("not a date") is None
+
+
+class TestEvaluateAssertions:
+    """Test evaluate_assertions function."""
+
+    def _make_result(self, **kwargs):
+        """Build a ProbeResult with sensible defaults."""
+        from rots.commands.proxy._helpers import ProbeResult
+
+        defaults = {
+            "url": "https://example.com/",
+            "http_code": 200,
+            "ssl_verify_result": 0,
+            "ssl_verify_ok": True,
+            "cert_issuer": "R11",
+            "cert_subject": "CN=example.com",
+            "cert_expiry": "Aug 17 23:59:59 2026 GMT",
+            "http_version": "2",
+            "time_namelookup": 0.005,
+            "time_connect": 0.020,
+            "time_appconnect": 0.080,
+            "time_starttransfer": 0.150,
+            "time_total": 0.180,
+            "response_headers": {
+                "X-Frame-Options": ["DENY"],
+                "O-Via": ["B76s2"],
+                "Strict-Transport-Security": ["max-age=63072000"],
+            },
+            "curl_json": {},
+        }
+        defaults.update(kwargs)
+        return ProbeResult(**defaults)
+
+    def test_status_pass(self):
+        """Should pass when status matches."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result(http_code=200)
+        checks = evaluate_assertions(result, expect_status=200)
+        assert len(checks) == 1
+        assert checks[0]["passed"] is True
+
+    def test_status_fail(self):
+        """Should fail when status does not match."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result(http_code=404)
+        checks = evaluate_assertions(result, expect_status=200)
+        assert len(checks) == 1
+        assert checks[0]["passed"] is False
+        assert checks[0]["actual"] == "404"
+
+    def test_header_pass(self):
+        """Should pass when header value matches."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result()
+        checks = evaluate_assertions(result, expect_headers=("O-Via: B76s2",))
+        assert len(checks) == 1
+        assert checks[0]["passed"] is True
+
+    def test_header_fail(self):
+        """Should fail when header value does not match."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result()
+        checks = evaluate_assertions(result, expect_headers=("O-Via: wrong",))
+        assert len(checks) == 1
+        assert checks[0]["passed"] is False
+
+    def test_header_missing(self):
+        """Should fail when expected header is missing."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result()
+        checks = evaluate_assertions(result, expect_headers=("X-Missing: value",))
+        assert len(checks) == 1
+        assert checks[0]["passed"] is False
+        assert checks[0]["actual"] == "(missing)"
+
+    def test_header_case_insensitive(self):
+        """Should match header keys case-insensitively."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result()
+        checks = evaluate_assertions(result, expect_headers=("x-frame-options: DENY",))
+        assert len(checks) == 1
+        assert checks[0]["passed"] is True
+
+    def test_empty_assertions(self):
+        """Should return empty list when no assertions specified."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result()
+        checks = evaluate_assertions(result)
+        assert checks == []
+
+    def test_cert_days_pass(self):
+        """Should pass when cert has enough days remaining."""
+        from datetime import datetime, timedelta
+
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        future = datetime.now(UTC) + timedelta(days=90)
+        cert_expiry = future.strftime("%b %d %H:%M:%S %Y GMT")
+        result = self._make_result(cert_expiry=cert_expiry)
+        checks = evaluate_assertions(result, expect_cert_days=30)
+        cert_check = [c for c in checks if c["check"] == "cert-expiry"]
+        assert len(cert_check) == 1
+        assert cert_check[0]["passed"] is True
+        assert cert_check[0]["expected"] == ">= 30 days"
+
+    def test_cert_days_fail(self):
+        """Should fail when cert has fewer days than threshold."""
+        from datetime import datetime, timedelta
+
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        future = datetime.now(UTC) + timedelta(days=15)
+        cert_expiry = future.strftime("%b %d %H:%M:%S %Y GMT")
+        result = self._make_result(cert_expiry=cert_expiry)
+        checks = evaluate_assertions(result, expect_cert_days=30)
+        cert_check = [c for c in checks if c["check"] == "cert-expiry"]
+        assert len(cert_check) == 1
+        assert cert_check[0]["passed"] is False
+        assert "days" in cert_check[0]["actual"]
+
+    def test_cert_days_empty_expiry(self):
+        """Should fail gracefully when cert_expiry is empty."""
+        from rots.commands.proxy._helpers import evaluate_assertions
+
+        result = self._make_result(cert_expiry="")
+        checks = evaluate_assertions(result, expect_cert_days=30)
+        cert_check = [c for c in checks if c["check"] == "cert-expiry"]
+        assert len(cert_check) == 1
+        assert cert_check[0]["passed"] is False
+        assert cert_check[0]["actual"] == "(no expiry date available)"
+
+
+class TestRunProbe:
+    """Test run_probe function."""
+
+    def _make_curl_stdout(self) -> str:
+        """Build realistic curl output for mock subprocess."""
+        headers = "HTTP/2 200\r\ncontent-type: text/html\r\n"
+        curl_json = {
+            "http_code": 200,
+            "ssl_verify_result": 0,
+            "http_version": "2",
+            "url_effective": "https://example.com/",
+            "time_namelookup": 0.005,
+            "time_connect": 0.020,
+            "time_appconnect": 0.080,
+            "time_starttransfer": 0.150,
+            "time_total": 0.180,
+            "certs": "",
+        }
+        return f"{headers}\n%%CURL_JSON%%\n{json.dumps(curl_json)}"
+
+    def test_success(self, mocker):
+        """Should return ProbeResult on successful curl execution."""
+        from rots.commands.proxy._helpers import run_probe
+
+        mocker.patch(
+            "subprocess.run",
+            return_value=mocker.Mock(
+                returncode=0,
+                stdout=self._make_curl_stdout(),
+                stderr="",
+            ),
+        )
+
+        result = run_probe("https://example.com")
+        assert result.http_code == 200
+        assert result.url == "https://example.com/"
+
+    def test_curl_not_found(self, mocker):
+        """Should raise ProxyError when curl is not installed."""
+        from rots.commands.proxy._helpers import ProxyError, run_probe
+
+        mocker.patch("subprocess.run", side_effect=FileNotFoundError("curl not found"))
+
+        with pytest.raises(ProxyError, match="curl not found"):
+            run_probe("https://example.com")
+
+    def test_curl_failure(self, mocker):
+        """Should raise ProxyError on non-zero curl exit."""
+        from rots.commands.proxy._helpers import ProxyError, run_probe
+
+        mocker.patch(
+            "subprocess.run",
+            return_value=mocker.Mock(
+                returncode=7,
+                stdout="",
+                stderr="Failed to connect",
+            ),
+        )
+
+        with pytest.raises(ProxyError, match="curl failed.*exit 7"):
+            run_probe("https://example.com")
+
+    def test_curl_timeout(self, mocker):
+        """Should raise ProxyError when curl times out."""
+        from rots.commands.proxy._helpers import ProxyError, run_probe
+
+        mocker.patch(
+            "subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="curl", timeout=35),
+        )
+
+        with pytest.raises(ProxyError, match="curl timed out"):
+            run_probe("https://example.com")
+
+
+class TestCollectLocalFiles:
+    """Test collect_local_files function."""
+
+    def test_collects_files_recursively(self, tmp_path):
+        """Should collect all files including nested directories."""
+        from rots.commands.proxy._helpers import collect_local_files
+
+        (tmp_path / "a.txt").write_text("a")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "b.txt").write_text("b")
+        deep = sub / "deep"
+        deep.mkdir()
+        (deep / "c.txt").write_text("c")
+
+        result = collect_local_files(tmp_path)
+
+        rel_paths = [str(r) for _, r in result]
+        assert "a.txt" in rel_paths
+        assert "sub/b.txt" in rel_paths
+        assert "sub/deep/c.txt" in rel_paths
+
+    def test_skips_hidden_files(self, tmp_path):
+        """Should skip files and directories starting with '.'."""
+        from rots.commands.proxy._helpers import collect_local_files
+
+        (tmp_path / "visible.txt").write_text("yes")
+        (tmp_path / ".hidden").write_text("no")
+        hidden_dir = tmp_path / ".git"
+        hidden_dir.mkdir()
+        (hidden_dir / "config").write_text("no")
+
+        result = collect_local_files(tmp_path)
+
+        rel_paths = [str(r) for _, r in result]
+        assert rel_paths == ["visible.txt"]
+
+    def test_sorted_output(self, tmp_path):
+        """Should return files sorted by relative path."""
+        from rots.commands.proxy._helpers import collect_local_files
+
+        (tmp_path / "z.txt").write_text("z")
+        (tmp_path / "a.txt").write_text("a")
+        sub = tmp_path / "m"
+        sub.mkdir()
+        (sub / "b.txt").write_text("b")
+
+        result = collect_local_files(tmp_path)
+
+        rel_paths = [str(r) for _, r in result]
+        assert rel_paths == ["a.txt", "m/b.txt", "z.txt"]
+
+    def test_empty_dir_returns_empty(self, tmp_path):
+        """Should return empty list for empty directory."""
+        from rots.commands.proxy._helpers import collect_local_files
+
+        result = collect_local_files(tmp_path)
+
+        assert result == []
+
+
+class TestFindTemplateInDir:
+    """Test find_template_in_dir function."""
+
+    def test_single_template_found(self, tmp_path):
+        """Should return the single *.template file."""
+        from rots.commands.proxy._helpers import find_template_in_dir
+
+        tpl = tmp_path / "Caddyfile.template"
+        tpl.write_text("content")
+        (tmp_path / "other.txt").write_text("not a template")
+
+        result = find_template_in_dir(tmp_path)
+
+        assert result == tpl
+
+    def test_no_template_returns_none(self, tmp_path):
+        """Should return None when no *.template files exist."""
+        from rots.commands.proxy._helpers import find_template_in_dir
+
+        (tmp_path / "Caddyfile").write_text("not a template")
+
+        result = find_template_in_dir(tmp_path)
+
+        assert result is None
+
+    def test_multiple_templates_raises(self, tmp_path):
+        """Should raise ProxyError with names when multiple found."""
+        from rots.commands.proxy._helpers import ProxyError, find_template_in_dir
+
+        (tmp_path / "A.template").write_text("a")
+        (tmp_path / "B.template").write_text("b")
+
+        with pytest.raises(ProxyError) as exc_info:
+            find_template_in_dir(tmp_path)
+
+        msg = str(exc_info.value)
+        assert "A.template" in msg
+        assert "B.template" in msg
+        assert "--template" in msg

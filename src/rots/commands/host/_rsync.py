@@ -10,14 +10,16 @@ at /opt/homebrew/bin/rsync).
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -92,16 +94,11 @@ def detect_rsync() -> RsyncInfo:
 def warn_if_macos_rsync(info: RsyncInfo) -> None:
     """Print a warning if rsync looks like macOS openrsync with unreliable --checksum."""
     if info.is_openrsync or (info.major > 0 and info.major < 3):
-        print(
-            f"Warning: rsync {info.version} detected"
-            + (" (openrsync)" if info.is_openrsync else "")
-            + " — --checksum may be unreliable.",
-            file=sys.stderr,
-        )
-        print(
+        tag = " (openrsync)" if info.is_openrsync else ""
+        logger.warning(
+            f"rsync {info.version} detected{tag} — --checksum may be unreliable.\n"
             "  Set RSYNC_PATH to a newer rsync (e.g. /opt/homebrew/bin/rsync) "
-            "for reliable checksums.",
-            file=sys.stderr,
+            "for reliable checksums."
         )
 
 

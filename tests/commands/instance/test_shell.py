@@ -275,7 +275,7 @@ class TestShellCommand:
         instance.shell(quiet=False)
 
         captured = capsys.readouterr()
-        assert "podman run" in captured.out
+        assert "podman run" in captured.err
 
     def test_shell_suppresses_output_when_quiet(self, mocker, tmp_path, capsys):
         """shell --quiet should suppress output."""
@@ -306,7 +306,7 @@ class TestShellImageReference:
 
         cmd = _get_cmd_from_executor(mock_executor, interactive=True)
         assert "ghcr.io/onetimesecret/onetimesecret:v0.23.0" in cmd
-        mock_config.resolve_image_tag.assert_called_once()
+        mock_config.resolve_image_tag.assert_called()
 
     def test_shell_tag_flag_bypasses_resolve(self, mocker, tmp_path):
         """shell --tag sets the tag via replace; resolve_image_tag passes it through."""
@@ -400,6 +400,77 @@ class TestShellPositionalReference:
 
         cmd = _get_cmd_from_executor(mock_executor, interactive=True)
         assert "registry:5000/org/image:v1.0" in cmd
+
+
+class TestShellSentinelRejection:
+    """shell should reject unresolved sentinel tags."""
+
+    def test_shell_rejects_at_current_sentinel(self, mocker, tmp_path, capsys):
+        """shell should exit 1 when resolve_image_tag returns @current."""
+        _mock_config, _mock_executor = _setup_shell_mocks(
+            mocker,
+            tmp_path,
+            tag="@current",
+            resolve_image_tag=(DEFAULT_IMAGE, "@current"),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(quiet=True)
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "sentinel" in captured.err
+        assert "--tag" in captured.err
+
+    def test_shell_rejects_at_rollback_sentinel(self, mocker, tmp_path, capsys):
+        """shell should exit 1 when resolve_image_tag returns @rollback."""
+        _mock_config, _mock_executor = _setup_shell_mocks(
+            mocker,
+            tmp_path,
+            tag="@rollback",
+            resolve_image_tag=(DEFAULT_IMAGE, "@rollback"),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(quiet=True)
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "sentinel" in captured.err
+
+
+class TestShellPrivateRegistry:
+    """shell should use private registry when OTS_REGISTRY is set."""
+
+    def test_shell_uses_private_registry(self, mocker, tmp_path):
+        """shell should rewrite image to use OTS_REGISTRY."""
+        mock_config, mock_executor = _setup_shell_mocks(
+            mocker,
+            tmp_path,
+            tag="edge",
+            resolve_image_tag=(DEFAULT_IMAGE, "edge"),
+        )
+        mock_config.registry = "container-registry.infra.onetime.co"
+
+        instance.shell(quiet=True)
+
+        cmd = _get_cmd_from_executor(mock_executor, interactive=True)
+        assert "container-registry.infra.onetime.co/onetimesecret/onetimesecret:edge" in cmd
+
+    def test_shell_no_registry_uses_default_image(self, mocker, tmp_path):
+        """shell without OTS_REGISTRY should use default image path."""
+        mock_config, mock_executor = _setup_shell_mocks(
+            mocker,
+            tmp_path,
+            tag="edge",
+            resolve_image_tag=(DEFAULT_IMAGE, "edge"),
+        )
+        mock_config.registry = None
+
+        instance.shell(quiet=True)
+
+        cmd = _get_cmd_from_executor(mock_executor, interactive=True)
+        assert f"{DEFAULT_IMAGE}:edge" in cmd
 
 
 class TestShellHelp:

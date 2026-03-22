@@ -25,7 +25,7 @@ import cyclopts
 
 from . import __version__
 from .commands import assets as assets_cmd
-from .commands import cloudinit, env, host, image, init, instance, proxy, service, sidecar
+from .commands import cloudinit, dns, env, host, image, init, instance, proxy, service, sidecar
 from .commands import db as db_cmd
 from .commands import self as self_cmd
 
@@ -45,6 +45,7 @@ app.command(assets_cmd.app)
 app.command(proxy.app)
 app.command(host.app)
 app.command(service.app)
+app.command(dns.app)
 app.command(cloudinit.app)
 app.command(env.app)
 app.command(db_cmd.app)
@@ -52,18 +53,34 @@ app.command(sidecar.app)
 app.command(self_cmd.app)
 
 
+class _CLIFormatter(logging.Formatter):
+    """Formatter that omits the level/module prefix for INFO messages.
+
+    INFO-level output replaces bare ``print()`` for status messages, so
+    it should look the same as before (no ``INFO rots.commands.foo:``
+    prefix).  WARNING and above keep the prefix for visibility.
+    """
+
+    _default_fmt = "%(levelname)s %(name)s: %(message)s"
+
+    def format(self, record: logging.LogRecord) -> str:
+        if record.levelno == logging.INFO:
+            return record.getMessage()
+        self._style._fmt = self._default_fmt
+        return super().format(record)
+
+
 def _configure_logging(verbose: bool) -> None:
     """Configure root logger based on verbosity flag.
 
-    When --verbose is set, DEBUG-level messages from all rots modules
-    are shown on stderr. Without it, only WARNING and above are shown.
+    Three-tier verbosity:
+    - Default:   INFO    — status messages visible on stderr
+    - --verbose: DEBUG   — executor traces, internal diagnostics
     """
-    level = logging.DEBUG if verbose else logging.WARNING
-    logging.basicConfig(
-        level=level,
-        format="%(levelname)s %(name)s: %(message)s",
-        handlers=[logging.StreamHandler()],
-    )
+    level = logging.DEBUG if verbose else logging.INFO
+    handler = logging.StreamHandler()
+    handler.setFormatter(_CLIFormatter())
+    logging.basicConfig(level=level, handlers=[handler])
     # Suppress overly chatty third-party loggers even in verbose mode
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 

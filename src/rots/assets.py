@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,8 @@ from .systemd import require_podman
 
 if TYPE_CHECKING:
     from ots_shared.ssh import Executor
+
+logger = logging.getLogger(__name__)
 
 TEMP_CONTAINER_NAME = "ots-asset-sync-tmp"
 
@@ -84,13 +87,13 @@ def update(cfg: Config, create_volume: bool = True, *, executor: Executor | None
         if _is_remote(executor):
             check_result = executor.run(["test", "-f", str(manifest)])  # type: ignore[union-attr]
             if check_result.ok:
-                print(f"Manifest found: {manifest}")
+                logger.info(f"Manifest found: {manifest}")
             else:
-                print(f"Warning: manifest not found at {manifest}")
+                logger.warning(f"manifest not found at {manifest}")
         else:
             if manifest.exists():
-                print(f"Manifest found: {manifest}")
+                logger.info(f"Manifest found: {manifest}")
             else:
-                print(f"Warning: manifest not found at {manifest}")
+                logger.warning(f"manifest not found at {manifest}")
     finally:
         p.rm(container_id, check=True)

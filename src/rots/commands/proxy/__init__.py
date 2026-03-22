@@ -2,10 +2,13 @@
 
 """Proxy management commands for OTS containers."""
 
-from .app import app, reload, render
+from .app import app, diff, probe, reload, render, trace
 
 __all__ = [
     "app",
+    "diff",
+    "probe",
     "reload",
     "render",
+    "trace",
 ]

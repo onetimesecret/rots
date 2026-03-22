@@ -235,103 +235,100 @@ def init(
             f"Example: ots service init {package} {instance} --port 6379"
         )
 
-    print(f"Initializing {pkg.name} instance '{instance}'")
-    print(f"  Template: {pkg.template_unit}")
-    print(f"  Port: {port_num}")
-    print(f"  Bind: {bind}")
-    print()
+    logger.info(f"Initializing {pkg.name} instance '{instance}'")
+    logger.info(f"  Template: {pkg.template_unit}")
+    logger.info(f"  Port: {port_num}")
+    logger.info(f"  Bind: {bind}")
 
     if dry_run:
         config_exists = _file_exists(pkg.config_file(instance), ex)
         if config_exists and not force:
-            print(f"[dry-run] Config already exists: {pkg.config_file(instance)}")
-            print("[dry-run] Would skip (use --force to overwrite)")
+            logger.info(f"[dry-run] Config already exists: {pkg.config_file(instance)}")
+            logger.info("[dry-run] Would skip (use --force to overwrite)")
         else:
             verb = "overwrite" if config_exists else "create"
-            print(f"[dry-run] Would {verb}:")
-            print(f"  Config: {pkg.config_file(instance)}")
-            print(f"  Data:   {pkg.data_dir / instance}")
+            logger.info(f"[dry-run] Would {verb}:")
+            logger.info(f"  Config: {pkg.config_file(instance)}")
+            logger.info(f"  Data:   {pkg.data_dir / instance}")
             if not no_secrets and pkg.secrets:
-                print(f"  Secrets: {pkg.secrets_file(instance)}")
+                logger.info(f"  Secrets: {pkg.secrets_file(instance)}")
         return
 
     # Check for default service conflict
     check_default_service_conflict(pkg, executor=ex)
 
     # Step 1: Copy default config
-    print(f"Creating config from {pkg.default_config}...")
+    logger.info(f"Creating config from {pkg.default_config}...")
     try:
         config_path = copy_default_config(pkg, instance, executor=ex)
-        print(f"  Created: {config_path}")
+        logger.info(f"  Created: {config_path}")
     except FileExistsError:
         if not force:
             # Idempotent: skip all modifications when config already exists
-            print(f"  Config already exists: {pkg.config_file(instance)}")
-            print("  Skipping config modifications (use --force to overwrite)")
-            print()
-            print(f"Instance '{instance}' already configured.")
-            print(f"  Status: ots service status {package} {instance}")
+            logger.info(f"  Config already exists: {pkg.config_file(instance)}")
+            logger.info("  Skipping config modifications (use --force to overwrite)")
+            logger.info(f"Instance '{instance}' already configured.")
+            logger.info(f"  Status: ots service status {package} {instance}")
             return
         # --force: delete and recreate from package default
         _unlink(pkg.config_file(instance), ex)
-        print("  Removed existing config (--force)")
+        logger.info("  Removed existing config (--force)")
         try:
             config_path = copy_default_config(pkg, instance, executor=ex)
-            print(f"  Recreated: {config_path}")
+            logger.info(f"  Recreated: {config_path}")
         except FileNotFoundError as e:
-            print(f"  ERROR: {e}")
+            logger.error(f"{e}")
             raise SystemExit(1)
     except FileNotFoundError as e:
-        print(f"  ERROR: {e}")
+        logger.error(f"{e}")
         raise SystemExit(1)
 
     # Step 2: Update port and bind in config
-    print("Updating config values...")
+    logger.info("Updating config values...")
     update_config_value(config_path, pkg.port_config_key, str(port_num), pkg, executor=ex)
     update_config_value(config_path, pkg.bind_config_key, bind, pkg, executor=ex)
 
     # Step 3: Set data directory
     data_dir = ensure_data_dir(pkg, instance, executor=ex)
-    print(f"  Data dir: {data_dir}")
+    logger.info(f"  Data dir: {data_dir}")
     # Update config to point to instance-specific data dir
     update_config_value(config_path, "dir", str(data_dir), pkg, executor=ex)
 
     # Step 4: Create secrets file (if applicable)
     if not no_secrets and pkg.secrets:
-        print("Creating secrets file...")
+        logger.info("Creating secrets file...")
         secrets_path = create_secrets_file(pkg, instance, executor=ex)
         if secrets_path:
-            print(f"  Created: {secrets_path}")
+            logger.info(f"  Created: {secrets_path}")
             add_secrets_include(config_path, secrets_path, pkg, executor=ex)
-            print("  Added include directive to config")
+            logger.info("  Added include directive to config")
     else:
-        print("Skipping secrets file (--no-secrets or package has no secrets config)")
+        logger.info("Skipping secrets file (--no-secrets or package has no secrets config)")
 
     # Step 5: Enable service
     unit = pkg.instance_unit(instance)
     if enable:
-        print(f"Enabling {unit}...")
+        logger.info(f"Enabling {unit}...")
         try:
             systemctl("enable", unit, executor=ex)
-            print("  Enabled")
+            logger.info("  Enabled")
         except _SystemctlError as e:
-            print(f"  WARNING: Could not enable: {_error_stderr(e)}")
+            logger.warning(f"Could not enable: {_error_stderr(e)}")
 
     # Step 6: Start service
     if start:
-        print(f"Starting {unit}...")
+        logger.info(f"Starting {unit}...")
         try:
             systemctl("start", unit, executor=ex)
-            print("  Started")
+            logger.info("  Started")
         except _SystemctlError as e:
-            print(f"  ERROR: Could not start: {_error_stderr(e)}")
+            logger.error(f"Could not start: {_error_stderr(e)}")
             raise SystemExit(1)
 
-    print()
-    print(f"Instance '{instance}' initialized successfully!")
-    print(f"  Config: {config_path}")
-    print(f"  Data:   {data_dir}")
-    print(f"  Status: ots service status {package} {instance}")
+    logger.info(f"Instance '{instance}' initialized successfully")
+    logger.info(f"  Config: {config_path}")
+    logger.info(f"  Data:   {data_dir}")
+    logger.info(f"  Status: ots service status {package} {instance}")
 
 
 @app.command
@@ -345,12 +342,12 @@ def enable(package: Package, instance: Instance):
     pkg = get_package(package)
     unit = pkg.instance_unit(instance)
 
-    print(f"Enabling {unit}...")
+    logger.info(f"Enabling {unit}...")
     try:
         systemctl("enable", unit, executor=ex)
-        print("Enabled")
+        logger.info("Enabled")
     except _SystemctlError as e:
-        print(f"ERROR: {_error_stderr(e)}")
+        logger.error(f"{_error_stderr(e)}")
         raise SystemExit(1)
 
 
@@ -374,18 +371,18 @@ def disable(
         print(f"This will disable {unit}")
         response = input("Continue? [y/N] ")
         if response.lower() not in ("y", "yes"):
-            print("Aborted")
+            logger.info("Aborted")
             return
 
-    print(f"Stopping {unit}...")
+    logger.info(f"Stopping {unit}...")
     systemctl("stop", unit, check=False, executor=ex)
 
-    print(f"Disabling {unit}...")
+    logger.info(f"Disabling {unit}...")
     try:
         systemctl("disable", unit, executor=ex)
-        print("Disabled")
+        logger.info("Disabled")
     except _SystemctlError as e:
-        print(f"ERROR: {_error_stderr(e)}")
+        logger.error(f"{_error_stderr(e)}")
         raise SystemExit(1)
 
 
@@ -430,12 +427,12 @@ def start(package: Package, instance: Instance):
     pkg = get_package(package)
     unit = pkg.instance_unit(instance)
 
-    print(f"Starting {unit}...")
+    logger.info(f"Starting {unit}...")
     try:
         systemctl("start", unit, executor=ex)
-        print("Started")
+        logger.info("Started")
     except _SystemctlError as e:
-        print(f"ERROR: {_error_stderr(e)}")
+        logger.error(f"{_error_stderr(e)}")
         raise SystemExit(1)
 
 
@@ -450,12 +447,12 @@ def stop(package: Package, instance: Instance):
     pkg = get_package(package)
     unit = pkg.instance_unit(instance)
 
-    print(f"Stopping {unit}...")
+    logger.info(f"Stopping {unit}...")
     try:
         systemctl("stop", unit, executor=ex)
-        print("Stopped")
+        logger.info("Stopped")
     except _SystemctlError as e:
-        print(f"ERROR: {_error_stderr(e)}")
+        logger.error(f"{_error_stderr(e)}")
         raise SystemExit(1)
 
 
@@ -470,12 +467,12 @@ def restart(package: Package, instance: Instance):
     pkg = get_package(package)
     unit = pkg.instance_unit(instance)
 
-    print(f"Restarting {unit}...")
+    logger.info(f"Restarting {unit}...")
     try:
         systemctl("restart", unit, executor=ex)
-        print("Restarted")
+        logger.info("Restarted")
     except _SystemctlError as e:
-        print(f"ERROR: {_error_stderr(e)}")
+        logger.error(f"{_error_stderr(e)}")
         raise SystemExit(1)
 
 

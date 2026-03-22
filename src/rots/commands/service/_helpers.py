@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,6 +15,8 @@ from .packages import ServicePackage
 
 if TYPE_CHECKING:
     from ots_shared.ssh.executor import Executor, Result
+
+logger = logging.getLogger(__name__)
 
 
 def _get_executor(executor: Executor | None = None) -> Executor:
@@ -422,12 +425,13 @@ def check_default_service_conflict(
         return False
 
     if is_service_active(pkg.default_service, executor=executor):
-        print(f"WARNING: Default service {pkg.default_service} is running!")
-        print(f"  This may conflict with template instances ({pkg.template_unit})")
-        print("  To use multiple instances, stop and disable the default service:")
-        print(f"    sudo systemctl stop {pkg.default_service}")
-        print(f"    sudo systemctl disable {pkg.default_service}")
-        print()
+        logger.warning(
+            f"Default service {pkg.default_service} is running.\n"
+            f"  This may conflict with template instances ({pkg.template_unit})\n"
+            "  To use multiple instances, stop and disable the default service:\n"
+            f"    sudo systemctl stop {pkg.default_service}\n"
+            f"    sudo systemctl disable {pkg.default_service}"
+        )
         return True
 
     return False

@@ -487,8 +487,8 @@ class TestConfigureLoggingLevels:
         call_kwargs = mock_basic.call_args[1]
         assert call_kwargs["level"] == logging.DEBUG
 
-    def test_verbose_false_passes_warning_level_to_basicconfig(self, mocker):
-        """_configure_logging(False) should call basicConfig with level=WARNING."""
+    def test_verbose_false_passes_info_level_to_basicconfig(self, mocker):
+        """_configure_logging(False) should call basicConfig with level=INFO."""
         import logging
 
         from rots.cli import _configure_logging
@@ -497,7 +497,7 @@ class TestConfigureLoggingLevels:
         _configure_logging(False)
         mock_basic.assert_called_once()
         call_kwargs = mock_basic.call_args[1]
-        assert call_kwargs["level"] == logging.WARNING
+        assert call_kwargs["level"] == logging.INFO
 
     def test_verbose_true_suppresses_urllib3_logger(self):
         """_configure_logging(True) should keep urllib3 at WARNING even in verbose mode."""
