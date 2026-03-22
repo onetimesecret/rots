@@ -176,6 +176,71 @@ rots cloudinit generate --include-valkey --valkey-key /path/to/valkey.gpg
 rots cloudinit validate user-data.yaml
 ```
 
+### Sidecar Daemon
+
+The sidecar daemon enables remote control of OTS instances via RabbitMQ or local control via Unix socket.
+
+```bash
+# Install and start the sidecar
+rots sidecar install           # Write systemd unit (auto-detects rots path)
+rots sidecar start             # Start daemon
+rots sidecar status            # Check daemon status
+rots sidecar logs --follow     # View logs
+
+# Send commands via Unix socket (local, default)
+rots sidecar send health --socket
+rots sidecar send status --socket
+rots sidecar send restart.web identifier=7043
+
+# Send commands via RabbitMQ (remote)
+rots sidecar send health --rabbitmq
+rots sidecar send status --rabbitmq
+rots sidecar send rots.proxy.reload --rabbitmq
+
+# Trigger remote self-upgrade from git branch
+rots sidecar send rots.self.upgrade \
+  args=--source \
+  args=git+https://github.com/onetimesecret/rots.git@main \
+  --rabbitmq
+```
+
+#### Remote Control via SSH Tunnel
+
+To send RabbitMQ commands from a local machine:
+
+```bash
+# Forward RabbitMQ port through SSH
+ssh -L 5672:maindb:5672 user@server
+
+# Send command through the tunnel
+RABBITMQ_URL=amqp://user:pass@localhost:5672/ots_production \
+  rots sidecar send health --rabbitmq
+```
+
+#### Configuration via .otsinfra.env
+
+The sidecar `send --rabbitmq` command reads `RABBITMQ_URL` from:
+
+1. Environment variable (`RABBITMQ_URL=...`)
+2. Walk-up discovery of `.otsinfra.env` files
+3. `/etc/default/onetimesecret` (on the server, for the daemon)
+
+This enables per-jurisdiction targeting. Place `.otsinfra.env` files in your ops directory:
+
+```
+ops-jurisdictions/
+  eu/.otsinfra.env     # OTS_HOST=eu-prod RABBITMQ_URL=amqp://...
+  ca/.otsinfra.env     # OTS_HOST=ca-prod RABBITMQ_URL=amqp://...
+  us/.otsinfra.env     # OTS_HOST=us-prod RABBITMQ_URL=amqp://...
+```
+
+When you `cd` into a jurisdiction and run sidecar commands, the walk-up resolver finds the appropriate `.otsinfra.env` automatically:
+
+```bash
+cd ops-jurisdictions/eu
+rots sidecar send health --rabbitmq  # Uses eu/.otsinfra.env
+```
+
 ## Environment Variables
 
 ```bash

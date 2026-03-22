@@ -2,8 +2,14 @@
 
 """RabbitMQ queue consumer for sidecar commands.
 
-Connects to RabbitMQ using credentials from /etc/default/onetimesecret,
-consumes from ots.sidecar.commands queue, and publishes responses via reply_to.
+Connects to RabbitMQ and consumes from ots.sidecar.commands queue,
+publishes responses via reply_to.
+
+RABBITMQ_URL resolution order:
+1. RABBITMQ_URL environment variable
+2. RABBITMQ_URL from .otsinfra.env (walk-up discovery)
+3. RABBITMQ_URL from /etc/default/onetimesecret
+4. Default localhost config (guest:guest@127.0.0.1:5672)
 """
 
 from __future__ import annotations
@@ -95,13 +101,34 @@ class RabbitMQConfig:
 
     @classmethod
     def from_environment(cls) -> RabbitMQConfig:
-        """Load config from environment variable or file.
+        """Load config from environment variable, .otsinfra.env, or server env file.
 
-        Checks RABBITMQ_URL env var first, then falls back to env file.
+        Resolution order:
+        1. RABBITMQ_URL environment variable
+        2. RABBITMQ_URL from .otsinfra.env (walk-up discovery)
+        3. RABBITMQ_URL from /etc/default/onetimesecret
+        4. Default localhost config
         """
+        # 1. Environment variable
         url = os.environ.get("RABBITMQ_URL")
         if url:
             return cls.from_url(url)
+
+        # 2. Walk-up .otsinfra.env discovery
+        try:
+            from ots_shared.ssh.env import find_env_file, load_env_file
+
+            env_file = find_env_file()
+            if env_file:
+                env_data = load_env_file(env_file)
+                url = env_data.get("RABBITMQ_URL")
+                if url:
+                    logger.debug("Using RABBITMQ_URL from %s", env_file)
+                    return cls.from_url(url)
+        except ImportError:
+            pass  # ots_shared not available, skip walk-up discovery
+
+        # 3. Server env file
         return cls.from_env_file()
 
 

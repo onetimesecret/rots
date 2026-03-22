@@ -32,6 +32,7 @@ Generic rots CLI invocation (rots.* prefix):
     rots.instance.*      - Instance lifecycle
     rots.image.*         - Image management
     rots.service.*       - Systemd services
+    rots.self.upgrade    - Self-upgrade (supports --source for git URLs)
     rots.doctor          - Health checks
 
 Security: rots.* commands use an allowlist. Blocked: sidecar (recursive),
@@ -41,11 +42,44 @@ Usage
 -----
 Install and run via rots CLI::
 
-    rots sidecar install   # Write systemd unit
-    rots sidecar start     # Start daemon
-    rots sidecar send '{"command": "rots.proxy.reload"}'
+    rots sidecar install       # Write systemd unit (auto-detects rots path)
+    rots sidecar start         # Start daemon
+    rots sidecar status        # Check daemon status
 
-Send from control plane via RabbitMQ::
+Send commands via Unix socket (local)::
 
-    {"command": "rots.instance.redeploy", "params": {"args": [7043, 7044]}}
+    rots sidecar send health --socket
+    rots sidecar send status --socket
+    rots sidecar send restart.web identifier=7043 --socket
+
+Send commands via RabbitMQ (remote)::
+
+    rots sidecar send health --rabbitmq
+    rots sidecar send rots.self.upgrade \
+      args=--source args=git+https://github.com/onetimesecret/rots.git@main \
+      --rabbitmq
+
+Remote control via SSH tunnel::
+
+    # Forward RabbitMQ port
+    ssh -L 5672:maindb:5672 user@server
+
+    # Send command through tunnel
+    RABBITMQ_URL=amqp://user:pass@localhost:5672/vhost rots sidecar send health --rabbitmq
+
+Configuration via .otsinfra.env::
+
+    The sidecar send command reads RABBITMQ_URL from:
+    1. Environment variable (RABBITMQ_URL=...)
+    2. Walk-up discovery of .otsinfra.env files
+
+    This enables per-jurisdiction targeting. Place .otsinfra.env files in
+    your ops directory structure::
+
+        ops-jurisdictions/
+          eu/.otsinfra.env     # OTS_HOST=eu-prod RABBITMQ_URL=amqp://...
+          ca/.otsinfra.env     # OTS_HOST=ca-prod RABBITMQ_URL=amqp://...
+
+    When you cd into a jurisdiction and run sidecar commands, the walk-up
+    resolver finds the appropriate .otsinfra.env automatically.
 """
