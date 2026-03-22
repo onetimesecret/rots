@@ -254,6 +254,25 @@ cat /etc/containers/systemd/onetime-web@.container
 systemctl daemon-reload
 ```
 
+### Sidecar Missing Dependencies
+
+If the sidecar fails with `No module named 'pika'`, inject it into the pipx environment:
+
+```bash
+pipx inject rots pika
+systemctl restart onetime-sidecar
+```
+
+### Shell Command Not Found After pipx Install
+
+If you get "command not found" after installing with pipx while a venv is active, clear the shell's command cache:
+
+```bash
+hash -r
+# or deactivate the venv first
+deactivate
+```
+
 ## Development
 
 ```bash
