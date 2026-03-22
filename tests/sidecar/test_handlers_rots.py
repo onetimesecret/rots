@@ -62,6 +62,38 @@ class TestIsSubcommandAllowed:
         assert _is_subcommand_allowed(("instance", "start")) is True
         assert _is_subcommand_allowed(("instance", "restart")) is True
 
+    def test_single_element_no_prefix_expansion(self):
+        """Security test: single-element allowlist entries must not expand.
+
+        Regression test for PR #35 feedback item #2.
+        If ('init',) is allowed, ('init', 'anything') should NOT be allowed.
+        This prevents attackers from invoking arbitrary subcommands by
+        prefixing them with an allowed single-element command.
+        """
+        # Single-element entries are explicitly allowed
+        assert _is_subcommand_allowed(("init",)) is True
+        assert _is_subcommand_allowed(("doctor",)) is True
+        assert _is_subcommand_allowed(("ps",)) is True
+        assert _is_subcommand_allowed(("version",)) is True
+
+        # But extending them with arbitrary subcommands must be blocked
+        assert _is_subcommand_allowed(("init", "malicious")) is False
+        assert _is_subcommand_allowed(("init", "delete-all-data")) is False
+        assert _is_subcommand_allowed(("doctor", "exploit")) is False
+        assert _is_subcommand_allowed(("ps", "rm", "-rf")) is False
+        assert _is_subcommand_allowed(("version", "upgrade", "--force")) is False
+
+    def test_multi_element_no_prefix_expansion(self):
+        """Security test: multi-element allowlist entries must not expand either.
+
+        If ('env', 'process') is allowed, ('env', 'process', 'extra') should NOT
+        be allowed unless explicitly listed.
+        """
+        assert _is_subcommand_allowed(("env", "process")) is True
+        assert _is_subcommand_allowed(("env", "process", "extra")) is False
+        assert _is_subcommand_allowed(("self", "upgrade")) is True
+        assert _is_subcommand_allowed(("self", "upgrade", "--malicious")) is False
+
 
 class TestBuildCommand:
     """Tests for _build_command function."""

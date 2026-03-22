@@ -9,6 +9,7 @@ and local control via Unix socket.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -40,6 +41,11 @@ Wants=rabbitmq-server.service
 
 [Service]
 Type=simple
+
+# Ensure required directories exist before ReadWritePaths takes effect
+# (ProtectSystem=strict makes /etc read-only unless path already exists)
+ExecStartPre=/usr/bin/mkdir -p /etc/onetimesecret /var/lib/onetimesecret
+
 ExecStart=/usr/local/bin/rots sidecar run
 Restart=always
 RestartSec=5
@@ -354,11 +360,14 @@ def run(
     import sys
     import threading
 
-    from rots.sidecar.commands import dispatch
+    from rots.sidecar.commands import _import_handlers, dispatch
     from rots.sidecar.rabbitmq import RabbitMQConsumer
     from rots.sidecar.socket import SocketServer
 
-    print(f"Starting sidecar daemon (PID: {__import__('os').getpid()})")
+    # Register all command handlers before creating servers
+    _import_handlers()
+
+    print(f"Starting sidecar daemon (PID: {os.getpid()})")
     print(f"Socket: {socket}")
     print(f"RabbitMQ: {'disabled' if no_rabbitmq else 'enabled'}")
 

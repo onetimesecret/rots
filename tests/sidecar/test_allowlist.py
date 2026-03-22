@@ -67,13 +67,15 @@ class TestIsKeyAllowed:
         assert is_key_allowed("SECRET") is False
         assert is_key_allowed("secret") is False
 
-    def test_derived_secrets_forbidden(self):
-        """Derived/independent secrets are forbidden."""
-        assert is_key_allowed("SESSION_SECRET") is False
-        assert is_key_allowed("IDENTIFIER_SECRET") is False
-        assert is_key_allowed("AUTH_SECRET") is False
-        assert is_key_allowed("ARGON2_SECRET") is False
-        assert is_key_allowed("FEDERATION_SECRET") is False
+    def test_derived_secrets_allowed(self):
+        """Derived secrets are allowed (they derive from SECRET which is forbidden)."""
+        # These are derived via HKDF from SECRET - if SECRET can't change,
+        # these can't be compromised. Allowing them enables key rotation.
+        assert is_key_allowed("SESSION_SECRET") is True
+        assert is_key_allowed("IDENTIFIER_SECRET") is True
+        assert is_key_allowed("AUTH_SECRET") is True
+        assert is_key_allowed("ARGON2_SECRET") is True
+        assert is_key_allowed("FEDERATION_SECRET") is True
 
     def test_database_urls_forbidden(self):
         """Database connection URLs are forbidden."""
@@ -233,11 +235,8 @@ class TestForbiddenConstants:
 
     def test_forbidden_keys_exist(self):
         """FORBIDDEN_KEYS contains expected dangerous keys."""
-        # Root + derived/independent secrets
+        # Root secret only (derived secrets are allowed - they derive from this)
         assert "SECRET" in FORBIDDEN_KEYS
-        assert "SESSION_SECRET" in FORBIDDEN_KEYS
-        assert "AUTH_SECRET" in FORBIDDEN_KEYS
-        assert "ARGON2_SECRET" in FORBIDDEN_KEYS
         # Database connections
         assert "REDIS_URL" in FORBIDDEN_KEYS
         assert "VALKEY_URL" in FORBIDDEN_KEYS

@@ -176,6 +176,7 @@ def _import_handlers() -> None:
         handlers_config,  # noqa: F401
         handlers_phased,  # noqa: F401
         handlers_rolling,  # noqa: F401
+        handlers_rots,  # noqa: F401
     )
 
     # TODO: Import additional handler modules as they are implemented

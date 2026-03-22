@@ -41,8 +41,8 @@ class TestMessage:
         assert msg.request_id is None
 
     def test_from_json_valid_with_params(self):
-        """Parse valid message with params."""
-        data = b'{"command": "restart.web", "params": {"port": 7043}}'
+        """Parse valid message with payload."""
+        data = b'{"command": "restart.web", "payload": {"port": 7043}}'
         msg = Message.from_json(data)
 
         assert msg.command == "restart.web"
@@ -51,7 +51,7 @@ class TestMessage:
 
     def test_from_json_valid_with_request_id(self):
         """Parse valid message with request_id."""
-        data = b'{"command": "status", "params": {}, "request_id": "abc-123"}'
+        data = b'{"command": "status", "payload": {}, "request_id": "abc-123"}'
         msg = Message.from_json(data)
 
         assert msg.command == "status"
@@ -84,9 +84,9 @@ class TestMessage:
             Message.from_json(b'{"command": 123}')
 
     def test_from_json_invalid_params_type(self):
-        """Reject message with non-object params."""
-        with pytest.raises(ValueError, match="'params' must be an object"):
-            Message.from_json(b'{"command": "health", "params": "string"}')
+        """Reject message with non-object payload."""
+        with pytest.raises(ValueError, match="'payload' must be an object"):
+            Message.from_json(b'{"command": "health", "payload": "string"}')
 
     def test_from_json_invalid_request_id_type(self):
         """Reject message with non-string request_id."""
@@ -95,7 +95,7 @@ class TestMessage:
 
     def test_from_json_unicode(self):
         """Parse message with unicode content."""
-        data = b'{"command": "test", "params": {"name": "cafe"}}'
+        data = b'{"command": "test", "payload": {"name": "cafe"}}'
         msg = Message.from_json(data)
 
         assert msg.command == "test"
@@ -162,7 +162,6 @@ class TestSocketHandler:
     def test_dispatch_success(self):
         """Successful command dispatch returns result."""
         mock_dispatcher = MagicMock(return_value=CommandResult.ok({"status": "running"}))
-        SocketHandler.dispatcher = mock_dispatcher
 
         # Create mock request object
         mock_request = MagicMock()
@@ -170,8 +169,12 @@ class TestSocketHandler:
         sent_data = []
         mock_request.sendall = lambda d: sent_data.append(d)
 
+        # Create mock server with dispatcher
+        mock_server = MagicMock()
+        mock_server.dispatcher = mock_dispatcher
+
         # Create handler with mocked socket
-        SocketHandler(mock_request, ("", 0), MagicMock())
+        SocketHandler(mock_request, ("", 0), mock_server)
 
         # Verify dispatcher was called
         mock_dispatcher.assert_called_once_with("status", {})
@@ -185,14 +188,16 @@ class TestSocketHandler:
     def test_dispatch_failure(self):
         """Failed command dispatch returns error."""
         mock_dispatcher = MagicMock(return_value=CommandResult.fail("Not found"))
-        SocketHandler.dispatcher = mock_dispatcher
 
         mock_request = MagicMock()
         mock_request.recv.return_value = b'{"command": "unknown"}'
         sent_data = []
         mock_request.sendall = lambda d: sent_data.append(d)
 
-        SocketHandler(mock_request, ("", 0), MagicMock())
+        mock_server = MagicMock()
+        mock_server.dispatcher = mock_dispatcher
+
+        SocketHandler(mock_request, ("", 0), mock_server)
 
         assert len(sent_data) == 1
         response = json.loads(sent_data[0])
@@ -202,14 +207,16 @@ class TestSocketHandler:
     def test_dispatch_exception(self):
         """Exception in handler returns error response."""
         mock_dispatcher = MagicMock(side_effect=RuntimeError("Boom"))
-        SocketHandler.dispatcher = mock_dispatcher
 
         mock_request = MagicMock()
         mock_request.recv.return_value = b'{"command": "explode"}'
         sent_data = []
         mock_request.sendall = lambda d: sent_data.append(d)
 
-        SocketHandler(mock_request, ("", 0), MagicMock())
+        mock_server = MagicMock()
+        mock_server.dispatcher = mock_dispatcher
+
+        SocketHandler(mock_request, ("", 0), mock_server)
 
         assert len(sent_data) == 1
         response = json.loads(sent_data[0])
@@ -245,14 +252,15 @@ class TestSocketHandler:
 
     def test_dispatch_no_dispatcher(self):
         """Missing dispatcher returns error."""
-        SocketHandler.dispatcher = None
-
         mock_request = MagicMock()
         mock_request.recv.return_value = b'{"command": "test"}'
         sent_data = []
         mock_request.sendall = lambda d: sent_data.append(d)
 
-        SocketHandler(mock_request, ("", 0), MagicMock())
+        # Create server without dispatcher attribute
+        mock_server = MagicMock(spec=[])
+
+        SocketHandler(mock_request, ("", 0), mock_server)
 
         assert len(sent_data) == 1
         response = json.loads(sent_data[0])
@@ -262,14 +270,16 @@ class TestSocketHandler:
     def test_request_id_echoed(self):
         """Request ID is echoed in response."""
         mock_dispatcher = MagicMock(return_value=CommandResult.ok())
-        SocketHandler.dispatcher = mock_dispatcher
 
         mock_request = MagicMock()
         mock_request.recv.return_value = b'{"command": "test", "request_id": "echo-me"}'
         sent_data = []
         mock_request.sendall = lambda d: sent_data.append(d)
 
-        SocketHandler(mock_request, ("", 0), MagicMock())
+        mock_server = MagicMock()
+        mock_server.dispatcher = mock_dispatcher
+
+        SocketHandler(mock_request, ("", 0), mock_server)
 
         response = json.loads(sent_data[0])
         assert response["request_id"] == "echo-me"
@@ -364,3 +374,43 @@ class TestSocketServer:
         server.shutdown()
 
         assert not socket_path.exists()
+
+
+class TestMultiInstance:
+    """Tests verifying multi-instance safety (no class variable pollution)."""
+
+    def test_handlers_use_own_server_dispatcher(self):
+        """Each handler uses its own server's dispatcher, not a shared class var."""
+        # Create two different dispatchers
+        dispatcher_a = MagicMock(return_value=CommandResult.ok({"source": "A"}))
+        dispatcher_b = MagicMock(return_value=CommandResult.ok({"source": "B"}))
+
+        # Create two mock servers with different dispatchers
+        server_a = MagicMock()
+        server_a.dispatcher = dispatcher_a
+        server_b = MagicMock()
+        server_b.dispatcher = dispatcher_b
+
+        # Process request through server A
+        mock_request_a = MagicMock()
+        mock_request_a.recv.return_value = b'{"command": "test"}'
+        sent_a = []
+        mock_request_a.sendall = lambda d: sent_a.append(d)
+        SocketHandler(mock_request_a, ("", 0), server_a)
+
+        # Process request through server B
+        mock_request_b = MagicMock()
+        mock_request_b.recv.return_value = b'{"command": "test"}'
+        sent_b = []
+        mock_request_b.sendall = lambda d: sent_b.append(d)
+        SocketHandler(mock_request_b, ("", 0), server_b)
+
+        # Verify each handler used its own server's dispatcher
+        dispatcher_a.assert_called_once_with("test", {})
+        dispatcher_b.assert_called_once_with("test", {})
+
+        # Verify responses came from correct dispatchers
+        response_a = json.loads(sent_a[0])
+        response_b = json.loads(sent_b[0])
+        assert response_a["result"] == {"source": "A"}
+        assert response_b["result"] == {"source": "B"}

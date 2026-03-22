@@ -51,11 +51,18 @@ def _get_pypi_version(package: str = "rots") -> str | None:
             timeout=30,
         )
         if result.returncode == 0:
-            # Output format: "rots (0.24.0)"
-            # or "Available versions: 0.24.0, 0.23.0, ..."
+            # Output format varies by pip version:
+            # - "rots (0.24.0)" format
+            # - "Available versions: 0.24.0, 0.23.0, ..." format
             output = result.stdout.strip()
             if "(" in output and ")" in output:
                 return output.split("(")[1].split(")")[0]
+            if "Available versions:" in output:
+                # Extract first (latest) version from comma-separated list
+                versions_part = output.split("Available versions:")[-1]
+                first_version = versions_part.split(",")[0].strip()
+                if first_version:
+                    return first_version
         return None
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return None

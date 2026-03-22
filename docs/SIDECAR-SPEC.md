@@ -194,7 +194,7 @@ When `phased_restart.web` is invoked:
 When `phased_restart.worker` is invoked:
 
 1. Locate worker master PID via `podman exec`
-2. Send SIGUSR2 to trigger graceful worker restart
+2. Send SIGUSR1 to trigger graceful worker restart
 3. Poll process status until new workers are ready or timeout (30s)
 4. If ready: return success
 5. If timeout: perform full container restart, return result with `escalated: true`
@@ -253,6 +253,7 @@ After=network.target
 
 [Service]
 Type=simple
+ExecStartPre=/usr/bin/mkdir -p /etc/onetimesecret /var/lib/onetimesecret
 ExecStart=/usr/local/bin/rots sidecar run
 Restart=always
 RestartSec=5

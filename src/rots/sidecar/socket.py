@@ -52,7 +52,7 @@ class Message:
         Expected format:
         {
             "command": "restart.web",
-            "params": {"port": 7043},
+            "payload": {"port": 7043},
             "request_id": "optional-correlation-id"
         }
 
@@ -71,15 +71,15 @@ class Message:
         if not command or not isinstance(command, str):
             raise ValueError("Missing or invalid 'command' field")
 
-        params = obj.get("params", {})
-        if not isinstance(params, dict):
-            raise ValueError("'params' must be an object if provided")
+        payload = obj.get("payload", {})
+        if not isinstance(payload, dict):
+            raise ValueError("'payload' must be an object if provided")
 
         request_id = obj.get("request_id")
         if request_id is not None and not isinstance(request_id, str):
             raise ValueError("'request_id' must be a string if provided")
 
-        return cls(command=command, params=params, request_id=request_id)
+        return cls(command=command, params=payload, request_id=request_id)
 
 
 @dataclass
@@ -107,16 +107,37 @@ class Response:
 Dispatcher = Callable[[str, dict[str, Any]], "CommandResult"]
 
 
+class SidecarUnixServer(socketserver.UnixStreamServer):
+    """Unix stream server that holds the dispatcher for handlers.
+
+    This subclass stores the dispatcher as an instance attribute rather than
+    using a class variable on the handler. Each handler accesses the dispatcher
+    via self.server.dispatcher, making it safe for multi-instance scenarios.
+    """
+
+    def __init__(
+        self,
+        server_address: str,
+        RequestHandlerClass: type[socketserver.BaseRequestHandler],
+        dispatcher: Dispatcher,
+    ) -> None:
+        self.dispatcher = dispatcher
+        super().__init__(server_address, RequestHandlerClass)
+
+
 class SocketHandler(socketserver.BaseRequestHandler):
     """Handle individual socket connections.
 
     Each connection can send one message and receive one response.
     The handler reads the JSON message, dispatches to the command handler,
     and sends back the JSON response.
+
+    The dispatcher is accessed via self.server.dispatcher, which is set
+    by the SidecarUnixServer that creates this handler.
     """
 
-    # Set by SocketServer before handling requests
-    dispatcher: Dispatcher | None = None
+    # Type hint for server (set by socketserver framework)
+    server: SidecarUnixServer
 
     def handle(self) -> None:
         """Process a single client connection."""
@@ -143,8 +164,11 @@ class SocketHandler(socketserver.BaseRequestHandler):
 
             logger.info("Dispatching command: %s", message.command)
 
+            # Get dispatcher from server instance (not class variable)
+            dispatcher = getattr(self.server, "dispatcher", None)
+
             # Dispatch to handler
-            if self.dispatcher is None:
+            if dispatcher is None:
                 response = Response(
                     success=False,
                     error="No dispatcher configured",
@@ -152,7 +176,7 @@ class SocketHandler(socketserver.BaseRequestHandler):
                 )
             else:
                 try:
-                    result = self.dispatcher(message.command, message.params)
+                    result = dispatcher(message.command, message.params)
                     response = Response(
                         success=result.success,
                         result=result.data,
@@ -196,7 +220,7 @@ class SocketServer:
         """
         self.socket_path = socket_path or DEFAULT_SOCKET_PATH
         self.dispatcher = dispatcher
-        self._server: socketserver.UnixStreamServer | None = None
+        self._server: SidecarUnixServer | None = None
 
     def start(self) -> None:
         """Start the socket server (blocks until shutdown).
@@ -212,13 +236,11 @@ class SocketServer:
         # Ensure parent directory exists
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Configure handler with dispatcher
-        SocketHandler.dispatcher = self.dispatcher
-
-        # Create server
-        self._server = socketserver.UnixStreamServer(
+        # Create server with dispatcher bound to the server instance
+        self._server = SidecarUnixServer(
             str(self.socket_path),
             SocketHandler,
+            dispatcher=self.dispatcher,
         )
 
         # Set socket permissions to root-only (0600)
@@ -284,7 +306,7 @@ def send_command(
 
     message = {
         "command": command,
-        "params": params or {},
+        "payload": params or {},
     }
     if request_id is not None:
         message["request_id"] = request_id

@@ -116,28 +116,21 @@ def _build_command(subcommand_parts: tuple[str, ...], args: list[str]) -> list[s
 def _is_subcommand_allowed(parts: tuple[str, ...]) -> bool:
     """Check if a subcommand is allowed.
 
-    A subcommand is allowed if:
-    1. It's explicitly in ALLOWED_SUBCOMMANDS, OR
-    2. Its prefix is in ALLOWED_SUBCOMMANDS (for nested commands)
+    A subcommand is allowed if it exactly matches an entry in ALLOWED_SUBCOMMANDS.
+    No prefix expansion is performed - each allowed command must be explicitly listed.
 
-    And it's NOT in BLOCKED_SUBCOMMANDS.
+    The blocklist is checked first and uses prefix matching to block entire
+    command trees (e.g., blocking ('sidecar',) blocks all sidecar subcommands).
     """
-    # Check blocked list first
+    # Check blocked list first (prefix matching for blocklist is intentional -
+    # we want to block entire command trees)
     for blocked in BLOCKED_SUBCOMMANDS:
         if parts[: len(blocked)] == blocked:
             return False
 
-    # Check if explicitly allowed
-    if parts in ALLOWED_SUBCOMMANDS:
-        return True
-
-    # Check if prefix is allowed (e.g., ("instance",) allows ("instance", "start"))
-    for i in range(1, len(parts)):
-        prefix = parts[:i]
-        if prefix in ALLOWED_SUBCOMMANDS:
-            return True
-
-    return False
+    # Exact match only - no prefix expansion for allowlist
+    # This prevents ('init',) from allowing ('init', 'malicious-subcommand')
+    return parts in ALLOWED_SUBCOMMANDS
 
 
 def invoke_rots(command_path: str, params: dict[str, Any]) -> dict[str, Any]:

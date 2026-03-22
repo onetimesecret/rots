@@ -279,7 +279,7 @@ pre-commit install
 sudo /home/youruser/.local/bin/rots instances status
 
 # Or create symlink
-sudo ln -s /home/youruser/.local/bin/rots /usr/local/bin/ots-containers
+sudo ln -s /home/youruser/.local/bin/rots /usr/local/bin/rots
 ```
 
 ## License
