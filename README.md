@@ -11,14 +11,35 @@ Service orchestration CLI for [OneTimeSecret](https://github.com/onetimesecret/o
 
 ### With pipx (Recommended)
 
+[pipx](https://pipx.pypa.io/) installs CLI tools in isolated environments, preventing dependency conflicts and enabling clean upgrades.
+
 ```bash
+# Install pipx if needed
+pip install pipx
+pipx ensurepath
+
+# Install rots
+pipx install rots
+
+# Or from git
 pipx install git+https://github.com/onetimesecret/ots-containers.git
+```
+
+### Migrating from pip to pipx
+
+If you previously installed with pip:
+
+```bash
+pip uninstall rots
+pipx install rots
 ```
 
 ### With pip
 
+Not recommended for production. Use pipx instead.
+
 ```bash
-pip install git+https://github.com/onetimesecret/ots-containers.git
+pip install rots
 ```
 
 ### From source
@@ -28,6 +49,21 @@ git clone https://github.com/onetimesecret/ots-containers.git
 cd ots-containers
 pipx install .
 ```
+
+## Upgrading
+
+```bash
+# Check for updates
+rots self check
+
+# Upgrade to latest
+rots self upgrade
+
+# Upgrade to specific version
+rots self upgrade --version 0.24.0
+```
+
+The `rots self upgrade` command wraps pipx and is safe to invoke remotely via the sidecar.
 
 ## Usage
 

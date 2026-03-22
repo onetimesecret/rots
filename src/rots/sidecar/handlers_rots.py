@@ -59,6 +59,9 @@ ALLOWED_SUBCOMMANDS: set[tuple[str, ...]] = {
     ("doctor",),
     ("ps",),
     ("version",),
+    # Self-management
+    ("self", "upgrade"),
+    ("self", "check"),
 }
 
 # Subcommands that should NEVER be allowed (destructive or inappropriate)
