@@ -1,9 +1,10 @@
 # src/rots/sidecar/allowlist.py
 
-"""Config key allowlist for staged configuration updates.
+"""Config key denylist for staged configuration updates.
 
-Defines which configuration keys can be modified via the sidecar's
-config.stage command. Keys not in the allowlist are rejected.
+The sidecar can configure almost everything. Only a small set of
+critical secrets are forbidden from remote modification - these
+must be managed via podman secrets or direct host access.
 """
 
 from __future__ import annotations
@@ -11,83 +12,38 @@ from __future__ import annotations
 import fnmatch
 from collections.abc import Iterable
 
-# Exact keys that are allowed
-ALLOWED_KEYS: frozenset[str] = frozenset(
-    {
-        # Core application
-        "REDIS_URL",
-        "SECRET_KEY",
-        "DOMAIN",
-        "HOST",
-        "SSL_ENABLED",
-        "SSL",
-        # Authentication
-        "AUTH_ENABLED",
-        "AUTH_SIGNUP",
-        "AUTH_SIGNIN",
-        "AUTH_AUTOVERIFY",
-        "AUTHENTICATION_MODE",
-        # Feature flags
-        "REGIONS_ENABLED",
-        "JURISDICTION",
-        "DOMAINS_ENABLED",
-        "DEFAULT_DOMAIN",
-        "I18N_ENABLED",
-        "I18N_DEFAULT_LOCALE",
-        "JOBS_ENABLED",
-        # RabbitMQ
-        "RABBITMQ_URL",
-        # Monitoring
-        "DIAGNOSTICS_ENABLED",
-        "SENTRY_DSN_BACKEND",
-        "SENTRY_DSN_FRONTEND",
-        "SENTRY_SAMPLE_RATE",
-        # Server
-        "PORT",
-        "SERVER_TYPE",
-        # Email (non-sensitive)
-        "EMAIL_FROM",
-        "EMAIL_SUBJECT_PREFIX",
-        "EMAILER_MODE",
-        "EMAILER_REGION",
-        "FROM_EMAIL",
-        "VERIFIER_EMAIL",
-        "VERIFIER_DOMAIN",
-    }
-)
-
-# Patterns for keys that match a prefix (use * wildcard)
-ALLOWED_PATTERNS: tuple[str, ...] = (
-    "SMTP_*",  # SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_AUTH, SMTP_TLS
-    "STRIPE_*",  # STRIPE_API_KEY, STRIPE_WEBHOOK_SIGNING_SECRET, STRIPE_TEST_*
-    "SENTRY_*",  # All Sentry configuration
-    "VITE_*",  # Frontend build variables
-)
-
-# Keys that are explicitly forbidden (even if they match patterns)
+# Keys that are explicitly forbidden - bare essentials only.
+# These are too sensitive for remote configuration via sidecar.
+# See .env.reference for full documentation.
 FORBIDDEN_KEYS: frozenset[str] = frozenset(
     {
-        # Core secrets should use podman secrets, not env vars
-        "SECRET",
-        "SESSION_SECRET",
-        "AUTH_SECRET",
-        # OAuth tokens
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "GITHUB_CLIENT_SECRET",
-        # Database credentials (should be managed separately)
+        # Root secret + derived/independent secrets (HKDF chain)
+        "SECRET",  # Root secret - all others derive from this
+        # Database connections
+        "REDIS_URL",
+        "VALKEY_URL",
         "AUTH_DATABASE_URL",
         "AUTH_DATABASE_URL_MIGRATIONS",
+        "RABBITMQ_URL",
         # Colonel (admin) access
         "COLONEL",
     }
+)
+
+# Patterns for forbidden keys (use * wildcard)
+FORBIDDEN_PATTERNS: tuple[str, ...] = (
+    # None currently - explicit keys are sufficient
 )
 
 
 def is_key_allowed(key: str) -> bool:
     """Check if a configuration key is allowed to be staged.
 
+    Uses a denylist approach - everything is allowed except
+    explicitly forbidden keys.
+
     Args:
-        key: The configuration key name (e.g., "REDIS_URL")
+        key: The configuration key name (e.g., "DOMAIN")
 
     Returns:
         True if the key can be modified via config.stage
@@ -95,20 +51,17 @@ def is_key_allowed(key: str) -> bool:
     # Normalize key
     key = key.strip().upper()
 
-    # Check forbidden list first
+    # Check forbidden list
     if key in FORBIDDEN_KEYS:
         return False
 
-    # Check exact match
-    if key in ALLOWED_KEYS:
-        return True
-
-    # Check patterns
-    for pattern in ALLOWED_PATTERNS:
+    # Check forbidden patterns
+    for pattern in FORBIDDEN_PATTERNS:
         if fnmatch.fnmatch(key, pattern):
-            return True
+            return False
 
-    return False
+    # Everything else is allowed
+    return True
 
 
 def filter_allowed_keys(keys: Iterable[str]) -> tuple[list[str], list[str]]:
@@ -155,17 +108,14 @@ def validate_config_update(
     return valid, rejected
 
 
-def list_allowed_keys() -> list[str]:
-    """Return a sorted list of all explicitly allowed keys.
+def list_forbidden_keys() -> list[str]:
+    """Return a sorted list of all forbidden keys."""
+    return sorted(FORBIDDEN_KEYS)
 
-    Does not expand patterns - use for documentation.
+
+def list_forbidden_patterns() -> list[str]:
+    """Return a list of forbidden key patterns.
+
+    Patterns use fnmatch-style wildcards.
     """
-    return sorted(ALLOWED_KEYS)
-
-
-def list_allowed_patterns() -> list[str]:
-    """Return a list of allowed key patterns.
-
-    Patterns use fnmatch-style wildcards (e.g., "SMTP_*").
-    """
-    return list(ALLOWED_PATTERNS)
+    return list(FORBIDDEN_PATTERNS)
