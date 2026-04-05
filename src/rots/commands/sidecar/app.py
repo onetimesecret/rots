@@ -581,3 +581,126 @@ def _send_via_rabbitmq(command: str, payload: dict, timeout: float) -> None:
     except Exception as e:
         print(f"Error: {e}")
         raise SystemExit(1)
+
+
+@app.command
+def publish(
+    command: Annotated[str, cyclopts.Parameter(help="Command name or JSON message")],
+    *args: Annotated[str, cyclopts.Parameter(help="key=value arguments")],
+    timeout: Annotated[
+        float,
+        cyclopts.Parameter(
+            name=["--timeout", "-t"],
+            help="Response timeout in seconds",
+        ),
+    ] = 30.0,
+    broadcast: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=["--broadcast", "-b"],
+            help="Send to shared queue (any sidecar) instead of targeted host",
+        ),
+    ] = False,
+):
+    """Publish a command to a remote sidecar via RabbitMQ with host targeting.
+
+    Target resolution (unless --broadcast):
+      1. Global --host flag: rots -H <host> sidecar publish ...
+      2. SIDECAR_HOST_ID environment variable
+      3. SIDECAR_HOST_ID from .otsinfra.env (walk-up discovery)
+
+    Examples:
+        # Explicit host targeting
+        rots -H acme-prod-1 sidecar publish restart.web identifier=7043
+
+        # From .otsinfra.env directory (uses SIDECAR_HOST_ID)
+        cd ops-jurisdictions/acme && rots sidecar publish restart.web
+
+        # Broadcast to any available sidecar
+        rots sidecar publish --broadcast health
+    """
+    import json
+    from typing import Any
+
+    from rots.sidecar.rabbitmq import RabbitMQConfig, get_host_id, publish_command
+
+    from ... import context
+
+    # Resolve target host
+    target_host: str | None = None
+    if not broadcast:
+        # 1. Check global --host flag first
+        host_flag = context.host_var.get(None)
+        if host_flag:
+            target_host = host_flag
+        else:
+            # 2. Fall back to get_host_id() for .otsinfra.env discovery
+            target_host = get_host_id()
+
+    # Parse command: try JSON first, then key=value args
+    command_name: str
+    payload: dict[str, Any] = {}
+
+    try:
+        # Try parsing as JSON
+        parsed = json.loads(command)
+        command_name = parsed.get("command", "")
+        payload = parsed.get("payload", {})
+    except json.JSONDecodeError:
+        # Not JSON - treat as command name with key=value args
+        command_name = command
+        for arg in args:
+            if "=" in arg:
+                key, value = arg.split("=", 1)
+                if key in payload:
+                    existing = payload[key]
+                    if isinstance(existing, list):
+                        existing.append(value)
+                    else:
+                        payload[key] = [existing, value]
+                else:
+                    payload[key] = value
+            else:
+                print(f"Warning: Ignoring invalid argument (no =): {arg}")
+
+    if not command_name:
+        print("Error: No command specified")
+        raise SystemExit(1)
+
+    try:
+        config = RabbitMQConfig.from_environment()
+
+        # Show targeting info
+        if target_host:
+            print(f"Target: {target_host}")
+            print(f"Queue: ots.sidecar.commands.{target_host}")
+        else:
+            print("Target: broadcast (any available sidecar)")
+            print("Queue: ots.sidecar.commands")
+        print(f"RabbitMQ: {config.host}:{config.port}/{config.vhost}")
+        print(f"Command: {command_name}")
+        if payload:
+            print(f"Payload: {json.dumps(payload)}")
+        print()
+
+        response = publish_command(
+            command_name,
+            payload,
+            config=config,
+            timeout=timeout,
+            target_host=target_host,
+        )
+        print(json.dumps(response, indent=2))
+
+    except TimeoutError:
+        print(f"Error: Timeout waiting for response ({timeout}s)")
+        if target_host:
+            print(f"Hint: Is the sidecar running on {target_host}?")
+        raise SystemExit(1)
+    except ImportError as e:
+        print(f"Error: Missing dependency: {e}")
+        print("Install with: pipx inject rots pika")
+        raise SystemExit(1)
+    except Exception as e:
+        print(f"Error: {e}")
+        raise SystemExit(1)

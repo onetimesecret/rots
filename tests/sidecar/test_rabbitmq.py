@@ -802,3 +802,132 @@ class TestPublishCommandTimeout:
 
             # Verify credentials were created with our config
             mock_pika.PlainCredentials.assert_called_once_with("myuser", "mypass")
+
+
+class TestPublishCommandTargetHost:
+    """Tests for publish_command target_host routing.
+
+    Verifies that target_host parameter correctly affects the routing key.
+    """
+
+    @pytest.fixture
+    def mock_pika_module(self):
+        """Create a mock pika module with required classes."""
+        mock_pika = MagicMock()
+
+        # Mock connection and channel
+        mock_connection = MagicMock()
+        mock_channel = MagicMock()
+        mock_connection.channel.return_value = mock_channel
+
+        # Mock queue_declare result
+        mock_result = MagicMock()
+        mock_result.method.queue = "amq.gen.callback123"
+        mock_channel.queue_declare.return_value = mock_result
+
+        mock_pika.BlockingConnection.return_value = mock_connection
+        mock_pika.PlainCredentials.return_value = MagicMock()
+        mock_pika.ConnectionParameters.return_value = MagicMock()
+
+        def make_props(**kwargs):
+            props = MagicMock()
+            for k, v in kwargs.items():
+                setattr(props, k, v)
+            return props
+
+        mock_pika.BasicProperties.side_effect = make_props
+
+        return {
+            "pika": mock_pika,
+            "connection": mock_connection,
+            "channel": mock_channel,
+        }
+
+    def test_no_target_host_uses_shared_queue(self, mock_pika_module):
+        """When target_host is None, routing_key is shared queue."""
+        mock_channel = mock_pika_module["channel"]
+        mock_connection = mock_pika_module["connection"]
+        mock_connection.process_data_events.return_value = None
+
+        with patch.dict("sys.modules", {"pika": mock_pika_module["pika"]}):
+            try:
+                publish_command(
+                    command="health",
+                    config=RabbitMQConfig(),
+                    timeout=0.1,
+                    target_host=None,
+                )
+            except TimeoutError:
+                pass  # Expected
+
+        # Verify routing_key is the base queue
+        call_kwargs = mock_channel.basic_publish.call_args.kwargs
+        assert call_kwargs["routing_key"] == "ots.sidecar.commands"
+        assert call_kwargs["exchange"] == "ots.sidecar"
+
+    def test_target_host_uses_host_specific_queue(self, mock_pika_module):
+        """When target_host is set, routing_key includes host."""
+        mock_channel = mock_pika_module["channel"]
+        mock_connection = mock_pika_module["connection"]
+        mock_connection.process_data_events.return_value = None
+
+        with patch.dict("sys.modules", {"pika": mock_pika_module["pika"]}):
+            try:
+                publish_command(
+                    command="restart.web",
+                    payload={"identifier": "7043"},
+                    config=RabbitMQConfig(),
+                    timeout=0.1,
+                    target_host="web-prod-01",
+                )
+            except TimeoutError:
+                pass  # Expected
+
+        # Verify routing_key includes the target host
+        call_kwargs = mock_channel.basic_publish.call_args.kwargs
+        assert call_kwargs["routing_key"] == "ots.sidecar.commands.web-prod-01"
+        assert call_kwargs["exchange"] == "ots.sidecar"
+
+    def test_target_host_with_special_chars(self, mock_pika_module):
+        """Host IDs with dashes and underscores work correctly."""
+        mock_channel = mock_pika_module["channel"]
+        mock_connection = mock_pika_module["connection"]
+        mock_connection.process_data_events.return_value = None
+
+        with patch.dict("sys.modules", {"pika": mock_pika_module["pika"]}):
+            try:
+                publish_command(
+                    command="health",
+                    config=RabbitMQConfig(),
+                    timeout=0.1,
+                    target_host="eu-west-1_prod-server-01",
+                )
+            except TimeoutError:
+                pass  # Expected
+
+        call_kwargs = mock_channel.basic_publish.call_args.kwargs
+        assert call_kwargs["routing_key"] == "ots.sidecar.commands.eu-west-1_prod-server-01"
+
+    def test_message_body_unchanged_by_target_host(self, mock_pika_module):
+        """target_host only affects routing, not message content."""
+        mock_channel = mock_pika_module["channel"]
+        mock_connection = mock_pika_module["connection"]
+        mock_connection.process_data_events.return_value = None
+
+        with patch.dict("sys.modules", {"pika": mock_pika_module["pika"]}):
+            try:
+                publish_command(
+                    command="config.stage",
+                    payload={"key": "REDIS_URL", "value": "redis://localhost"},
+                    config=RabbitMQConfig(),
+                    timeout=0.1,
+                    target_host="acme-prod-1",
+                )
+            except TimeoutError:
+                pass  # Expected
+
+        # Verify message body has command and payload
+        call_kwargs = mock_channel.basic_publish.call_args.kwargs
+        body = json.loads(call_kwargs["body"].decode())
+        assert body["command"] == "config.stage"
+        assert body["payload"] == {"key": "REDIS_URL", "value": "redis://localhost"}

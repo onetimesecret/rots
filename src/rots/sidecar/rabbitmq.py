@@ -390,6 +390,7 @@ def publish_command(
     payload: dict[str, Any] | None = None,
     config: RabbitMQConfig | None = None,
     timeout: float = 30.0,
+    target_host: str | None = None,
 ) -> dict[str, Any]:
     """Publish a command and wait for response.
 
@@ -400,6 +401,7 @@ def publish_command(
         payload: Command parameters
         config: RabbitMQ config (defaults to loading from env)
         timeout: Seconds to wait for response
+        target_host: Specific host to target, or None for shared queue (any sidecar)
 
     Returns:
         Response dict from handler
@@ -448,9 +450,10 @@ def publish_command(
 
     # Publish command
     message = {"command": command, "payload": payload or {}}
+    routing_key = f"{COMMAND_QUEUE}.{target_host}" if target_host else COMMAND_QUEUE
     channel.basic_publish(
         exchange=COMMAND_EXCHANGE,
-        routing_key=COMMAND_QUEUE,
+        routing_key=routing_key,
         body=json.dumps(message).encode("utf-8"),
         properties=pika.BasicProperties(
             reply_to=callback_queue,
