@@ -84,8 +84,9 @@ class DeployManifest:
 
         # Extract port (optional)
         port = data.get("port", 7043)
-        if not isinstance(port, int):
-            raise ManifestError(f"'port' must be an integer, got {type(port).__name__}")
+        # Note: isinstance(True, int) is True in Python, so check bool first
+        if isinstance(port, bool) or not isinstance(port, int) or not (1 <= port <= 65535):
+            raise ManifestError(f"'port' must be an integer in 1-65535, got {port!r}")
 
         return cls(hosts=hosts, port=port, source=source)
 

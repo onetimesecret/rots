@@ -181,9 +181,11 @@ def publish_and_wait(
     """
     from rots.sidecar.rabbitmq import RabbitMQConfig, publish_command
 
-    # Build payload
+    # Build payload (copy to avoid mutating caller's dict)
     if payload is None:
         payload = {}
+    else:
+        payload = dict(payload)
     if args is not None and "args" not in payload:
         payload["args"] = args
 

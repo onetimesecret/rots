@@ -72,6 +72,57 @@ class TestDeployManifestFromDict:
         with pytest.raises(ManifestError, match="'port' must be an integer"):
             DeployManifest.from_dict(data)
 
+    def test_rejects_boolean_port(self):
+        """Rejects manifest where 'port' is boolean (isinstance(True, int) is True)."""
+        data = {"hosts": ["host1"], "port": True}
+
+        with pytest.raises(ManifestError, match="'port' must be an integer in 1-65535"):
+            DeployManifest.from_dict(data)
+
+    def test_rejects_false_as_port(self):
+        """Rejects manifest where 'port' is False."""
+        data = {"hosts": ["host1"], "port": False}
+
+        with pytest.raises(ManifestError, match="'port' must be an integer in 1-65535"):
+            DeployManifest.from_dict(data)
+
+    def test_rejects_port_zero(self):
+        """Rejects manifest where 'port' is 0."""
+        data = {"hosts": ["host1"], "port": 0}
+
+        with pytest.raises(ManifestError, match="'port' must be an integer in 1-65535"):
+            DeployManifest.from_dict(data)
+
+    def test_rejects_port_over_65535(self):
+        """Rejects manifest where 'port' exceeds 65535."""
+        data = {"hosts": ["host1"], "port": 65536}
+
+        with pytest.raises(ManifestError, match="'port' must be an integer in 1-65535"):
+            DeployManifest.from_dict(data)
+
+    def test_rejects_negative_port(self):
+        """Rejects manifest where 'port' is negative."""
+        data = {"hosts": ["host1"], "port": -1}
+
+        with pytest.raises(ManifestError, match="'port' must be an integer in 1-65535"):
+            DeployManifest.from_dict(data)
+
+    def test_accepts_port_1(self):
+        """Accepts port at lower boundary."""
+        data = {"hosts": ["host1"], "port": 1}
+
+        result = DeployManifest.from_dict(data)
+
+        assert result.port == 1
+
+    def test_accepts_port_65535(self):
+        """Accepts port at upper boundary."""
+        data = {"hosts": ["host1"], "port": 65535}
+
+        result = DeployManifest.from_dict(data)
+
+        assert result.port == 65535
+
     def test_rejects_empty_hosts(self):
         """Rejects manifest with empty hosts list."""
         data = {"hosts": []}

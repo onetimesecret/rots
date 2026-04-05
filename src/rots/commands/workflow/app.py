@@ -369,7 +369,15 @@ def trigger(
                 logger.debug("Discovered manifest at %s: %s", m.source, resolved_hosts)
             else:
                 # 4. Fall back to .otsinfra-hosts.txt
-                resolved_hosts = resolve_hosts(())
+                try:
+                    resolved_hosts = resolve_hosts(())
+                except ValueError:
+                    # Re-raise with trigger-specific message (resolve_hosts mentions
+                    # --hosts-file which is not a valid flag for trigger command)
+                    raise ValueError(
+                        "No hosts found. Provide --hosts, --manifest, or create a "
+                        ".ots-deploy.yaml or .otsinfra-hosts.txt file."
+                    )
                 resolved_port = port if port is not None else 7043
                 logger.debug("Using hosts from .otsinfra-hosts.txt: %s", resolved_hosts)
 

@@ -1,15 +1,14 @@
-# tests/commands/workflow/test_trigger.py
+# tests/commands/workflow/test_deploy.py
 
-"""Tests for rots workflow trigger command.
+"""Tests for rots workflow deploy command.
 
 Covers:
-- Host resolution from CLI args, manifest, and discovery
+- Host resolution from positional args and --hosts-file
 - Dry-run output (text and JSON)
 - JSON output format for execution
 - Exit codes: EXIT_SUCCESS (0), EXIT_PARTIAL (2), EXIT_FAILURE (1)
 - --continue-on-failure flag (FailureMode.CONTINUE_ALL)
 - --delay and --timeout options
-- Error handling for missing hosts/manifest
 """
 
 from __future__ import annotations
@@ -24,95 +23,60 @@ from rots.commands.common import EXIT_FAILURE, EXIT_PARTIAL, EXIT_PRECOND, EXIT_
 pytestmark = pytest.mark.quick
 
 
-class TestTriggerHostResolution:
-    """Tests for trigger command host resolution logic."""
+class TestDeployHostResolution:
+    """Tests for deploy command host resolution logic."""
 
-    def test_uses_explicit_hosts(self, tmp_path, monkeypatch):
-        """Uses hosts provided via --hosts flag."""
-        from rots.commands.workflow.app import trigger
+    def test_uses_positional_hosts(self, tmp_path, monkeypatch):
+        """Uses hosts provided as positional arguments."""
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = MagicMock(host_count=2, step_count=4)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
-                mock_exec.return_value = iter([])
-                with pytest.raises(SystemExit) as exc_info:
-                    trigger(
-                        tag="v1.0.0",
-                        hosts=("host1", "host2"),
-                        dry_run=True,
-                    )
+            with pytest.raises(SystemExit) as exc_info:
+                deploy(
+                    hosts=("host1", "host2"),
+                    tag="v1.0.0",
+                    dry_run=True,
+                )
 
-        # Dry run exits with 0
-        assert exc_info.value.code == 0
+        assert exc_info.value.code == EXIT_SUCCESS
 
-        # Plan was created with explicit hosts
         mock_plan.assert_called_once()
         call_kwargs = mock_plan.call_args[1]
         assert call_kwargs["hosts"] == ["host1", "host2"]
         assert call_kwargs["image_tag"] == "v1.0.0"
 
-    def test_uses_manifest_file(self, tmp_path, monkeypatch):
-        """Uses hosts from --manifest file."""
-        from rots.commands.workflow.app import trigger
+    def test_uses_hosts_file(self, tmp_path, monkeypatch):
+        """Uses hosts from --hosts-file."""
+        from rots.commands.workflow.app import deploy
 
-        manifest_file = tmp_path / "deploy.yaml"
-        manifest_file.write_text("hosts:\n  - manifest-host1\n  - manifest-host2\nport: 8080\n")
+        hosts_file = tmp_path / "hosts.txt"
+        hosts_file.write_text("file-host1\nfile-host2\n")
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = MagicMock(host_count=2, step_count=4)
             with pytest.raises(SystemExit) as exc_info:
-                trigger(
+                deploy(
                     tag="v1.0.0",
-                    manifest=manifest_file,
+                    hosts_file=hosts_file,
                     dry_run=True,
                 )
 
-        assert exc_info.value.code == 0
+        assert exc_info.value.code == EXIT_SUCCESS
 
         mock_plan.assert_called_once()
         call_kwargs = mock_plan.call_args[1]
-        assert call_kwargs["hosts"] == ["manifest-host1", "manifest-host2"]
-        assert call_kwargs["port"] == 8080
+        assert call_kwargs["hosts"] == ["file-host1", "file-host2"]
 
-    def test_discovers_manifest(self, tmp_path, monkeypatch):
-        """Discovers .ots-deploy.yaml via walk-up."""
-        from rots.commands.workflow.app import trigger
+    def test_uses_discovered_hosts_file(self, tmp_path, monkeypatch):
+        """Uses hosts from discovered .otsinfra-hosts.txt."""
+        from rots.commands.workflow.app import deploy
 
-        # Create manifest at root
-        manifest_file = tmp_path / ".ots-deploy.yaml"
-        manifest_file.write_text("hosts:\n  - discovered-host\nport: 9000\n")
-
-        # Create git boundary
-        git_dir = tmp_path / ".git"
-        git_dir.mkdir()
-
-        # Change to subdirectory
-        subdir = tmp_path / "project"
-        subdir.mkdir()
-        monkeypatch.chdir(subdir)
-
-        with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
-            with pytest.raises(SystemExit) as exc_info:
-                trigger(tag="v1.0.0", dry_run=True)
-
-        assert exc_info.value.code == 0
-
-        mock_plan.assert_called_once()
-        call_kwargs = mock_plan.call_args[1]
-        assert call_kwargs["hosts"] == ["discovered-host"]
-        assert call_kwargs["port"] == 9000
-
-    def test_falls_back_to_hosts_file(self, tmp_path, monkeypatch):
-        """Falls back to .otsinfra-hosts.txt when no manifest."""
-        from rots.commands.workflow.app import trigger
-
-        # Create hosts file (not manifest)
         hosts_file = tmp_path / ".otsinfra-hosts.txt"
-        hosts_file.write_text("fallback-host1\nfallback-host2\n")
+        hosts_file.write_text("discovered-host1\ndiscovered-host2\n")
 
         # Create git boundary
         git_dir = tmp_path / ".git"
@@ -122,157 +86,61 @@ class TestTriggerHostResolution:
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = MagicMock(host_count=2, step_count=4)
             with pytest.raises(SystemExit) as exc_info:
-                trigger(tag="v1.0.0", dry_run=True)
+                deploy(
+                    tag="v1.0.0",
+                    dry_run=True,
+                )
 
-        assert exc_info.value.code == 0
+        assert exc_info.value.code == EXIT_SUCCESS
 
         mock_plan.assert_called_once()
         call_kwargs = mock_plan.call_args[1]
-        assert call_kwargs["hosts"] == ["fallback-host1", "fallback-host2"]
+        assert call_kwargs["hosts"] == ["discovered-host1", "discovered-host2"]
 
-    def test_port_override_from_cli(self, tmp_path, monkeypatch):
-        """--port flag overrides manifest port."""
-        from rots.commands.workflow.app import trigger
 
-        manifest_file = tmp_path / ".ots-deploy.yaml"
-        manifest_file.write_text("hosts:\n  - host1\nport: 9000\n")
+class TestDeployPlanOptions:
+    """Tests for deploy command plan configuration options."""
+
+    def test_default_port(self, tmp_path, monkeypatch):
+        """Default port is 7043."""
+        from rots.commands.workflow.app import deploy
+
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = MagicMock(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
-                trigger(
+                deploy(
+                    hosts=("host1",),
                     tag="v1.0.0",
-                    manifest=manifest_file,
-                    port=7777,  # Override
                     dry_run=True,
                 )
 
         call_kwargs = mock_plan.call_args[1]
-        assert call_kwargs["port"] == 7777
+        assert call_kwargs["port"] == 7043
 
-
-class TestTriggerErrors:
-    """Tests for trigger command error handling."""
-
-    def test_error_when_no_hosts(self, tmp_path, monkeypatch, capsys):
-        """Errors when no hosts can be resolved."""
-        from rots.commands.workflow.app import trigger
-
-        # Create git boundary (no hosts file, no manifest)
-        git_dir = tmp_path / ".git"
-        git_dir.mkdir()
-        monkeypatch.chdir(tmp_path)
-
-        with pytest.raises(SystemExit) as exc_info:
-            trigger(tag="v1.0.0")
-
-        assert exc_info.value.code == EXIT_PRECOND
-
-    def test_error_when_manifest_not_found(self, tmp_path, monkeypatch, capsys):
-        """Errors when --manifest file doesn't exist."""
-        from rots.commands.workflow.app import trigger
-
-        monkeypatch.chdir(tmp_path)
-        nonexistent = tmp_path / "does-not-exist.yaml"
-
-        with pytest.raises(SystemExit) as exc_info:
-            trigger(tag="v1.0.0", manifest=nonexistent)
-
-        assert exc_info.value.code == EXIT_PRECOND
-
-    def test_error_json_output(self, tmp_path, monkeypatch, capsys):
-        """Errors are output as JSON when --json is set."""
-        from rots.commands.workflow.app import trigger
-
-        git_dir = tmp_path / ".git"
-        git_dir.mkdir()
-        monkeypatch.chdir(tmp_path)
-
-        with pytest.raises(SystemExit) as exc_info:
-            trigger(tag="v1.0.0", json_output=True)
-
-        assert exc_info.value.code == EXIT_PRECOND
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert "error" in output
-        assert output["exit_code"] == EXIT_PRECOND
-
-    def test_error_message_does_not_mention_hosts_file_flag(self, tmp_path, monkeypatch, capsys):
-        """Error message should mention trigger-specific flags, not --hosts-file."""
-        from rots.commands.workflow.app import trigger
-
-        # Create git boundary (no hosts file, no manifest)
-        git_dir = tmp_path / ".git"
-        git_dir.mkdir()
-        monkeypatch.chdir(tmp_path)
-
-        with pytest.raises(SystemExit):
-            trigger(tag="v1.0.0", json_output=True)
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-
-        # Error message should NOT mention --hosts-file (which is not a valid trigger flag)
-        assert "--hosts-file" not in output["error"]
-        # Should mention valid trigger options
-        assert "--hosts" in output["error"] or "--manifest" in output["error"]
-
-
-class TestTriggerDryRun:
-    """Tests for trigger command dry-run mode."""
-
-    def test_dry_run_shows_plan(self, tmp_path, monkeypatch, capsys):
-        """Dry run shows plan without executing."""
-        from rots.commands.workflow.app import trigger
+    def test_custom_port(self, tmp_path, monkeypatch):
+        """Custom port is passed to create_plan."""
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            # Create a mock plan with steps
-            mock_step = MagicMock()
-            mock_step.host_id = "host1"
-            mock_step.command = "rots.image.pull"
-            mock_step.payload = {"args": ["--tag", "v1.0.0"]}
-            mock_step.timeout = 120.0
+            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            with pytest.raises(SystemExit):
+                deploy(
+                    hosts=("host1",),
+                    tag="v1.0.0",
+                    port=8080,
+                    dry_run=True,
+                )
 
-            plan = MagicMock()
-            plan.image_tag = "v1.0.0"
-            plan.host_count = 1
-            plan.step_count = 2
-            plan.failure_mode.value = "stop"
-            plan.delay = 5.0
-            plan.steps = [mock_step]
-            mock_plan.return_value = plan
-
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
-                with pytest.raises(SystemExit) as exc_info:
-                    trigger(
-                        tag="v1.0.0",
-                        hosts=("host1",),
-                        dry_run=True,
-                        json_output=True,
-                    )
-
-        assert exc_info.value.code == 0
-
-        # execute() should NOT be called in dry run
-        mock_exec.assert_not_called()
-
-        # Check JSON output
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["action"] == "plan"
-        assert output["image_tag"] == "v1.0.0"
-
-
-class TestTriggerPlanOptions:
-    """Tests for trigger command plan configuration options."""
+        call_kwargs = mock_plan.call_args[1]
+        assert call_kwargs["port"] == 8080
 
     def test_default_failure_mode_stop_on_first(self, tmp_path, monkeypatch):
         """Default failure mode is STOP_ON_FIRST."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
         from rots.deploy import FailureMode
 
         monkeypatch.chdir(tmp_path)
@@ -280,9 +148,9 @@ class TestTriggerPlanOptions:
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = MagicMock(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
-                trigger(
-                    tag="v1.0.0",
+                deploy(
                     hosts=("host1",),
+                    tag="v1.0.0",
                     dry_run=True,
                 )
 
@@ -291,7 +159,7 @@ class TestTriggerPlanOptions:
 
     def test_continue_on_failure_flag(self, tmp_path, monkeypatch):
         """--continue-on-failure sets CONTINUE_ALL failure mode."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
         from rots.deploy import FailureMode
 
         monkeypatch.chdir(tmp_path)
@@ -299,9 +167,9 @@ class TestTriggerPlanOptions:
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = MagicMock(host_count=2, step_count=4)
             with pytest.raises(SystemExit):
-                trigger(
-                    tag="v1.0.0",
+                deploy(
                     hosts=("host1", "host2"),
+                    tag="v1.0.0",
                     continue_on_failure=True,
                     dry_run=True,
                 )
@@ -311,46 +179,165 @@ class TestTriggerPlanOptions:
 
     def test_delay_option(self, tmp_path, monkeypatch):
         """--delay option is passed to create_plan."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = MagicMock(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
-                trigger(
-                    tag="v1.0.0",
+                deploy(
                     hosts=("host1",),
-                    delay=15.0,
+                    tag="v1.0.0",
+                    delay=10.0,
                     dry_run=True,
                 )
 
         call_kwargs = mock_plan.call_args[1]
-        assert call_kwargs["delay"] == 15.0
+        assert call_kwargs["delay"] == 10.0
 
     def test_timeout_option(self, tmp_path, monkeypatch):
         """--timeout option is passed to create_plan for both pull and redeploy."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = MagicMock(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
-                trigger(
-                    tag="v1.0.0",
+                deploy(
                     hosts=("host1",),
-                    timeout=180,
+                    tag="v1.0.0",
+                    timeout=300,
                     dry_run=True,
                 )
 
         call_kwargs = mock_plan.call_args[1]
-        assert call_kwargs["pull_timeout"] == 180.0
-        assert call_kwargs["redeploy_timeout"] == 180.0
+        assert call_kwargs["pull_timeout"] == 300.0
+        assert call_kwargs["redeploy_timeout"] == 300.0
 
 
-class TestTriggerExecution:
-    """Tests for trigger command execution and exit codes."""
+class TestDeployDryRun:
+    """Tests for deploy command dry-run mode."""
+
+    def test_dry_run_does_not_execute(self, tmp_path, monkeypatch):
+        """Dry run shows plan without executing."""
+        from rots.commands.workflow.app import deploy
+
+        monkeypatch.chdir(tmp_path)
+
+        with patch("rots.commands.workflow.app.create_plan") as mock_plan:
+            mock_plan.return_value = MagicMock(
+                image_tag="v1.0.0",
+                host_count=1,
+                step_count=2,
+                failure_mode=MagicMock(value="stop"),
+                delay=5.0,
+                steps=[],
+            )
+            with patch("rots.commands.workflow.app.execute") as mock_exec:
+                with pytest.raises(SystemExit) as exc_info:
+                    deploy(
+                        hosts=("host1",),
+                        tag="v1.0.0",
+                        dry_run=True,
+                    )
+
+        assert exc_info.value.code == EXIT_SUCCESS
+        mock_exec.assert_not_called()
+
+    def test_dry_run_json_output(self, tmp_path, monkeypatch, capsys):
+        """Dry run JSON output includes plan details."""
+        from rots.commands.workflow.app import deploy
+
+        monkeypatch.chdir(tmp_path)
+
+        mock_step = MagicMock()
+        mock_step.host_id = "host1"
+        mock_step.command = "rots.image.pull"
+        mock_step.payload = {"args": ["--tag", "v1.0.0"]}
+        mock_step.timeout = 120.0
+
+        with patch("rots.commands.workflow.app.create_plan") as mock_plan:
+            mock_plan.return_value = MagicMock(
+                image_tag="v1.0.0",
+                host_count=1,
+                step_count=2,
+                failure_mode=MagicMock(value="stop"),
+                delay=5.0,
+                steps=[mock_step],
+            )
+            with pytest.raises(SystemExit) as exc_info:
+                deploy(
+                    hosts=("host1",),
+                    tag="v1.0.0",
+                    dry_run=True,
+                    json_output=True,
+                )
+
+        assert exc_info.value.code == EXIT_SUCCESS
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["action"] == "plan"
+        assert output["image_tag"] == "v1.0.0"
+        assert output["host_count"] == 1
+        assert output["step_count"] == 2
+        assert output["failure_mode"] == "stop"
+        assert "steps" in output
+        assert len(output["steps"]) == 1
+
+
+class TestDeployErrors:
+    """Tests for deploy command error handling."""
+
+    def test_error_when_no_hosts(self, tmp_path, monkeypatch):
+        """Errors when no hosts can be resolved."""
+        from rots.commands.workflow.app import deploy
+
+        # Create git boundary (no hosts file)
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            deploy(tag="v1.0.0")
+
+        assert exc_info.value.code == EXIT_PRECOND
+
+    def test_error_when_hosts_file_not_found(self, tmp_path, monkeypatch):
+        """Errors when --hosts-file doesn't exist."""
+        from rots.commands.workflow.app import deploy
+
+        monkeypatch.chdir(tmp_path)
+        nonexistent = tmp_path / "does-not-exist.txt"
+
+        with pytest.raises(SystemExit) as exc_info:
+            deploy(tag="v1.0.0", hosts_file=nonexistent)
+
+        assert exc_info.value.code == EXIT_PRECOND
+
+    def test_error_json_output(self, tmp_path, monkeypatch, capsys):
+        """Errors are output as JSON when --json is set."""
+        from rots.commands.workflow.app import deploy
+
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            deploy(tag="v1.0.0", json_output=True)
+
+        assert exc_info.value.code == EXIT_PRECOND
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert "error" in output
+        assert output["exit_code"] == EXIT_PRECOND
+
+
+class TestDeployExecution:
+    """Tests for deploy command execution and exit codes."""
 
     def _make_result(self, host_id: str, command: str, success: bool, error: str | None = None):
         """Create a mock StepResult."""
@@ -367,9 +354,9 @@ class TestTriggerExecution:
         result.duration_ms = 100.0
         return result
 
-    def test_all_succeed_exit_success(self, tmp_path, monkeypatch):
+    def test_all_succeed_exit_success(self, tmp_path, monkeypatch, capsys):
         """EXIT_SUCCESS (0) when all steps succeed."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
@@ -383,16 +370,16 @@ class TestTriggerExecution:
                     ]
                 )
                 with pytest.raises(SystemExit) as exc_info:
-                    trigger(
-                        tag="v1.0.0",
+                    deploy(
                         hosts=("host1",),
+                        tag="v1.0.0",
                     )
 
         assert exc_info.value.code == EXIT_SUCCESS
 
-    def test_some_fail_exit_partial(self, tmp_path, monkeypatch):
+    def test_some_fail_exit_partial(self, tmp_path, monkeypatch, capsys):
         """EXIT_PARTIAL (2) when some steps fail but at least one succeeds."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
@@ -408,16 +395,16 @@ class TestTriggerExecution:
                     ]
                 )
                 with pytest.raises(SystemExit) as exc_info:
-                    trigger(
-                        tag="v1.0.0",
+                    deploy(
                         hosts=("host1", "host2"),
+                        tag="v1.0.0",
                     )
 
         assert exc_info.value.code == EXIT_PARTIAL
 
-    def test_all_fail_exit_failure(self, tmp_path, monkeypatch):
+    def test_all_fail_exit_failure(self, tmp_path, monkeypatch, capsys):
         """EXIT_FAILURE (1) when all steps fail."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
@@ -430,16 +417,16 @@ class TestTriggerExecution:
                     ]
                 )
                 with pytest.raises(SystemExit) as exc_info:
-                    trigger(
-                        tag="v1.0.0",
+                    deploy(
                         hosts=("host1",),
+                        tag="v1.0.0",
                     )
 
         assert exc_info.value.code == EXIT_FAILURE
 
-    def test_unexpected_exception_exit_failure(self, tmp_path, monkeypatch):
+    def test_unexpected_exception_exit_failure(self, tmp_path, monkeypatch, capsys):
         """EXIT_FAILURE (1) on unexpected exception during execution."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
@@ -448,16 +435,16 @@ class TestTriggerExecution:
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.side_effect = RuntimeError("Connection lost")
                 with pytest.raises(SystemExit) as exc_info:
-                    trigger(
-                        tag="v1.0.0",
+                    deploy(
                         hosts=("host1",),
+                        tag="v1.0.0",
                     )
 
         assert exc_info.value.code == EXIT_FAILURE
 
 
-class TestTriggerJsonOutput:
-    """Tests for trigger command JSON output format."""
+class TestDeployJsonOutput:
+    """Tests for deploy command JSON output format."""
 
     def _make_result(self, host_id: str, command: str, success: bool, error: str | None = None):
         """Create a mock StepResult."""
@@ -476,7 +463,7 @@ class TestTriggerJsonOutput:
 
     def test_success_json_output(self, tmp_path, monkeypatch, capsys):
         """JSON output contains correct fields on success."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
@@ -490,10 +477,9 @@ class TestTriggerJsonOutput:
                     ]
                 )
                 with pytest.raises(SystemExit) as exc_info:
-                    trigger(
-                        tag="v1.0.0",
+                    deploy(
                         hosts=("host1",),
-                        port=7043,
+                        tag="v1.0.0",
                         json_output=True,
                     )
 
@@ -502,9 +488,8 @@ class TestTriggerJsonOutput:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
 
-        assert output["action"] == "trigger"
+        assert output["action"] == "deploy"
         assert output["image_tag"] == "v1.0.0"
-        assert output["port"] == 7043
         assert output["total_hosts"] == 1
         assert output["total_steps"] == 2
         assert output["executed_steps"] == 2
@@ -515,7 +500,7 @@ class TestTriggerJsonOutput:
 
     def test_failure_json_output(self, tmp_path, monkeypatch, capsys):
         """JSON output contains error info on failure."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
@@ -528,9 +513,9 @@ class TestTriggerJsonOutput:
                     ]
                 )
                 with pytest.raises(SystemExit) as exc_info:
-                    trigger(
-                        tag="v1.0.0",
+                    deploy(
                         hosts=("host1",),
+                        tag="v1.0.0",
                         json_output=True,
                     )
 
@@ -545,7 +530,7 @@ class TestTriggerJsonOutput:
 
     def test_exception_json_output(self, tmp_path, monkeypatch, capsys):
         """JSON output on unexpected exception includes error and partial results."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
@@ -558,9 +543,9 @@ class TestTriggerJsonOutput:
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = yield_then_raise()
                 with pytest.raises(SystemExit) as exc_info:
-                    trigger(
-                        tag="v1.0.0",
+                    deploy(
                         hosts=("host1", "host2"),
+                        tag="v1.0.0",
                         json_output=True,
                     )
 
@@ -576,12 +561,12 @@ class TestTriggerJsonOutput:
         assert len(output["results"]) == 1  # Partial results captured
 
 
-class TestTriggerResultDict:
-    """Tests for result serialization in trigger command."""
+class TestDeployResultDict:
+    """Tests for result serialization."""
 
     def test_result_to_dict_fields(self, tmp_path, monkeypatch, capsys):
         """Result dict includes all required fields."""
-        from rots.commands.workflow.app import trigger
+        from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
@@ -602,9 +587,9 @@ class TestTriggerResultDict:
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter([result])
                 with pytest.raises(SystemExit):
-                    trigger(
-                        tag="v1.0.0",
+                    deploy(
                         hosts=("host1",),
+                        tag="v1.0.0",
                         json_output=True,
                     )
 

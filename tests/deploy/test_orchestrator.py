@@ -262,3 +262,25 @@ class TestPublishAndWait:
         # Payload should contain the explicit payload, not the args
         assert call_kwargs["payload"]["args"] == ["--tag", "v0.25.0"]
         assert call_kwargs["payload"]["timeout"] == 300
+
+    @patch("rots.sidecar.rabbitmq.publish_command")
+    @patch("rots.sidecar.rabbitmq.RabbitMQConfig")
+    def test_does_not_mutate_caller_payload(self, mock_config_class, mock_publish):
+        """Caller's payload dict should not be mutated when args added."""
+        mock_config = MagicMock()
+        mock_config_class.from_environment.return_value = mock_config
+        mock_publish.return_value = {"success": True}
+
+        original_payload = {"timeout": 300}
+        original_payload_copy = dict(original_payload)
+
+        publish_and_wait(
+            host_id="host1",
+            command="rots.image.pull",
+            args=["--tag", "v0.24.1"],
+            payload=original_payload,
+        )
+
+        # Original payload should be unchanged
+        assert original_payload == original_payload_copy
+        assert "args" not in original_payload

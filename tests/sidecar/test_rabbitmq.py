@@ -803,6 +803,65 @@ class TestPublishCommandTimeout:
             # Verify credentials were created with our config
             mock_pika.PlainCredentials.assert_called_once_with("myuser", "mypass")
 
+    def test_connection_closed_on_json_decode_error(self, mock_pika_module):
+        """Connection is closed even when callback raises JSONDecodeError.
+
+        This tests the fix for a connection leak when sidecar returns malformed JSON.
+        The callback's json.loads() would raise JSONDecodeError, bypassing close().
+        """
+        mock_pika = mock_pika_module["pika"]
+        mock_connection = mock_pika_module["connection"]
+        mock_channel = mock_pika_module["channel"]
+
+        # Capture the callback function and correlation_id
+        callback_holder = {}
+        correlation_holder = {}
+
+        def capture_callback(**kwargs):
+            callback_holder["callback"] = kwargs.get("on_message_callback")
+
+        mock_channel.basic_consume.side_effect = capture_callback
+
+        # Capture the correlation_id from the published message
+        def capture_publish(*args, **kwargs):
+            props = kwargs.get("properties")
+            if props and hasattr(props, "correlation_id"):
+                correlation_holder["id"] = props.correlation_id
+
+        mock_channel.basic_publish.side_effect = capture_publish
+
+        # Simulate process_data_events triggering a response with matching correlation_id
+        call_count = [0]
+
+        def process_events(**kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1 and "callback" in callback_holder and "id" in correlation_holder:
+                # Create mock message with invalid JSON body but matching correlation
+                mock_method = MagicMock()
+                mock_props = MagicMock()
+                mock_props.correlation_id = correlation_holder["id"]
+                # The callback will try to json.loads this invalid JSON
+                callback_holder["callback"](
+                    mock_channel,
+                    mock_method,
+                    mock_props,
+                    b"not valid json {{{{",
+                )
+
+        mock_connection.process_data_events.side_effect = process_events
+
+        with patch.dict("sys.modules", {"pika": mock_pika}):
+            with pytest.raises(json.JSONDecodeError):
+                publish_command(
+                    command="test",
+                    payload={},
+                    config=RabbitMQConfig(),
+                    timeout=5.0,
+                )
+
+        # Connection should be closed even after JSONDecodeError
+        mock_connection.close.assert_called_once()
+
 
 class TestPublishCommandTargetHost:
     """Tests for publish_command target_host routing.
