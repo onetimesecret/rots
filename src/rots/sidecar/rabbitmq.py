@@ -2,8 +2,14 @@
 
 """RabbitMQ queue consumer for sidecar commands.
 
-Connects to RabbitMQ using credentials from /etc/default/onetimesecret,
-consumes from ots.sidecar.commands queue, and publishes responses via reply_to.
+Connects to RabbitMQ and consumes from ots.sidecar.commands queue,
+publishes responses via reply_to.
+
+RABBITMQ_URL resolution order:
+1. RABBITMQ_URL environment variable
+2. RABBITMQ_URL from .otsinfra.env (walk-up discovery)
+3. RABBITMQ_URL from /etc/default/onetimesecret
+4. Default localhost config (guest:guest@127.0.0.1:5672)
 """
 
 from __future__ import annotations
@@ -11,8 +17,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -32,6 +39,64 @@ COMMAND_QUEUE = "ots.sidecar.commands"
 COMMAND_EXCHANGE = "ots.sidecar"
 
 
+def get_host_id() -> str:
+    """Resolve host identifier for per-host queue binding.
+
+    Resolution order:
+    1. SIDECAR_HOST_ID environment variable
+    2. SIDECAR_HOST_ID from .otsinfra.env (walk-up discovery)
+    3. SIDECAR_HOST_ID from /etc/default/onetimesecret
+    4. socket.gethostname() fallback
+    """
+    # 1. Environment variable
+    host_id = os.environ.get("SIDECAR_HOST_ID", "").strip()
+    if host_id:
+        logger.debug("Using SIDECAR_HOST_ID from environment: %s", host_id)
+        return host_id
+
+    # 2. Walk-up .otsinfra.env discovery
+    try:
+        from ots_shared.ssh.env import find_env_file, load_env_file
+
+        env_file = find_env_file()
+        if env_file:
+            env_data = load_env_file(env_file)
+            host_id = env_data.get("SIDECAR_HOST_ID", "").strip()
+            if host_id:
+                logger.debug("Using SIDECAR_HOST_ID from %s: %s", env_file, host_id)
+                return host_id
+    except ImportError:
+        pass  # ots_shared not available, skip walk-up discovery
+
+    # 3. Server env file (/etc/default/onetimesecret)
+    if DEFAULT_ENV_FILE.exists():
+        try:
+            content = DEFAULT_ENV_FILE.read_text()
+            for line in content.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    value = value.strip()
+                    # Remove quotes if present
+                    if (value.startswith('"') and value.endswith('"')) or (
+                        value.startswith("'") and value.endswith("'")
+                    ):
+                        value = value[1:-1]
+                    if key == "SIDECAR_HOST_ID" and value:
+                        logger.debug("Using SIDECAR_HOST_ID from %s: %s", DEFAULT_ENV_FILE, value)
+                        return value
+        except Exception as e:
+            logger.warning("Failed to parse %s for SIDECAR_HOST_ID: %s", DEFAULT_ENV_FILE, e)
+
+    # 4. Fallback to hostname
+    hostname = socket.gethostname()
+    logger.debug("Using socket.gethostname() as host_id: %s", hostname)
+    return hostname
+
+
 @dataclass
 class RabbitMQConfig:
     """RabbitMQ connection configuration."""
@@ -41,9 +106,10 @@ class RabbitMQConfig:
     vhost: str = "/"
     username: str = "guest"
     password: str = "guest"
+    host_id: str = field(default_factory=get_host_id)
 
     @classmethod
-    def from_url(cls, url: str) -> RabbitMQConfig:
+    def from_url(cls, url: str, host_id: str | None = None) -> RabbitMQConfig:
         """Parse AMQP URL into config.
 
         Supports: amqp://user:pass@host:port/vhost
@@ -55,10 +121,13 @@ class RabbitMQConfig:
             vhost=parsed.path.lstrip("/") or "/",
             username=parsed.username or "guest",
             password=parsed.password or "guest",
+            host_id=host_id if host_id is not None else get_host_id(),
         )
 
     @classmethod
-    def from_env_file(cls, path: Path = DEFAULT_ENV_FILE) -> RabbitMQConfig:
+    def from_env_file(
+        cls, path: Path = DEFAULT_ENV_FILE, host_id: str | None = None
+    ) -> RabbitMQConfig:
         """Load config from environment file.
 
         Parses shell-style env file looking for RABBITMQ_URL.
@@ -66,7 +135,7 @@ class RabbitMQConfig:
         """
         if not path.exists():
             logger.warning("Env file %s not found, using defaults", path)
-            return cls()
+            return cls() if host_id is None else cls(host_id=host_id)
 
         try:
             content = path.read_text()
@@ -86,22 +155,43 @@ class RabbitMQConfig:
                     ):
                         value = value[1:-1]
                     if key == "RABBITMQ_URL":
-                        return cls.from_url(value)
+                        return cls.from_url(value, host_id=host_id)
         except Exception as e:
             logger.warning("Failed to parse %s: %s", path, e)
 
         logger.warning("RABBITMQ_URL not found in %s, using defaults", path)
-        return cls()
+        return cls() if host_id is None else cls(host_id=host_id)
 
     @classmethod
     def from_environment(cls) -> RabbitMQConfig:
-        """Load config from environment variable or file.
+        """Load config from environment variable, .otsinfra.env, or server env file.
 
-        Checks RABBITMQ_URL env var first, then falls back to env file.
+        Resolution order:
+        1. RABBITMQ_URL environment variable
+        2. RABBITMQ_URL from .otsinfra.env (walk-up discovery)
+        3. RABBITMQ_URL from /etc/default/onetimesecret
+        4. Default localhost config
         """
+        # 1. Environment variable
         url = os.environ.get("RABBITMQ_URL")
         if url:
             return cls.from_url(url)
+
+        # 2. Walk-up .otsinfra.env discovery
+        try:
+            from ots_shared.ssh.env import find_env_file, load_env_file
+
+            env_file = find_env_file()
+            if env_file:
+                env_data = load_env_file(env_file)
+                url = env_data.get("RABBITMQ_URL")
+                if url:
+                    logger.debug("Using RABBITMQ_URL from %s", env_file)
+                    return cls.from_url(url)
+        except ImportError:
+            pass  # ots_shared not available, skip walk-up discovery
+
+        # 3. Server env file
         return cls.from_env_file()
 
 
@@ -128,13 +218,15 @@ class RabbitMQConsumer:
         Args:
             handler: Callback receiving (command, payload) and returning CommandResult
             config: RabbitMQ connection config (defaults to loading from env)
-            queue: Queue name to consume from
+            queue: Base queue name to consume from
             exchange: Exchange name for routing
         """
         self.handler = handler
         self.config = config or RabbitMQConfig.from_environment()
         self.queue = queue
         self.exchange = exchange
+        # Build queue list: base queue + host-specific queue
+        self.queues = [queue, f"{queue}.{self.config.host_id}"]
         self._connection: pika.BlockingConnection | None = None
         self._channel: BlockingChannel | None = None
         self._running = False
@@ -162,26 +254,29 @@ class RabbitMQConsumer:
         self._connection = pika.BlockingConnection(parameters)
         self._channel = self._connection.channel()
 
-        # Declare exchange and queue
+        # Declare exchange
         self._channel.exchange_declare(
             exchange=self.exchange,
             exchange_type="direct",
             durable=True,
         )
-        self._channel.queue_declare(
-            queue=self.queue,
-            durable=True,
-        )
-        self._channel.queue_bind(
-            queue=self.queue,
-            exchange=self.exchange,
-            routing_key=self.queue,
-        )
+
+        # Declare and bind all queues (base + host-specific)
+        for q in self.queues:
+            self._channel.queue_declare(
+                queue=q,
+                durable=True,
+            )
+            self._channel.queue_bind(
+                queue=q,
+                exchange=self.exchange,
+                routing_key=q,
+            )
 
         # Prefetch 1 message at a time for fair dispatch
         self._channel.basic_qos(prefetch_count=1)
 
-        logger.info("Connected, consuming from queue: %s", self.queue)
+        logger.info("Consuming from queues: %s", ", ".join(self.queues))
 
     def _on_message(
         self,
@@ -256,10 +351,11 @@ class RabbitMQConsumer:
             try:
                 self._connect()
                 if self._channel:
-                    self._channel.basic_consume(
-                        queue=self.queue,
-                        on_message_callback=self._on_message,
-                    )
+                    for q in self.queues:
+                        self._channel.basic_consume(
+                            queue=q,
+                            on_message_callback=self._on_message,
+                        )
                     self._channel.start_consuming()
             except KeyboardInterrupt:
                 logger.info("Interrupted, stopping consumer")
@@ -294,6 +390,7 @@ def publish_command(
     payload: dict[str, Any] | None = None,
     config: RabbitMQConfig | None = None,
     timeout: float = 30.0,
+    target_host: str | None = None,
 ) -> dict[str, Any]:
     """Publish a command and wait for response.
 
@@ -304,6 +401,7 @@ def publish_command(
         payload: Command parameters
         config: RabbitMQ config (defaults to loading from env)
         timeout: Seconds to wait for response
+        target_host: Specific host to target, or None for shared queue (any sidecar)
 
     Returns:
         Response dict from handler
@@ -352,9 +450,10 @@ def publish_command(
 
     # Publish command
     message = {"command": command, "payload": payload or {}}
+    routing_key = f"{COMMAND_QUEUE}.{target_host}" if target_host else COMMAND_QUEUE
     channel.basic_publish(
         exchange=COMMAND_EXCHANGE,
-        routing_key=COMMAND_QUEUE,
+        routing_key=routing_key,
         body=json.dumps(message).encode("utf-8"),
         properties=pika.BasicProperties(
             reply_to=callback_queue,

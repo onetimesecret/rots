@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -31,8 +32,9 @@ app = cyclopts.App(
 SIDECAR_UNIT = "onetime-sidecar.service"
 SIDECAR_SOCKET = Path("/run/onetime-sidecar.sock")
 SIDECAR_UNIT_PATH = Path("/etc/systemd/system/onetime-sidecar.service")
+DEFAULT_ROTS_PATH = "/usr/local/bin/rots"
 
-# Systemd unit template
+# Systemd unit template (use {rots_path} placeholder)
 SYSTEMD_UNIT_TEMPLATE = """\
 [Unit]
 Description=OneTimeSecret Sidecar Daemon
@@ -46,21 +48,44 @@ Type=simple
 # (ProtectSystem=strict makes /etc read-only unless path already exists)
 ExecStartPre=/usr/bin/mkdir -p /etc/onetimesecret /var/lib/onetimesecret
 
-ExecStart=/usr/local/bin/rots sidecar run
+ExecStart={rots_path} sidecar run
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 
 # Security hardening
-NoNewPrivileges=true
+NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
+ProtectHome=no
+PrivateTmp=yes
 ReadWritePaths=/run /var/lib/onetimesecret /etc/onetimesecret
 
 [Install]
 WantedBy=multi-user.target
 """
+
+
+def _resolve_rots_path(explicit_path: str | None = None) -> str:
+    """Resolve the rots binary path.
+
+    Priority: explicit flag > auto-detect via shutil.which > default fallback.
+
+    Args:
+        explicit_path: Explicitly provided path (from --rots-path flag).
+
+    Returns:
+        Resolved path to the rots binary.
+    """
+    if explicit_path:
+        return explicit_path
+
+    detected = shutil.which("rots")
+    if detected:
+        logger.debug("Auto-detected rots path: %s", detected)
+        return detected
+
+    logger.debug("Using default rots path: %s", DEFAULT_ROTS_PATH)
+    return DEFAULT_ROTS_PATH
 
 
 def _get_executor() -> Executor | None:
@@ -103,17 +128,34 @@ def install(
             help="Overwrite existing unit file",
         ),
     ] = False,
+    rots_path: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--rots-path",
+            help="Explicit path to rots binary (default: auto-detect or /usr/local/bin/rots)",
+        ),
+    ] = None,
 ):
     """Install the sidecar systemd unit.
 
     Writes the systemd unit file and enables the service.
     Does not start the service automatically.
 
+    The rots binary path in the unit file is determined by:
+    1. --rots-path flag (if provided)
+    2. Auto-detection via shutil.which("rots")
+    3. Default fallback: /usr/local/bin/rots
+
     Examples:
         rots sidecar install
         rots sidecar install --force
+        rots sidecar install --rots-path ~/.local/bin/rots
     """
     ex = _get_executor()
+
+    # Resolve rots path
+    resolved_rots_path = _resolve_rots_path(rots_path)
+    unit_content = SYSTEMD_UNIT_TEMPLATE.format(rots_path=resolved_rots_path)
 
     # Check if unit exists
     if ex is None:
@@ -129,8 +171,9 @@ def install(
 
     if dry_run:
         print(f"Would write: {SIDECAR_UNIT_PATH}")
+        print(f"Using rots path: {resolved_rots_path}")
         print("---")
-        print(SYSTEMD_UNIT_TEMPLATE)
+        print(unit_content)
         print("---")
         print("Would run: systemctl daemon-reload")
         print("Would run: systemctl enable onetime-sidecar.service")
@@ -143,7 +186,7 @@ def install(
         # Use sudo tee to write with elevated privileges
         proc = subprocess.run(
             ["sudo", "tee", str(SIDECAR_UNIT_PATH)],
-            input=SYSTEMD_UNIT_TEMPLATE,
+            input=unit_content,
             capture_output=True,
             text=True,
         )
@@ -154,13 +197,14 @@ def install(
         result = ex.run(
             ["sh", "-c", f"cat > {SIDECAR_UNIT_PATH}"],
             sudo=True,
-            input=SYSTEMD_UNIT_TEMPLATE,
+            input=unit_content,
             timeout=30,
         )
         if not result.ok:
             raise RuntimeError(f"Failed to write unit file: {result.stderr}")
 
     print(f"Wrote: {SIDECAR_UNIT_PATH}")
+    print(f"Using rots path: {resolved_rots_path}")
 
     # Reload systemd
     _run_systemctl("daemon-reload", executor=ex)
@@ -361,19 +405,24 @@ def run(
     import threading
 
     from rots.sidecar.commands import _import_handlers, dispatch
-    from rots.sidecar.rabbitmq import RabbitMQConsumer
+    from rots.sidecar.rabbitmq import RabbitMQConfig, RabbitMQConsumer
     from rots.sidecar.socket import SocketServer
 
     # Register all command handlers before creating servers
     _import_handlers()
 
+    # Load RabbitMQ config (resolves host_id) before creating consumer
+    rabbitmq_config = None if no_rabbitmq else RabbitMQConfig.from_environment()
+
     print(f"Starting sidecar daemon (PID: {os.getpid()})")
     print(f"Socket: {socket}")
     print(f"RabbitMQ: {'disabled' if no_rabbitmq else 'enabled'}")
+    if rabbitmq_config:
+        print(f"Host ID: {rabbitmq_config.host_id}")
 
     # Create servers
     socket_server = SocketServer(dispatch, socket_path=Path(socket))
-    rabbitmq_consumer = None if no_rabbitmq else RabbitMQConsumer(dispatch)
+    rabbitmq_consumer = None if no_rabbitmq else RabbitMQConsumer(dispatch, config=rabbitmq_config)
 
     # Start socket server in thread
     socket_thread = threading.Thread(target=socket_server.start, daemon=True)
@@ -416,43 +465,75 @@ def send(
             help="Response timeout in seconds",
         ),
     ] = 30.0,
+    socket: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=["--socket", "-s"],
+            help="Send via Unix socket (default)",
+        ),
+    ] = False,
+    rabbitmq: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=["--rabbitmq", "-r"],
+            help="Send via RabbitMQ message queue",
+        ),
+    ] = False,
 ):
-    """Send a command to the sidecar via Unix socket.
+    """Send a command to the sidecar.
 
-    Useful for testing and debugging.
+    Specify transport with --socket (default) or --rabbitmq.
 
     Examples:
-        rots sidecar send health
-        rots sidecar send status
+        rots sidecar send health --socket
+        rots sidecar send status --rabbitmq
         rots sidecar send restart.web identifier=7043
     """
-    import json
-    import socket as sock
+    from typing import Any
 
-    # Parse args into payload
-    payload: dict[str, str] = {}
+    if socket and rabbitmq:
+        print("Error: Cannot specify both --socket and --rabbitmq")
+        raise SystemExit(1)
+
+    # Parse args into payload (repeated keys become lists)
+    payload: dict[str, Any] = {}
     for arg in args:
         if "=" in arg:
             key, value = arg.split("=", 1)
-            payload[key] = value
+            if key in payload:
+                # Convert to list or append to existing list
+                existing = payload[key]
+                if isinstance(existing, list):
+                    existing.append(value)
+                else:
+                    payload[key] = [existing, value]
+            else:
+                payload[key] = value
         else:
             print(f"Warning: Ignoring invalid argument (no =): {arg}")
 
-    # Build message
+    if rabbitmq:
+        _send_via_rabbitmq(command, payload, timeout)
+    else:
+        _send_via_socket(command, payload, timeout)
+
+
+def _send_via_socket(command: str, payload: dict, timeout: float) -> None:
+    """Send command via Unix socket."""
+    import json
+    import socket as sock
+
     message = {"command": command, "payload": payload}
     message_bytes = json.dumps(message).encode("utf-8")
 
-    # Connect to socket
     try:
         client = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
         client.settimeout(timeout)
         client.connect(str(SIDECAR_SOCKET))
 
-        # Send message
         client.sendall(message_bytes)
         client.shutdown(sock.SHUT_WR)
 
-        # Receive response
         response_data = b""
         while True:
             chunk = client.recv(4096)
@@ -462,7 +543,6 @@ def send(
 
         client.close()
 
-        # Parse and print response
         response = json.loads(response_data.decode("utf-8"))
         print(json.dumps(response, indent=2))
 
@@ -472,6 +552,154 @@ def send(
         raise SystemExit(1)
     except TimeoutError:
         print(f"Error: Timeout waiting for response ({timeout}s)")
+        raise SystemExit(1)
+    except Exception as e:
+        print(f"Error: {e}")
+        raise SystemExit(1)
+
+
+def _send_via_rabbitmq(command: str, payload: dict, timeout: float) -> None:
+    """Send command via RabbitMQ."""
+    import json
+
+    from rots.sidecar.rabbitmq import RabbitMQConfig, publish_command
+
+    try:
+        config = RabbitMQConfig.from_environment()
+        print(f"Connecting to RabbitMQ at {config.host}:{config.port}/{config.vhost}")
+
+        response = publish_command(command, payload, config=config, timeout=timeout)
+        print(json.dumps(response, indent=2))
+
+    except TimeoutError:
+        print(f"Error: Timeout waiting for response ({timeout}s)")
+        raise SystemExit(1)
+    except ImportError as e:
+        print(f"Error: Missing dependency: {e}")
+        print("Install with: pipx inject rots pika")
+        raise SystemExit(1)
+    except Exception as e:
+        print(f"Error: {e}")
+        raise SystemExit(1)
+
+
+@app.command
+def publish(
+    command: Annotated[str, cyclopts.Parameter(help="Command name or JSON message")],
+    *args: Annotated[str, cyclopts.Parameter(help="key=value arguments")],
+    timeout: Annotated[
+        float,
+        cyclopts.Parameter(
+            name=["--timeout", "-t"],
+            help="Response timeout in seconds",
+        ),
+    ] = 30.0,
+    broadcast: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=["--broadcast", "-b"],
+            help="Send to shared queue (any sidecar) instead of targeted host",
+        ),
+    ] = False,
+):
+    """Publish a command to a remote sidecar via RabbitMQ with host targeting.
+
+    Target resolution (unless --broadcast):
+      1. Global --host flag: rots -H <host> sidecar publish ...
+      2. SIDECAR_HOST_ID environment variable
+      3. SIDECAR_HOST_ID from .otsinfra.env (walk-up discovery)
+
+    Examples:
+        # Explicit host targeting
+        rots -H acme-prod-1 sidecar publish restart.web identifier=7043
+
+        # From .otsinfra.env directory (uses SIDECAR_HOST_ID)
+        cd ops-jurisdictions/acme && rots sidecar publish restart.web
+
+        # Broadcast to any available sidecar
+        rots sidecar publish --broadcast health
+    """
+    import json
+    from typing import Any
+
+    from rots.sidecar.rabbitmq import RabbitMQConfig, get_host_id, publish_command
+
+    from ... import context
+
+    # Resolve target host
+    target_host: str | None = None
+    if not broadcast:
+        # 1. Check global --host flag first
+        host_flag = context.host_var.get(None)
+        if host_flag:
+            target_host = host_flag
+        else:
+            # 2. Fall back to get_host_id() for .otsinfra.env discovery
+            target_host = get_host_id()
+
+    # Parse command: try JSON first, then key=value args
+    command_name: str
+    payload: dict[str, Any] = {}
+
+    try:
+        # Try parsing as JSON
+        parsed = json.loads(command)
+        command_name = parsed.get("command", "")
+        payload = parsed.get("payload", {})
+    except json.JSONDecodeError:
+        # Not JSON - treat as command name with key=value args
+        command_name = command
+        for arg in args:
+            if "=" in arg:
+                key, value = arg.split("=", 1)
+                if key in payload:
+                    existing = payload[key]
+                    if isinstance(existing, list):
+                        existing.append(value)
+                    else:
+                        payload[key] = [existing, value]
+                else:
+                    payload[key] = value
+            else:
+                print(f"Warning: Ignoring invalid argument (no =): {arg}")
+
+    if not command_name:
+        print("Error: No command specified")
+        raise SystemExit(1)
+
+    try:
+        config = RabbitMQConfig.from_environment()
+
+        # Show targeting info
+        if target_host:
+            print(f"Target: {target_host}")
+            print(f"Queue: ots.sidecar.commands.{target_host}")
+        else:
+            print("Target: broadcast (any available sidecar)")
+            print("Queue: ots.sidecar.commands")
+        print(f"RabbitMQ: {config.host}:{config.port}/{config.vhost}")
+        print(f"Command: {command_name}")
+        if payload:
+            print(f"Payload: {json.dumps(payload)}")
+        print()
+
+        response = publish_command(
+            command_name,
+            payload,
+            config=config,
+            timeout=timeout,
+            target_host=target_host,
+        )
+        print(json.dumps(response, indent=2))
+
+    except TimeoutError:
+        print(f"Error: Timeout waiting for response ({timeout}s)")
+        if target_host:
+            print(f"Hint: Is the sidecar running on {target_host}?")
+        raise SystemExit(1)
+    except ImportError as e:
+        print(f"Error: Missing dependency: {e}")
+        print("Install with: pipx inject rots pika")
         raise SystemExit(1)
     except Exception as e:
         print(f"Error: {e}")

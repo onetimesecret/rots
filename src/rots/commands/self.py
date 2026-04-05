@@ -83,6 +83,13 @@ def upgrade(
             help="Specific version to install (default: latest)",
         ),
     ] = None,
+    source: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--source", "-s"],
+            help="Git URL or branch (e.g., git+https://...@branch)",
+        ),
+    ] = None,
     force: Annotated[
         bool,
         cyclopts.Parameter(
@@ -106,9 +113,11 @@ def upgrade(
         pipx install rots
 
     Examples:
-        rots self upgrade              # upgrade to latest
-        rots self upgrade -v 0.24.0    # upgrade to specific version
-        rots self upgrade --dry-run    # show what would happen
+        rots self upgrade                    # upgrade to latest from PyPI
+        rots self upgrade -v 0.24.0          # upgrade to specific version
+        rots self upgrade -s git+https://github.com/onetimesecret/rots.git@main
+        rots self upgrade -s git+https://github.com/onetimesecret/rots.git@feature/sidecar
+        rots self upgrade --dry-run          # show what would happen
     """
     pipx = _find_pipx()
     current = _get_installed_version()
@@ -125,40 +134,45 @@ def upgrade(
         print("See: https://pipx.pypa.io/")
         raise SystemExit(1)
 
+    if version and source:
+        print("Error: Cannot specify both --version and --source")
+        raise SystemExit(1)
+
     # Build the command
-    if version:
+    if source:
+        package_spec = source
+        # Extract branch/tag from URL for display
+        if "@" in source:
+            target = source.split("@")[-1]
+        else:
+            target = "HEAD"
+    elif version:
         package_spec = f"rots=={version}"
         target = version
     else:
         package_spec = "rots"
         target = "latest"
 
-    # Check if upgrade is needed (unless forcing)
-    if not force and version and version == current:
+    # Check if upgrade is needed (unless forcing or using git source)
+    if not force and not source and version and version == current:
         print(f"rots is already at version {current}")
         return
 
     print(f"Current version: {current}")
-    print(f"Target version:  {target}")
+    print(f"Target:          {target}")
 
     if dry_run:
         print()
         print("Would run:")
-        if version:
-            print(f"  pipx install --force {package_spec}")
-        else:
-            print(f"  pipx upgrade {package_spec}")
+        print(f"  pipx install --force {package_spec}")
         return
 
     print()
 
     # Execute upgrade
     try:
-        if version:
-            # pipx upgrade doesn't support pinning, use install --force
-            cmd = [pipx, "install", "--force", package_spec]
-        else:
-            cmd = [pipx, "upgrade", package_spec]
+        # Always use install --force for version pins and git sources
+        cmd = [pipx, "install", "--force", package_spec]
 
         print(f"Running: {' '.join(cmd)}")
         result = subprocess.run(cmd, check=False)

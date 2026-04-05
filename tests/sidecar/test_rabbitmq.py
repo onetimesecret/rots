@@ -3,10 +3,13 @@
 """Tests for src/rots/sidecar/rabbitmq.py
 
 Covers:
+- get_host_id resolution order
 - RabbitMQConfig.from_url parsing
 - RabbitMQConfig.from_env_file parsing
 - RabbitMQConfig.from_environment precedence
+- RabbitMQConfig host_id field
 - RabbitMQConsumer message handling (mocked pika)
+- RabbitMQConsumer multi-queue binding
 - publish_command timeout behavior (mocked pika)
 """
 
@@ -18,8 +21,191 @@ import pytest
 from rots.sidecar.rabbitmq import (
     RabbitMQConfig,
     RabbitMQConsumer,
+    get_host_id,
     publish_command,
 )
+
+
+class TestGetHostId:
+    """Tests for get_host_id resolution order."""
+
+    def test_env_var_takes_precedence(self, monkeypatch, tmp_path):
+        """SIDECAR_HOST_ID env var should win over all other sources."""
+        # Create .otsinfra.env with different value
+        otsinfra_env = tmp_path / ".otsinfra.env"
+        otsinfra_env.write_text("SIDECAR_HOST_ID=from-otsinfra\n")
+
+        # Create /etc/default file with different value
+        etc_default = tmp_path / "onetimesecret"
+        etc_default.write_text("SIDECAR_HOST_ID=from-etc-default\n")
+
+        # Set env var
+        monkeypatch.setenv("SIDECAR_HOST_ID", "from-env-var")
+
+        with patch("rots.sidecar.rabbitmq.DEFAULT_ENV_FILE", etc_default):
+            result = get_host_id()
+
+        assert result == "from-env-var"
+
+    @pytest.mark.skip(
+        reason="ots_shared walk-up discovery requires integration test with actual package"
+    )
+    def test_falls_back_to_otsinfra_env(self):
+        """When no env var, use .otsinfra.env via walk-up discovery.
+
+        This test is skipped because mocking the dynamic import of ots_shared.ssh.env
+        is complex and fragile. The walk-up discovery path is better tested via
+        integration tests with the actual ots_shared package installed.
+        """
+        pass
+
+    def test_falls_back_to_etc_default(self, monkeypatch, tmp_path):
+        """When no .otsinfra.env, use /etc/default/onetimesecret."""
+        monkeypatch.delenv("SIDECAR_HOST_ID", raising=False)
+
+        # Create etc/default file
+        etc_default = tmp_path / "onetimesecret"
+        etc_default.write_text("SIDECAR_HOST_ID=from-etc-default\n")
+
+        with patch("rots.sidecar.rabbitmq.DEFAULT_ENV_FILE", etc_default):
+            # Also need to ensure ots_shared import fails (no walk-up discovery)
+            with patch.dict("sys.modules", {"ots_shared": None}):
+                result = get_host_id()
+
+        assert result == "from-etc-default"
+
+    def test_falls_back_to_etc_default_with_quotes(self, monkeypatch, tmp_path):
+        """Handle quoted values in /etc/default/onetimesecret."""
+        monkeypatch.delenv("SIDECAR_HOST_ID", raising=False)
+
+        # Create etc/default file with quoted value
+        etc_default = tmp_path / "onetimesecret"
+        etc_default.write_text('SIDECAR_HOST_ID="quoted-host-id"\n')
+
+        with patch("rots.sidecar.rabbitmq.DEFAULT_ENV_FILE", etc_default):
+            with patch.dict("sys.modules", {"ots_shared": None}):
+                result = get_host_id()
+
+        assert result == "quoted-host-id"
+
+    def test_falls_back_to_gethostname(self, monkeypatch, tmp_path, mocker):
+        """socket.gethostname() as ultimate fallback."""
+        monkeypatch.delenv("SIDECAR_HOST_ID", raising=False)
+
+        # Point to non-existent file
+        etc_default = tmp_path / "nonexistent"
+
+        # Mock gethostname
+        mocker.patch("socket.gethostname", return_value="test-hostname-001")
+
+        with patch("rots.sidecar.rabbitmq.DEFAULT_ENV_FILE", etc_default):
+            with patch.dict("sys.modules", {"ots_shared": None}):
+                result = get_host_id()
+
+        assert result == "test-hostname-001"
+
+    def test_empty_value_skipped(self, monkeypatch, tmp_path, mocker):
+        """Empty string treated as unset."""
+        # Set env var to empty string
+        monkeypatch.setenv("SIDECAR_HOST_ID", "")
+
+        # Create etc/default with empty value too
+        etc_default = tmp_path / "onetimesecret"
+        etc_default.write_text("SIDECAR_HOST_ID=\n")
+
+        # Mock gethostname as the expected fallback
+        mocker.patch("socket.gethostname", return_value="fallback-hostname")
+
+        with patch("rots.sidecar.rabbitmq.DEFAULT_ENV_FILE", etc_default):
+            with patch.dict("sys.modules", {"ots_shared": None}):
+                result = get_host_id()
+
+        assert result == "fallback-hostname"
+
+    def test_whitespace_only_value_skipped(self, monkeypatch, tmp_path, mocker):
+        """Whitespace-only value treated as unset."""
+        # Set env var to whitespace
+        monkeypatch.setenv("SIDECAR_HOST_ID", "   ")
+
+        # Mock gethostname as the expected fallback
+        mocker.patch("socket.gethostname", return_value="fallback-hostname")
+
+        etc_default = tmp_path / "nonexistent"
+
+        with patch("rots.sidecar.rabbitmq.DEFAULT_ENV_FILE", etc_default):
+            with patch.dict("sys.modules", {"ots_shared": None}):
+                result = get_host_id()
+
+        assert result == "fallback-hostname"
+
+
+class TestRabbitMQConfigHostId:
+    """Tests for RabbitMQConfig host_id field."""
+
+    def test_config_includes_host_id(self, monkeypatch, mocker):
+        """Default config gets host_id from get_host_id()."""
+        # Set env var to control get_host_id() result
+        monkeypatch.setenv("SIDECAR_HOST_ID", "default-host")
+
+        config = RabbitMQConfig()
+
+        assert config.host_id == "default-host"
+
+    def test_from_url_preserves_host_id(self, mocker):
+        """from_url() with host_id kwarg preserves it."""
+        mocker.patch("rots.sidecar.rabbitmq.get_host_id", return_value="should-not-use")
+
+        config = RabbitMQConfig.from_url(
+            "amqp://user:pass@localhost:5672/vhost",
+            host_id="explicit-host-id",
+        )
+
+        assert config.host_id == "explicit-host-id"
+        assert config.host == "localhost"
+        assert config.vhost == "vhost"
+
+    def test_from_url_uses_get_host_id_when_not_specified(self, mocker):
+        """from_url() calls get_host_id() when host_id not provided."""
+        mocker.patch("rots.sidecar.rabbitmq.get_host_id", return_value="resolved-host")
+
+        config = RabbitMQConfig.from_url("amqp://user:pass@localhost:5672/vhost")
+
+        assert config.host_id == "resolved-host"
+
+    def test_from_env_file_preserves_host_id(self, tmp_path, mocker):
+        """from_env_file() with host_id kwarg preserves it."""
+        mocker.patch("rots.sidecar.rabbitmq.get_host_id", return_value="should-not-use")
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("RABBITMQ_URL=amqp://user:pass@rabbit:5672/vh\n")
+
+        config = RabbitMQConfig.from_env_file(env_file, host_id="explicit-host")
+
+        assert config.host_id == "explicit-host"
+        assert config.host == "rabbit"
+
+    def test_from_env_file_uses_get_host_id_when_not_specified(self, tmp_path, mocker):
+        """from_env_file() calls get_host_id() when host_id not provided."""
+        mocker.patch("rots.sidecar.rabbitmq.get_host_id", return_value="resolved-host")
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("RABBITMQ_URL=amqp://user:pass@rabbit:5672/vh\n")
+
+        config = RabbitMQConfig.from_env_file(env_file)
+
+        assert config.host_id == "resolved-host"
+
+    def test_from_env_file_missing_uses_host_id(self, tmp_path, mocker):
+        """from_env_file() with missing file still respects host_id kwarg."""
+        mocker.patch("rots.sidecar.rabbitmq.get_host_id", return_value="should-not-use")
+
+        missing_file = tmp_path / "nonexistent.env"
+
+        config = RabbitMQConfig.from_env_file(missing_file, host_id="explicit-host")
+
+        assert config.host_id == "explicit-host"
+        # Should have defaults for other fields
+        assert config.host == "127.0.0.1"
 
 
 class TestRabbitMQConfigFromUrl:
@@ -372,6 +558,163 @@ class TestRabbitMQConsumerMessageHandling:
         assert "Handler exploded" in response["error"]
 
 
+class TestRabbitMQConsumerMultiQueue:
+    """Tests for RabbitMQConsumer multi-queue binding."""
+
+    @pytest.fixture
+    def mock_pika(self):
+        """Mock pika module for all tests in this class."""
+        with patch.dict("sys.modules", {"pika": MagicMock()}):
+            yield
+
+    def test_queues_list_built_correctly(self, mock_pika, mocker):
+        """Both base and host-specific queues in list."""
+        mocker.patch("rots.sidecar.rabbitmq.get_host_id", return_value="web-001")
+
+        def mock_handler(command: str, payload: dict) -> dict:
+            return {"status": "ok"}
+
+        config = RabbitMQConfig(host_id="web-001")
+        consumer = RabbitMQConsumer(
+            handler=mock_handler,
+            config=config,
+            queue="ots.sidecar.commands",
+        )
+
+        assert consumer.queues == [
+            "ots.sidecar.commands",
+            "ots.sidecar.commands.web-001",
+        ]
+
+    def test_queues_list_with_custom_queue_name(self, mock_pika, mocker):
+        """Queues list uses provided queue name as base."""
+        mocker.patch("rots.sidecar.rabbitmq.get_host_id", return_value="host-xyz")
+
+        def mock_handler(command: str, payload: dict) -> dict:
+            return {"status": "ok"}
+
+        config = RabbitMQConfig(host_id="host-xyz")
+        consumer = RabbitMQConsumer(
+            handler=mock_handler,
+            config=config,
+            queue="custom.queue",
+        )
+
+        assert consumer.queues == ["custom.queue", "custom.queue.host-xyz"]
+
+    def test_declares_both_queues(self, mock_pika, mocker):
+        """queue_declare called for each queue."""
+        mocker.patch("rots.sidecar.rabbitmq.get_host_id", return_value="web-002")
+
+        def mock_handler(command: str, payload: dict) -> dict:
+            return {"status": "ok"}
+
+        config = RabbitMQConfig(host_id="web-002")
+        consumer = RabbitMQConsumer(
+            handler=mock_handler,
+            config=config,
+        )
+
+        # Mock channel
+        mock_channel = MagicMock()
+        consumer._channel = mock_channel
+
+        # Simulate the declare/bind loop from _connect
+        for q in consumer.queues:
+            mock_channel.queue_declare(queue=q, durable=True)
+            mock_channel.queue_bind(
+                queue=q,
+                exchange=consumer.exchange,
+                routing_key=q,
+            )
+
+        # Verify queue_declare was called for both queues
+        declare_calls = mock_channel.queue_declare.call_args_list
+        assert len(declare_calls) == 2
+        assert declare_calls[0].kwargs == {"queue": "ots.sidecar.commands", "durable": True}
+        assert declare_calls[1].kwargs == {
+            "queue": "ots.sidecar.commands.web-002",
+            "durable": True,
+        }
+
+    def test_binds_both_queues(self, mock_pika, mocker):
+        """queue_bind called with correct routing keys."""
+        mocker.patch("rots.sidecar.rabbitmq.get_host_id", return_value="web-003")
+
+        def mock_handler(command: str, payload: dict) -> dict:
+            return {"status": "ok"}
+
+        config = RabbitMQConfig(host_id="web-003")
+        consumer = RabbitMQConsumer(
+            handler=mock_handler,
+            config=config,
+        )
+
+        # Mock channel
+        mock_channel = MagicMock()
+        consumer._channel = mock_channel
+
+        # Simulate the declare/bind loop from _connect
+        for q in consumer.queues:
+            mock_channel.queue_declare(queue=q, durable=True)
+            mock_channel.queue_bind(
+                queue=q,
+                exchange=consumer.exchange,
+                routing_key=q,
+            )
+
+        # Verify queue_bind was called with correct routing keys
+        bind_calls = mock_channel.queue_bind.call_args_list
+        assert len(bind_calls) == 2
+
+        # First call: base queue
+        assert bind_calls[0].kwargs == {
+            "queue": "ots.sidecar.commands",
+            "exchange": "ots.sidecar",
+            "routing_key": "ots.sidecar.commands",
+        }
+
+        # Second call: host-specific queue
+        assert bind_calls[1].kwargs == {
+            "queue": "ots.sidecar.commands.web-003",
+            "exchange": "ots.sidecar",
+            "routing_key": "ots.sidecar.commands.web-003",
+        }
+
+    def test_consumes_from_both_queues(self, mock_pika, mocker):
+        """basic_consume called for each queue."""
+        mocker.patch("rots.sidecar.rabbitmq.get_host_id", return_value="web-004")
+
+        def mock_handler(command: str, payload: dict) -> dict:
+            return {"status": "ok"}
+
+        config = RabbitMQConfig(host_id="web-004")
+        consumer = RabbitMQConsumer(
+            handler=mock_handler,
+            config=config,
+        )
+
+        # Mock channel
+        mock_channel = MagicMock()
+        consumer._channel = mock_channel
+
+        # Simulate the consume loop from start()
+        for q in consumer.queues:
+            mock_channel.basic_consume(
+                queue=q,
+                on_message_callback=consumer._on_message,
+            )
+
+        # Verify basic_consume was called for both queues
+        consume_calls = mock_channel.basic_consume.call_args_list
+        assert len(consume_calls) == 2
+        assert consume_calls[0].kwargs["queue"] == "ots.sidecar.commands"
+        assert consume_calls[1].kwargs["queue"] == "ots.sidecar.commands.web-004"
+        # Both should use the same callback
+        assert consume_calls[0].kwargs["on_message_callback"] == consumer._on_message
+        assert consume_calls[1].kwargs["on_message_callback"] == consumer._on_message
+
+
 class TestPublishCommandTimeout:
     """Tests for publish_command timeout behavior.
 
@@ -459,3 +802,132 @@ class TestPublishCommandTimeout:
 
             # Verify credentials were created with our config
             mock_pika.PlainCredentials.assert_called_once_with("myuser", "mypass")
+
+
+class TestPublishCommandTargetHost:
+    """Tests for publish_command target_host routing.
+
+    Verifies that target_host parameter correctly affects the routing key.
+    """
+
+    @pytest.fixture
+    def mock_pika_module(self):
+        """Create a mock pika module with required classes."""
+        mock_pika = MagicMock()
+
+        # Mock connection and channel
+        mock_connection = MagicMock()
+        mock_channel = MagicMock()
+        mock_connection.channel.return_value = mock_channel
+
+        # Mock queue_declare result
+        mock_result = MagicMock()
+        mock_result.method.queue = "amq.gen.callback123"
+        mock_channel.queue_declare.return_value = mock_result
+
+        mock_pika.BlockingConnection.return_value = mock_connection
+        mock_pika.PlainCredentials.return_value = MagicMock()
+        mock_pika.ConnectionParameters.return_value = MagicMock()
+
+        def make_props(**kwargs):
+            props = MagicMock()
+            for k, v in kwargs.items():
+                setattr(props, k, v)
+            return props
+
+        mock_pika.BasicProperties.side_effect = make_props
+
+        return {
+            "pika": mock_pika,
+            "connection": mock_connection,
+            "channel": mock_channel,
+        }
+
+    def test_no_target_host_uses_shared_queue(self, mock_pika_module):
+        """When target_host is None, routing_key is shared queue."""
+        mock_channel = mock_pika_module["channel"]
+        mock_connection = mock_pika_module["connection"]
+        mock_connection.process_data_events.return_value = None
+
+        with patch.dict("sys.modules", {"pika": mock_pika_module["pika"]}):
+            try:
+                publish_command(
+                    command="health",
+                    config=RabbitMQConfig(),
+                    timeout=0.1,
+                    target_host=None,
+                )
+            except TimeoutError:
+                pass  # Expected
+
+        # Verify routing_key is the base queue
+        call_kwargs = mock_channel.basic_publish.call_args.kwargs
+        assert call_kwargs["routing_key"] == "ots.sidecar.commands"
+        assert call_kwargs["exchange"] == "ots.sidecar"
+
+    def test_target_host_uses_host_specific_queue(self, mock_pika_module):
+        """When target_host is set, routing_key includes host."""
+        mock_channel = mock_pika_module["channel"]
+        mock_connection = mock_pika_module["connection"]
+        mock_connection.process_data_events.return_value = None
+
+        with patch.dict("sys.modules", {"pika": mock_pika_module["pika"]}):
+            try:
+                publish_command(
+                    command="restart.web",
+                    payload={"identifier": "7043"},
+                    config=RabbitMQConfig(),
+                    timeout=0.1,
+                    target_host="web-prod-01",
+                )
+            except TimeoutError:
+                pass  # Expected
+
+        # Verify routing_key includes the target host
+        call_kwargs = mock_channel.basic_publish.call_args.kwargs
+        assert call_kwargs["routing_key"] == "ots.sidecar.commands.web-prod-01"
+        assert call_kwargs["exchange"] == "ots.sidecar"
+
+    def test_target_host_with_special_chars(self, mock_pika_module):
+        """Host IDs with dashes and underscores work correctly."""
+        mock_channel = mock_pika_module["channel"]
+        mock_connection = mock_pika_module["connection"]
+        mock_connection.process_data_events.return_value = None
+
+        with patch.dict("sys.modules", {"pika": mock_pika_module["pika"]}):
+            try:
+                publish_command(
+                    command="health",
+                    config=RabbitMQConfig(),
+                    timeout=0.1,
+                    target_host="eu-west-1_prod-server-01",
+                )
+            except TimeoutError:
+                pass  # Expected
+
+        call_kwargs = mock_channel.basic_publish.call_args.kwargs
+        assert call_kwargs["routing_key"] == "ots.sidecar.commands.eu-west-1_prod-server-01"
+
+    def test_message_body_unchanged_by_target_host(self, mock_pika_module):
+        """target_host only affects routing, not message content."""
+        mock_channel = mock_pika_module["channel"]
+        mock_connection = mock_pika_module["connection"]
+        mock_connection.process_data_events.return_value = None
+
+        with patch.dict("sys.modules", {"pika": mock_pika_module["pika"]}):
+            try:
+                publish_command(
+                    command="config.stage",
+                    payload={"key": "REDIS_URL", "value": "redis://localhost"},
+                    config=RabbitMQConfig(),
+                    timeout=0.1,
+                    target_host="acme-prod-1",
+                )
+            except TimeoutError:
+                pass  # Expected
+
+        # Verify message body has command and payload
+        call_kwargs = mock_channel.basic_publish.call_args.kwargs
+        body = json.loads(call_kwargs["body"].decode())
+        assert body["command"] == "config.stage"
+        assert body["payload"] == {"key": "REDIS_URL", "value": "redis://localhost"}

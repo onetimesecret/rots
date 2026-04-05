@@ -177,11 +177,11 @@ def _import_handlers() -> None:
         handlers_phased,  # noqa: F401
         handlers_rolling,  # noqa: F401
         handlers_rots,  # noqa: F401
+        handlers_status,  # noqa: F401
     )
 
     # TODO: Import additional handler modules as they are implemented
     # from . import handlers_lifecycle  # noqa: F401
-    # from . import handlers_status  # noqa: F401
 
 
 # Note: Handlers are registered when their modules are imported.
