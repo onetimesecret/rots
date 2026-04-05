@@ -18,6 +18,7 @@ Example:
 """
 
 from .hosts import find_hosts_file, load_hosts_file, resolve_hosts
+from .manifest import DeployManifest, ManifestError, find_manifest_file
 from .orchestrator import (
     DeployPlan,
     DeployStep,
@@ -41,4 +42,8 @@ __all__ = [
     "resolve_hosts",
     "find_hosts_file",
     "load_hosts_file",
+    # manifest
+    "DeployManifest",
+    "ManifestError",
+    "find_manifest_file",
 ]

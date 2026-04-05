@@ -29,7 +29,14 @@ from rots.commands.common import (
     DryRun,
     JsonOutput,
 )
-from rots.deploy import FailureMode, create_plan, execute, resolve_hosts
+from rots.deploy import (
+    DeployManifest,
+    FailureMode,
+    ManifestError,
+    create_plan,
+    execute,
+    resolve_hosts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -254,3 +261,226 @@ def _result_to_dict(result) -> dict:
         "error": result.error,
         "duration_ms": result.duration_ms,
     }
+
+
+@app.command
+def trigger(
+    *,
+    tag: Annotated[
+        str,
+        cyclopts.Parameter(
+            name=["--tag", "-t"],
+            help="Image tag to deploy (required).",
+        ),
+    ],
+    hosts: Annotated[
+        tuple[str, ...],
+        cyclopts.Parameter(
+            name="--hosts",
+            help="Target host IDs (comma-separated or repeated).",
+        ),
+    ] = (),
+    manifest: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            name="--manifest",
+            help="Path to .ots-deploy.yaml manifest file.",
+        ),
+    ] = None,
+    port: Annotated[
+        int | None,
+        cyclopts.Parameter(
+            name=["--port", "-p"],
+            help="Instance port (overrides manifest).",
+        ),
+    ] = None,
+    delay: Annotated[
+        float,
+        cyclopts.Parameter(
+            name="--delay",
+            help="Seconds between steps.",
+        ),
+    ] = 5.0,
+    continue_on_failure: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name="--continue-on-failure",
+            help="Continue deployment even if a host fails.",
+            negative=[],
+        ),
+    ] = False,
+    timeout: Annotated[
+        int,
+        cyclopts.Parameter(
+            name="--timeout",
+            help="Per-step timeout in seconds.",
+        ),
+    ] = 120,
+    dry_run: DryRun = False,
+    json_output: JsonOutput = False,
+) -> None:
+    """Trigger deployment from post-receive hook or CI.
+
+    Resolves hosts from: --hosts > --manifest > .ots-deploy.yaml > .otsinfra-hosts.txt
+
+    Designed for automation: use --json for structured output suitable for
+    parsing in shell scripts or CI pipelines.
+
+    Examples:
+        # With manifest file (recommended for CI)
+        rots workflow trigger --tag v1.2.3 --json
+
+        # With explicit hosts
+        rots workflow trigger --tag v1.2.3 --hosts acme-prod-1 --hosts acme-prod-2
+
+        # Dry run to see plan
+        rots workflow trigger --tag v1.2.3 --dry-run
+
+        # From gitolite post-receive hook
+        TAG=$(git describe --tags) && rots workflow trigger --tag $TAG --json
+    """
+    resolved_hosts: list[str] = []
+    resolved_port: int = 7043
+
+    # Resolution priority: CLI args > manifest file > discovery > hosts file
+    try:
+        if hosts:
+            # 1. Explicit hosts from CLI
+            resolved_hosts = list(hosts)
+            resolved_port = port if port is not None else 7043
+            logger.debug("Using hosts from CLI: %s", resolved_hosts)
+
+        elif manifest is not None:
+            # 2. Explicit manifest file
+            try:
+                m = DeployManifest.from_file(manifest)
+            except FileNotFoundError:
+                raise ValueError(f"Manifest file not found: {manifest}")
+            resolved_hosts = m.hosts
+            resolved_port = port if port is not None else m.port
+            logger.debug("Using manifest from %s: %s", manifest, resolved_hosts)
+
+        else:
+            # 3. Walk-up discovery for .ots-deploy.yaml
+            m = DeployManifest.discover()
+            if m is not None:
+                resolved_hosts = m.hosts
+                resolved_port = port if port is not None else m.port
+                logger.debug("Discovered manifest at %s: %s", m.source, resolved_hosts)
+            else:
+                # 4. Fall back to .otsinfra-hosts.txt
+                resolved_hosts = resolve_hosts(())
+                resolved_port = port if port is not None else 7043
+                logger.debug("Using hosts from .otsinfra-hosts.txt: %s", resolved_hosts)
+
+    except (ValueError, ManifestError) as e:
+        if json_output:
+            print(json.dumps({"error": str(e), "exit_code": EXIT_PRECOND}))
+        else:
+            logger.error("%s", e)
+        sys.exit(EXIT_PRECOND)
+
+    if not resolved_hosts:
+        msg = "No hosts specified. Provide --hosts, --manifest, or create a .ots-deploy.yaml file."
+        if json_output:
+            print(json.dumps({"error": msg, "exit_code": EXIT_PRECOND}))
+        else:
+            logger.error("%s", msg)
+        sys.exit(EXIT_PRECOND)
+
+    # Determine failure mode
+    failure_mode = FailureMode.CONTINUE_ALL if continue_on_failure else FailureMode.STOP_ON_FIRST
+
+    # Create plan
+    plan = create_plan(
+        hosts=resolved_hosts,
+        image_tag=tag,
+        port=resolved_port,
+        failure_mode=failure_mode,
+        delay=delay,
+        pull_timeout=float(timeout),
+        redeploy_timeout=float(timeout),
+    )
+
+    # Dry run: show plan and exit
+    if dry_run:
+        _show_plan(plan, json_output)
+        sys.exit(EXIT_SUCCESS)
+
+    # Execute plan
+    if not json_output:
+        logger.info(
+            "Triggering deployment of %s to %d host(s)",
+            tag,
+            plan.host_count,
+        )
+
+    results = []
+    succeeded = 0
+    failed = 0
+
+    try:
+        for result in execute(plan):
+            results.append(result)
+            if result.success:
+                succeeded += 1
+                if not json_output:
+                    logger.info(
+                        "  %s: %s ... OK (%.1fs)",
+                        result.host_id,
+                        result.step.description,
+                        result.duration_ms / 1000,
+                    )
+            else:
+                failed += 1
+                if not json_output:
+                    logger.error(
+                        "  %s: %s ... FAILED: %s",
+                        result.host_id,
+                        result.step.description,
+                        result.error or "unknown error",
+                    )
+    except Exception as e:
+        logger.exception("Unexpected error during deployment")
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "error": str(e),
+                        "results": [_result_to_dict(r) for r in results],
+                        "exit_code": EXIT_FAILURE,
+                    }
+                )
+            )
+        sys.exit(EXIT_FAILURE)
+
+    # Output results
+    if json_output:
+        output = {
+            "action": "trigger",
+            "image_tag": tag,
+            "port": resolved_port,
+            "total_hosts": plan.host_count,
+            "total_steps": plan.step_count,
+            "executed_steps": len(results),
+            "succeeded": succeeded,
+            "failed": failed,
+            "results": [_result_to_dict(r) for r in results],
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        logger.info("")
+        logger.info(
+            "Summary: %d/%d steps succeeded, %d failed",
+            succeeded,
+            len(results),
+            failed,
+        )
+
+    # Exit code
+    if failed == 0:
+        sys.exit(EXIT_SUCCESS)
+    elif succeeded > 0:
+        sys.exit(EXIT_PARTIAL)
+    else:
+        sys.exit(EXIT_FAILURE)
