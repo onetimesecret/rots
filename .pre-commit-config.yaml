@@ -102,12 +102,12 @@ repos:
         args: [--fix]
       - id: ruff-format
 
-  # pytest - fast smoke test on commit, full suite on push (coverage in CI)
+  # pytest - fast unit tests on commit, full suite on push (coverage in CI)
   - repo: local
     hooks:
       - id: pytest-quick
         name: pytest-quick
-        entry: .venv/bin/pytest tests/ -x -q --ff --no-cov
+        entry: .venv/bin/pytest tests/ -n auto -x -q --ff --no-cov --ignore=tests/integration
         language: system
         pass_filenames: false
         files: ^(src/|tests/).*\.py$

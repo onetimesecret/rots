@@ -24,7 +24,14 @@ import sys
 import pytest
 
 # ---------------------------------------------------------------------------
-# Skip markers — applied to the whole module
+# Skip entire module on non-Linux platforms (no systemd/D-Bus)
+# ---------------------------------------------------------------------------
+
+if sys.platform != "linux":
+    pytest.skip("Integration tests require Linux (systemd/D-Bus)", allow_module_level=True)
+
+# ---------------------------------------------------------------------------
+# Skip markers — evaluated lazily via fixtures to avoid subprocess at collection
 # ---------------------------------------------------------------------------
 
 
@@ -50,6 +57,21 @@ def _podman_available() -> bool:
     return shutil.which("podman") is not None
 
 
+@pytest.fixture(scope="module")
+def require_systemd():
+    """Skip test if systemd is not available."""
+    if not _systemd_available():
+        pytest.skip("systemd not available or not running (requires Linux with systemd as PID 1)")
+
+
+@pytest.fixture(scope="module")
+def require_podman():
+    """Skip test if podman is not installed."""
+    if not _podman_available():
+        pytest.skip("podman not installed")
+
+
+# Markers for class/function decoration (evaluated at collection, but only on Linux)
 requires_systemd = pytest.mark.skipif(
     not _systemd_available(),
     reason="systemd not available or not running (requires Linux with systemd as PID 1)",
