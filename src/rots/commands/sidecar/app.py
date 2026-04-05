@@ -56,6 +56,8 @@ Environment=PYTHONUNBUFFERED=1
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
+# ProtectHome=no: Required when rots is installed via pipx (~/.local/bin).
+# For hardened deployments, install rots to /usr/local/bin and set ProtectHome=yes.
 ProtectHome=no
 PrivateTmp=yes
 ReadWritePaths=/run /var/lib/onetimesecret /etc/onetimesecret
