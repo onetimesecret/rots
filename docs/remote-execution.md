@@ -52,8 +52,10 @@ OTS_TAG=v0.19.0
 | `OTS_REPOSITORY` | Container image repository | No |
 | `OTS_IMAGE` | Full image reference | No |
 | `OTS_TAG` | Image tag to deploy | No |
+| `RABBITMQ_URL` | RabbitMQ AMQP connection URL | No (sidecar) |
+| `SIDECAR_HOST_ID` | Per-host queue identifier | No (sidecar) |
 
-Only `OTS_HOST` is used by the executor resolution chain. The other keys are available for tooling and CI workflows.
+Only `OTS_HOST` is used by the executor resolution chain. The other keys are available for tooling, CI workflows, and sidecar fleet management.
 
 ## SSH Configuration
 
@@ -91,6 +93,25 @@ The `otsinfra` tool (in `hosts/inventory/`) generates both SSH config entries an
 3. SSH host keys are added to known_hosts
 
 This means the SSH infrastructure is established once during host provisioning, and the runtime executor has no dependency on the inventory system -- it uses standard SSH config and DNS.
+
+## Sidecar Integration
+
+For fleet management via RabbitMQ sidecar, add these optional variables to `.otsinfra.env`:
+
+| Key | Purpose | Default |
+|---|---|---|
+| `RABBITMQ_URL` | AMQP connection URL | env → `/etc/default/onetimesecret` → localhost |
+| `SIDECAR_HOST_ID` | Per-host queue routing | env → `.otsinfra.env` → `/etc/default` → `socket.gethostname()` |
+
+Example configuration:
+
+```bash
+OTS_HOST=prod-eu-1.example.com
+RABBITMQ_URL=amqp://sidecar:secret@rabbitmq.internal:5672/ots
+SIDECAR_HOST_ID=prod-eu-1
+```
+
+The sidecar daemon (`rots sidecar run`) reads these values to bind to both the shared queue (`ots.sidecar.commands`) and a host-specific queue (`ots.sidecar.commands.{host_id}`). This enables targeted command delivery to specific hosts in the fleet.
 
 ## Executor Types
 

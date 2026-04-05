@@ -404,6 +404,20 @@ def init_env(
             help="Release tag for OTS_TAG (e.g. v0.24)",
         ),
     ] = "",
+    rabbitmq_url: Annotated[
+        str,
+        cyclopts.Parameter(
+            name=["--rabbitmq-url"],
+            help="RabbitMQ AMQP connection URL for sidecar",
+        ),
+    ] = "",
+    sidecar_host_id: Annotated[
+        str,
+        cyclopts.Parameter(
+            name=["--sidecar-host-id"],
+            help="Per-host queue identifier for sidecar",
+        ),
+    ] = "",
     force: Annotated[
         bool,
         cyclopts.Parameter(
@@ -422,6 +436,7 @@ def init_env(
     Examples:
         cd ops-jurisdictions/ca/ && ots host init --host ca-tor-web-01 --tag v0.24
         ots host init /path/to/jurisdiction --host eu-hel-web-01
+        ots host init --host prod-1 --rabbitmq-url amqp://user:pass@db:5672/vhost
     """
     from ots_shared.ssh.env import ENV_FILENAME, generate_env_template
 
@@ -435,7 +450,12 @@ def init_env(
         print(f"Error: {env_path} already exists. Use --force to overwrite.", file=sys.stderr)
         raise SystemExit(1)
 
-    content = generate_env_template(host=host, tag=tag)
+    content = generate_env_template(
+        host=host,
+        tag=tag,
+        rabbitmq_url=rabbitmq_url,
+        sidecar_host_id=sidecar_host_id,
+    )
     env_path.write_text(content)
     logger.info(f"Created {env_path}")
     if not host:
