@@ -114,7 +114,7 @@ repos:
         stages: [pre-commit]
       - id: pytest-push
         name: pytest-push
-        entry: .venv/bin/pytest tests/ -x -q --ff --no-cov
+        entry: .venv/bin/pytest tests/ -n auto -x -q --ff --no-cov
         language: system
         pass_filenames: false
         files: ^(src/|tests/).*\.py$
