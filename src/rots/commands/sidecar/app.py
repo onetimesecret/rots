@@ -405,19 +405,24 @@ def run(
     import threading
 
     from rots.sidecar.commands import _import_handlers, dispatch
-    from rots.sidecar.rabbitmq import RabbitMQConsumer
+    from rots.sidecar.rabbitmq import RabbitMQConfig, RabbitMQConsumer
     from rots.sidecar.socket import SocketServer
 
     # Register all command handlers before creating servers
     _import_handlers()
 
+    # Load RabbitMQ config (resolves host_id) before creating consumer
+    rabbitmq_config = None if no_rabbitmq else RabbitMQConfig.from_environment()
+
     print(f"Starting sidecar daemon (PID: {os.getpid()})")
     print(f"Socket: {socket}")
     print(f"RabbitMQ: {'disabled' if no_rabbitmq else 'enabled'}")
+    if rabbitmq_config:
+        print(f"Host ID: {rabbitmq_config.host_id}")
 
     # Create servers
     socket_server = SocketServer(dispatch, socket_path=Path(socket))
-    rabbitmq_consumer = None if no_rabbitmq else RabbitMQConsumer(dispatch)
+    rabbitmq_consumer = None if no_rabbitmq else RabbitMQConsumer(dispatch, config=rabbitmq_config)
 
     # Start socket server in thread
     socket_thread = threading.Thread(target=socket_server.start, daemon=True)
