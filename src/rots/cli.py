@@ -25,7 +25,19 @@ import cyclopts
 
 from . import __version__
 from .commands import assets as assets_cmd
-from .commands import cloudinit, dns, env, host, image, init, instance, proxy, service, sidecar
+from .commands import (
+    cloudinit,
+    dns,
+    env,
+    generate,
+    host,
+    image,
+    init,
+    instance,
+    proxy,
+    service,
+    sidecar,
+)
 from .commands import db as db_cmd
 from .commands import self as self_cmd
 
@@ -48,6 +60,7 @@ app.command(service.app)
 app.command(dns.app)
 app.command(cloudinit.app)
 app.command(env.app)
+app.command(generate.app)
 app.command(db_cmd.app)
 app.command(sidecar.app)
 app.command(self_cmd.app)
@@ -102,13 +115,27 @@ def _meta(
             help="Target host for remote execution (overrides OTS_HOST and .otsinfra.env)",
         ),
     ] = None,
+    backend: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--backend"],
+            help="Systemd backend: 'dbus' (default when available) or 'cli' (legacy systemctl)",
+        ),
+    ] = None,
 ):
     """Global options processed before any subcommand."""
+    import sys
+
     from . import context
 
     _configure_logging(verbose)
     if host is not None:
         context.host_var.set(host)
+    if backend is not None:
+        if backend not in ("dbus", "cli"):
+            print(f"Error: --backend must be 'dbus' or 'cli', got '{backend}'", file=sys.stderr)
+            raise SystemExit(1)
+        context.backend_var.set(backend)
     app(tokens)
 
 
