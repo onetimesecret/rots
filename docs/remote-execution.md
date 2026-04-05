@@ -100,8 +100,8 @@ For fleet management via RabbitMQ sidecar, add these optional variables to `.ots
 
 | Key | Purpose | Default |
 |---|---|---|
-| `RABBITMQ_URL` | AMQP connection URL | env → `/etc/default/onetimesecret` → localhost |
-| `SIDECAR_HOST_ID` | Per-host queue routing | env → `.otsinfra.env` → `/etc/default` → `socket.gethostname()` |
+| `RABBITMQ_URL` | AMQP connection URL | env → `.otsinfra.env` → `/etc/default/onetimesecret` → localhost |
+| `SIDECAR_HOST_ID` | Per-host queue routing | env → `.otsinfra.env` → `/etc/default/onetimesecret` → `socket.gethostname()` |
 
 Example configuration:
 

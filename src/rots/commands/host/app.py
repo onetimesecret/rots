@@ -457,6 +457,7 @@ def init_env(
         sidecar_host_id=sidecar_host_id,
     )
     env_path.write_text(content)
+    env_path.chmod(0o600)  # Restrict permissions — may contain RABBITMQ_URL credentials
     logger.info(f"Created {env_path}")
     if not host:
         logger.info("  Hint: edit OTS_HOST to set the target SSH host alias")
