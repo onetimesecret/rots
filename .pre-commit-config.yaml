@@ -107,7 +107,7 @@ repos:
     hooks:
       - id: pytest-quick
         name: pytest-quick
-        entry: .venv/bin/pytest tests/ -n auto -x -q --ff --no-cov --ignore=tests/integration
+        entry: .venv/bin/pytest tests/ -n auto -x -q --ff --no-cov -m quick
         language: system
         pass_filenames: false
         files: ^(src/|tests/).*\.py$

@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytestmark = pytest.mark.quick
+
 
 class TestContainerTemplate:
     """Test web container quadlet template generation."""

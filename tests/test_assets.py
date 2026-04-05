@@ -10,6 +10,8 @@ from rots import assets
 from rots.assets import TEMP_CONTAINER_NAME
 from rots.config import Config
 
+pytestmark = pytest.mark.quick
+
 
 def _ok(args, **extra):
     """Helper to create a successful CompletedProcess."""

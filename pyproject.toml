@@ -90,6 +90,7 @@ cache_dir = "~/.cache/pytest/rots"
 markers = [
     "integration: tests requiring podman/systemd (CI-only)",
     "slow: tests that take >1s individually",
+    "quick: fast tests for pre-commit hook",
 ]
 
 [tool.ruff]

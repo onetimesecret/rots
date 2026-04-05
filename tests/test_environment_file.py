@@ -3,6 +3,10 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
+pytestmark = pytest.mark.quick
+
 
 class TestEnvVarToSecretName:
     """Test conversion between env var names and podman secret names."""

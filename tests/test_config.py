@@ -6,6 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytestmark = pytest.mark.quick
+
 
 class TestConfigDefaults:
     """Test Config dataclass default values."""

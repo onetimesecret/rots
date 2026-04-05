@@ -5,6 +5,8 @@ import pytest
 
 from rots.cli import app
 
+pytestmark = pytest.mark.quick
+
 
 class TestPackageVersion:
     """Test __version__ fallback in src/rots/__init__.py."""
