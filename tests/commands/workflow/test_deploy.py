@@ -26,14 +26,14 @@ pytestmark = pytest.mark.quick
 class TestDeployHostResolution:
     """Tests for deploy command host resolution logic."""
 
-    def test_uses_positional_hosts(self, tmp_path, monkeypatch):
+    def test_uses_positional_hosts(self, tmp_path, monkeypatch, make_mock_plan):
         """Uses hosts provided as positional arguments."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with pytest.raises(SystemExit) as exc_info:
                 deploy(
                     hosts=("host1", "host2"),
@@ -48,7 +48,7 @@ class TestDeployHostResolution:
         assert call_kwargs["hosts"] == ["host1", "host2"]
         assert call_kwargs["image_tag"] == "v1.0.0"
 
-    def test_uses_hosts_file(self, tmp_path, monkeypatch):
+    def test_uses_hosts_file(self, tmp_path, monkeypatch, make_mock_plan):
         """Uses hosts from --hosts-file."""
         from rots.commands.workflow.app import deploy
 
@@ -57,7 +57,7 @@ class TestDeployHostResolution:
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with pytest.raises(SystemExit) as exc_info:
                 deploy(
                     tag="v1.0.0",
@@ -71,7 +71,7 @@ class TestDeployHostResolution:
         call_kwargs = mock_plan.call_args[1]
         assert call_kwargs["hosts"] == ["file-host1", "file-host2"]
 
-    def test_uses_discovered_hosts_file(self, tmp_path, monkeypatch):
+    def test_uses_discovered_hosts_file(self, tmp_path, monkeypatch, make_mock_plan):
         """Uses hosts from discovered .otsinfra-hosts.txt."""
         from rots.commands.workflow.app import deploy
 
@@ -84,7 +84,7 @@ class TestDeployHostResolution:
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with pytest.raises(SystemExit) as exc_info:
                 deploy(
                     tag="v1.0.0",
@@ -101,14 +101,14 @@ class TestDeployHostResolution:
 class TestDeployPlanOptions:
     """Tests for deploy command plan configuration options."""
 
-    def test_default_port(self, tmp_path, monkeypatch):
+    def test_default_port(self, tmp_path, monkeypatch, make_mock_plan):
         """Default port is 7043."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
                 deploy(
                     hosts=("host1",),
@@ -119,14 +119,14 @@ class TestDeployPlanOptions:
         call_kwargs = mock_plan.call_args[1]
         assert call_kwargs["port"] == 7043
 
-    def test_custom_port(self, tmp_path, monkeypatch):
+    def test_custom_port(self, tmp_path, monkeypatch, make_mock_plan):
         """Custom port is passed to create_plan."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
                 deploy(
                     hosts=("host1",),
@@ -138,7 +138,7 @@ class TestDeployPlanOptions:
         call_kwargs = mock_plan.call_args[1]
         assert call_kwargs["port"] == 8080
 
-    def test_default_failure_mode_stop_on_first(self, tmp_path, monkeypatch):
+    def test_default_failure_mode_stop_on_first(self, tmp_path, monkeypatch, make_mock_plan):
         """Default failure mode is STOP_ON_FIRST."""
         from rots.commands.workflow.app import deploy
         from rots.deploy import FailureMode
@@ -146,7 +146,7 @@ class TestDeployPlanOptions:
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
                 deploy(
                     hosts=("host1",),
@@ -157,7 +157,7 @@ class TestDeployPlanOptions:
         call_kwargs = mock_plan.call_args[1]
         assert call_kwargs["failure_mode"] == FailureMode.STOP_ON_FIRST
 
-    def test_continue_on_failure_flag(self, tmp_path, monkeypatch):
+    def test_continue_on_failure_flag(self, tmp_path, monkeypatch, make_mock_plan):
         """--continue-on-failure sets CONTINUE_ALL failure mode."""
         from rots.commands.workflow.app import deploy
         from rots.deploy import FailureMode
@@ -165,7 +165,7 @@ class TestDeployPlanOptions:
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with pytest.raises(SystemExit):
                 deploy(
                     hosts=("host1", "host2"),
@@ -177,14 +177,14 @@ class TestDeployPlanOptions:
         call_kwargs = mock_plan.call_args[1]
         assert call_kwargs["failure_mode"] == FailureMode.CONTINUE_ALL
 
-    def test_delay_option(self, tmp_path, monkeypatch):
+    def test_delay_option(self, tmp_path, monkeypatch, make_mock_plan):
         """--delay option is passed to create_plan."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
                 deploy(
                     hosts=("host1",),
@@ -196,14 +196,14 @@ class TestDeployPlanOptions:
         call_kwargs = mock_plan.call_args[1]
         assert call_kwargs["delay"] == 10.0
 
-    def test_timeout_option(self, tmp_path, monkeypatch):
+    def test_timeout_option(self, tmp_path, monkeypatch, make_mock_plan):
         """--timeout option is passed to create_plan for both pull and redeploy."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
                 deploy(
                     hosts=("host1",),
@@ -220,20 +220,17 @@ class TestDeployPlanOptions:
 class TestDeployDryRun:
     """Tests for deploy command dry-run mode."""
 
-    def test_dry_run_does_not_execute(self, tmp_path, monkeypatch):
+    def test_dry_run_does_not_execute(self, tmp_path, monkeypatch, make_mock_plan):
         """Dry run shows plan without executing."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(
+            mock_plan.return_value = make_mock_plan(
                 image_tag="v1.0.0",
                 host_count=1,
                 step_count=2,
-                failure_mode=MagicMock(value="stop"),
-                delay=5.0,
-                steps=[],
             )
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 with pytest.raises(SystemExit) as exc_info:
@@ -354,14 +351,14 @@ class TestDeployExecution:
         result.duration_ms = 100.0
         return result
 
-    def test_all_succeed_exit_success(self, tmp_path, monkeypatch, capsys):
+    def test_all_succeed_exit_success(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """EXIT_SUCCESS (0) when all steps succeed."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
@@ -377,14 +374,14 @@ class TestDeployExecution:
 
         assert exc_info.value.code == EXIT_SUCCESS
 
-    def test_some_fail_exit_partial(self, tmp_path, monkeypatch, capsys):
+    def test_some_fail_exit_partial(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """EXIT_PARTIAL (2) when some steps fail but at least one succeeds."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
@@ -402,14 +399,14 @@ class TestDeployExecution:
 
         assert exc_info.value.code == EXIT_PARTIAL
 
-    def test_all_fail_exit_failure(self, tmp_path, monkeypatch, capsys):
+    def test_all_fail_exit_failure(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """EXIT_FAILURE (1) when all steps fail."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
@@ -424,14 +421,14 @@ class TestDeployExecution:
 
         assert exc_info.value.code == EXIT_FAILURE
 
-    def test_unexpected_exception_exit_failure(self, tmp_path, monkeypatch, capsys):
+    def test_unexpected_exception_exit_failure(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """EXIT_FAILURE (1) on unexpected exception during execution."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.side_effect = RuntimeError("Connection lost")
                 with pytest.raises(SystemExit) as exc_info:
@@ -461,14 +458,14 @@ class TestDeployJsonOutput:
         result.duration_ms = 150.0
         return result
 
-    def test_success_json_output(self, tmp_path, monkeypatch, capsys):
+    def test_success_json_output(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """JSON output contains correct fields on success."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
@@ -498,14 +495,14 @@ class TestDeployJsonOutput:
         assert "results" in output
         assert len(output["results"]) == 2
 
-    def test_failure_json_output(self, tmp_path, monkeypatch, capsys):
+    def test_failure_json_output(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """JSON output contains error info on failure."""
         from rots.commands.workflow.app import deploy
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
@@ -528,7 +525,7 @@ class TestDeployJsonOutput:
         assert output["results"][0]["success"] is False
         assert output["results"][0]["error"] == "connection refused"
 
-    def test_exception_json_output(self, tmp_path, monkeypatch, capsys):
+    def test_exception_json_output(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """JSON output on unexpected exception includes error and partial results."""
         from rots.commands.workflow.app import deploy
 
@@ -539,7 +536,7 @@ class TestDeployJsonOutput:
             raise RuntimeError("Connection lost")
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = yield_then_raise()
                 with pytest.raises(SystemExit) as exc_info:
@@ -564,7 +561,7 @@ class TestDeployJsonOutput:
 class TestDeployResultDict:
     """Tests for result serialization."""
 
-    def test_result_to_dict_fields(self, tmp_path, monkeypatch, capsys):
+    def test_result_to_dict_fields(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """Result dict includes all required fields."""
         from rots.commands.workflow.app import deploy
 
@@ -583,7 +580,7 @@ class TestDeployResultDict:
         result.duration_ms = 1234.5
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=1)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=1)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter([result])
                 with pytest.raises(SystemExit):

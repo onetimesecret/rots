@@ -23,7 +23,6 @@ import cyclopts
 
 from rots.commands.common import (
     EXIT_FAILURE,
-    EXIT_PARTIAL,
     EXIT_PRECOND,
     EXIT_SUCCESS,
     DryRun,
@@ -34,8 +33,12 @@ from rots.deploy import (
     FailureMode,
     ManifestError,
     create_plan,
+    determine_exit_code,
+    display_plan,
     execute,
+    format_results,
     resolve_hosts,
+    result_to_dict,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,76 @@ app = cyclopts.App(
     name="workflow",
     help="Fleet orchestration workflows (deploy, status).",
 )
+
+
+def _execute_and_stream(
+    plan,
+    *,
+    json_output: bool,
+    action: str = "deploy",
+    extra_json_fields: dict | None = None,
+) -> int:
+    """Execute plan with streaming output and return exit code.
+
+    This helper consolidates the execution loop used by deploy and trigger
+    commands, streaming step results to console in real-time.
+
+    Args:
+        plan: The deployment plan to execute.
+        json_output: If True, output JSON; otherwise text.
+        action: Action name for JSON output.
+        extra_json_fields: Additional fields to include in JSON output.
+
+    Returns:
+        Exit code (0, 1, or 2).
+    """
+    results = []
+
+    try:
+        for result in execute(plan):
+            results.append(result)
+            if not json_output:
+                if result.success:
+                    logger.info(
+                        "  %s: %s ... OK (%.1fs)",
+                        result.host_id,
+                        result.step.description,
+                        result.duration_ms / 1000,
+                    )
+                else:
+                    logger.error(
+                        "  %s: %s ... FAILED: %s",
+                        result.host_id,
+                        result.step.description,
+                        result.error or "unknown error",
+                    )
+    except Exception as e:
+        logger.exception("Unexpected error during deployment")
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "error": str(e),
+                        "results": [result_to_dict(r) for r in results],
+                        "exit_code": EXIT_FAILURE,
+                    }
+                )
+            )
+        sys.exit(EXIT_FAILURE)
+
+    # Output results
+    if json_output:
+        # Use shared format_results for consistency, then add extra fields
+        base_json = format_results(results, plan, format="json", action=action)
+        output = json.loads(base_json)
+        if extra_json_fields:
+            output.update(extra_json_fields)
+        print(json.dumps(output, indent=2))
+    else:
+        logger.info("")
+        logger.info(format_results(results, plan, format="text"))
+
+    return determine_exit_code(results)
 
 
 @app.command
@@ -137,7 +210,13 @@ def deploy(
 
     # Dry run: show plan and exit
     if dry_run:
-        _show_plan(plan, json_output)
+        fmt = "json" if json_output else "text"
+        output = display_plan(plan, format=fmt)
+        if json_output:
+            print(output)
+        else:
+            for line in output.split("\n"):
+                logger.info(line)
         sys.exit(EXIT_SUCCESS)
 
     # Execute plan
@@ -150,117 +229,8 @@ def deploy(
             delay,
         )
 
-    results = []
-    succeeded = 0
-    failed = 0
-
-    try:
-        for result in execute(plan):
-            results.append(result)
-            if result.success:
-                succeeded += 1
-                if not json_output:
-                    logger.info(
-                        "  %s: %s ... OK (%.1fs)",
-                        result.host_id,
-                        result.step.description,
-                        result.duration_ms / 1000,
-                    )
-            else:
-                failed += 1
-                if not json_output:
-                    logger.error(
-                        "  %s: %s ... FAILED: %s",
-                        result.host_id,
-                        result.step.description,
-                        result.error or "unknown error",
-                    )
-    except Exception as e:
-        logger.exception("Unexpected error during deployment")
-        if json_output:
-            print(
-                json.dumps(
-                    {
-                        "error": str(e),
-                        "results": [_result_to_dict(r) for r in results],
-                        "exit_code": EXIT_FAILURE,
-                    }
-                )
-            )
-        sys.exit(EXIT_FAILURE)
-
-    # Output results
-    if json_output:
-        output = {
-            "action": "deploy",
-            "image_tag": tag,
-            "total_hosts": plan.host_count,
-            "total_steps": plan.step_count,
-            "executed_steps": len(results),
-            "succeeded": succeeded,
-            "failed": failed,
-            "results": [_result_to_dict(r) for r in results],
-        }
-        print(json.dumps(output, indent=2))
-    else:
-        logger.info("")
-        logger.info(
-            "Summary: %d/%d steps succeeded, %d failed",
-            succeeded,
-            len(results),
-            failed,
-        )
-
-    # Exit code
-    if failed == 0:
-        sys.exit(EXIT_SUCCESS)
-    elif succeeded > 0:
-        sys.exit(EXIT_PARTIAL)
-    else:
-        sys.exit(EXIT_FAILURE)
-
-
-def _show_plan(plan, json_output: bool) -> None:
-    """Display the deployment plan without executing."""
-    if json_output:
-        output = {
-            "action": "plan",
-            "image_tag": plan.image_tag,
-            "host_count": plan.host_count,
-            "step_count": plan.step_count,
-            "failure_mode": plan.failure_mode.value,
-            "delay": plan.delay,
-            "steps": [
-                {
-                    "host_id": s.host_id,
-                    "command": s.command,
-                    "args": s.payload.get("args", []),
-                    "timeout": s.timeout,
-                }
-                for s in plan.steps
-            ],
-        }
-        print(json.dumps(output, indent=2))
-    else:
-        logger.info("Deployment plan for %s:", plan.image_tag)
-        logger.info("  Hosts: %d", plan.host_count)
-        logger.info("  Steps: %d", plan.step_count)
-        logger.info("  Failure mode: %s", plan.failure_mode.value)
-        logger.info("  Delay: %.1fs", plan.delay)
-        logger.info("")
-        for i, step in enumerate(plan.steps, 1):
-            logger.info("  [%d] %s: %s", i, step.host_id, step.description)
-
-
-def _result_to_dict(result) -> dict:
-    """Convert StepResult to JSON-serializable dict."""
-    return {
-        "host_id": result.host_id,
-        "command": result.step.command,
-        "success": result.success,
-        "error": result.error,
-        "duration_ms": result.duration_ms,
-    }
+    exit_code = _execute_and_stream(plan, json_output=json_output, action="deploy")
+    sys.exit(exit_code)
 
 
 @app.command
@@ -412,7 +382,13 @@ def trigger(
 
     # Dry run: show plan and exit
     if dry_run:
-        _show_plan(plan, json_output)
+        fmt = "json" if json_output else "text"
+        output = display_plan(plan, format=fmt)
+        if json_output:
+            print(output)
+        else:
+            for line in output.split("\n"):
+                logger.info(line)
         sys.exit(EXIT_SUCCESS)
 
     # Execute plan
@@ -423,72 +399,10 @@ def trigger(
             plan.host_count,
         )
 
-    results = []
-    succeeded = 0
-    failed = 0
-
-    try:
-        for result in execute(plan):
-            results.append(result)
-            if result.success:
-                succeeded += 1
-                if not json_output:
-                    logger.info(
-                        "  %s: %s ... OK (%.1fs)",
-                        result.host_id,
-                        result.step.description,
-                        result.duration_ms / 1000,
-                    )
-            else:
-                failed += 1
-                if not json_output:
-                    logger.error(
-                        "  %s: %s ... FAILED: %s",
-                        result.host_id,
-                        result.step.description,
-                        result.error or "unknown error",
-                    )
-    except Exception as e:
-        logger.exception("Unexpected error during deployment")
-        if json_output:
-            print(
-                json.dumps(
-                    {
-                        "error": str(e),
-                        "results": [_result_to_dict(r) for r in results],
-                        "exit_code": EXIT_FAILURE,
-                    }
-                )
-            )
-        sys.exit(EXIT_FAILURE)
-
-    # Output results
-    if json_output:
-        output = {
-            "action": "trigger",
-            "image_tag": tag,
-            "port": resolved_port,
-            "total_hosts": plan.host_count,
-            "total_steps": plan.step_count,
-            "executed_steps": len(results),
-            "succeeded": succeeded,
-            "failed": failed,
-            "results": [_result_to_dict(r) for r in results],
-        }
-        print(json.dumps(output, indent=2))
-    else:
-        logger.info("")
-        logger.info(
-            "Summary: %d/%d steps succeeded, %d failed",
-            succeeded,
-            len(results),
-            failed,
-        )
-
-    # Exit code
-    if failed == 0:
-        sys.exit(EXIT_SUCCESS)
-    elif succeeded > 0:
-        sys.exit(EXIT_PARTIAL)
-    else:
-        sys.exit(EXIT_FAILURE)
+    exit_code = _execute_and_stream(
+        plan,
+        json_output=json_output,
+        action="trigger",
+        extra_json_fields={"port": resolved_port},
+    )
+    sys.exit(exit_code)

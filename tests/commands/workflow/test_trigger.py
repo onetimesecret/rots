@@ -27,14 +27,14 @@ pytestmark = pytest.mark.quick
 class TestTriggerHostResolution:
     """Tests for trigger command host resolution logic."""
 
-    def test_uses_explicit_hosts(self, tmp_path, monkeypatch):
+    def test_uses_explicit_hosts(self, tmp_path, monkeypatch, make_mock_plan):
         """Uses hosts provided via --hosts flag."""
         from rots.commands.workflow.app import trigger
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter([])
                 with pytest.raises(SystemExit) as exc_info:
@@ -53,7 +53,7 @@ class TestTriggerHostResolution:
         assert call_kwargs["hosts"] == ["host1", "host2"]
         assert call_kwargs["image_tag"] == "v1.0.0"
 
-    def test_uses_manifest_file(self, tmp_path, monkeypatch):
+    def test_uses_manifest_file(self, tmp_path, monkeypatch, make_mock_plan):
         """Uses hosts from --manifest file."""
         from rots.commands.workflow.app import trigger
 
@@ -62,7 +62,7 @@ class TestTriggerHostResolution:
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with pytest.raises(SystemExit) as exc_info:
                 trigger(
                     tag="v1.0.0",
@@ -77,7 +77,7 @@ class TestTriggerHostResolution:
         assert call_kwargs["hosts"] == ["manifest-host1", "manifest-host2"]
         assert call_kwargs["port"] == 8080
 
-    def test_discovers_manifest(self, tmp_path, monkeypatch):
+    def test_discovers_manifest(self, tmp_path, monkeypatch, make_mock_plan):
         """Discovers .ots-deploy.yaml via walk-up."""
         from rots.commands.workflow.app import trigger
 
@@ -95,7 +95,7 @@ class TestTriggerHostResolution:
         monkeypatch.chdir(subdir)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with pytest.raises(SystemExit) as exc_info:
                 trigger(tag="v1.0.0", dry_run=True)
 
@@ -106,7 +106,7 @@ class TestTriggerHostResolution:
         assert call_kwargs["hosts"] == ["discovered-host"]
         assert call_kwargs["port"] == 9000
 
-    def test_falls_back_to_hosts_file(self, tmp_path, monkeypatch):
+    def test_falls_back_to_hosts_file(self, tmp_path, monkeypatch, make_mock_plan):
         """Falls back to .otsinfra-hosts.txt when no manifest."""
         from rots.commands.workflow.app import trigger
 
@@ -120,7 +120,7 @@ class TestTriggerHostResolution:
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with pytest.raises(SystemExit) as exc_info:
                 trigger(tag="v1.0.0", dry_run=True)
 
@@ -130,7 +130,7 @@ class TestTriggerHostResolution:
         call_kwargs = mock_plan.call_args[1]
         assert call_kwargs["hosts"] == ["fallback-host1", "fallback-host2"]
 
-    def test_port_override_from_cli(self, tmp_path, monkeypatch):
+    def test_port_override_from_cli(self, tmp_path, monkeypatch, make_mock_plan):
         """--port flag overrides manifest port."""
         from rots.commands.workflow.app import trigger
 
@@ -139,7 +139,7 @@ class TestTriggerHostResolution:
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
                 trigger(
                     tag="v1.0.0",
@@ -270,7 +270,7 @@ class TestTriggerDryRun:
 class TestTriggerPlanOptions:
     """Tests for trigger command plan configuration options."""
 
-    def test_default_failure_mode_stop_on_first(self, tmp_path, monkeypatch):
+    def test_default_failure_mode_stop_on_first(self, tmp_path, monkeypatch, make_mock_plan):
         """Default failure mode is STOP_ON_FIRST."""
         from rots.commands.workflow.app import trigger
         from rots.deploy import FailureMode
@@ -278,7 +278,7 @@ class TestTriggerPlanOptions:
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
                 trigger(
                     tag="v1.0.0",
@@ -289,7 +289,7 @@ class TestTriggerPlanOptions:
         call_kwargs = mock_plan.call_args[1]
         assert call_kwargs["failure_mode"] == FailureMode.STOP_ON_FIRST
 
-    def test_continue_on_failure_flag(self, tmp_path, monkeypatch):
+    def test_continue_on_failure_flag(self, tmp_path, monkeypatch, make_mock_plan):
         """--continue-on-failure sets CONTINUE_ALL failure mode."""
         from rots.commands.workflow.app import trigger
         from rots.deploy import FailureMode
@@ -297,7 +297,7 @@ class TestTriggerPlanOptions:
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with pytest.raises(SystemExit):
                 trigger(
                     tag="v1.0.0",
@@ -309,14 +309,14 @@ class TestTriggerPlanOptions:
         call_kwargs = mock_plan.call_args[1]
         assert call_kwargs["failure_mode"] == FailureMode.CONTINUE_ALL
 
-    def test_delay_option(self, tmp_path, monkeypatch):
+    def test_delay_option(self, tmp_path, monkeypatch, make_mock_plan):
         """--delay option is passed to create_plan."""
         from rots.commands.workflow.app import trigger
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
                 trigger(
                     tag="v1.0.0",
@@ -328,14 +328,14 @@ class TestTriggerPlanOptions:
         call_kwargs = mock_plan.call_args[1]
         assert call_kwargs["delay"] == 15.0
 
-    def test_timeout_option(self, tmp_path, monkeypatch):
+    def test_timeout_option(self, tmp_path, monkeypatch, make_mock_plan):
         """--timeout option is passed to create_plan for both pull and redeploy."""
         from rots.commands.workflow.app import trigger
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with pytest.raises(SystemExit):
                 trigger(
                     tag="v1.0.0",
@@ -367,14 +367,14 @@ class TestTriggerExecution:
         result.duration_ms = 100.0
         return result
 
-    def test_all_succeed_exit_success(self, tmp_path, monkeypatch):
+    def test_all_succeed_exit_success(self, tmp_path, monkeypatch, make_mock_plan):
         """EXIT_SUCCESS (0) when all steps succeed."""
         from rots.commands.workflow.app import trigger
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
@@ -390,14 +390,14 @@ class TestTriggerExecution:
 
         assert exc_info.value.code == EXIT_SUCCESS
 
-    def test_some_fail_exit_partial(self, tmp_path, monkeypatch):
+    def test_some_fail_exit_partial(self, tmp_path, monkeypatch, make_mock_plan):
         """EXIT_PARTIAL (2) when some steps fail but at least one succeeds."""
         from rots.commands.workflow.app import trigger
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
@@ -415,14 +415,14 @@ class TestTriggerExecution:
 
         assert exc_info.value.code == EXIT_PARTIAL
 
-    def test_all_fail_exit_failure(self, tmp_path, monkeypatch):
+    def test_all_fail_exit_failure(self, tmp_path, monkeypatch, make_mock_plan):
         """EXIT_FAILURE (1) when all steps fail."""
         from rots.commands.workflow.app import trigger
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
@@ -437,14 +437,14 @@ class TestTriggerExecution:
 
         assert exc_info.value.code == EXIT_FAILURE
 
-    def test_unexpected_exception_exit_failure(self, tmp_path, monkeypatch):
+    def test_unexpected_exception_exit_failure(self, tmp_path, monkeypatch, make_mock_plan):
         """EXIT_FAILURE (1) on unexpected exception during execution."""
         from rots.commands.workflow.app import trigger
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.side_effect = RuntimeError("Connection lost")
                 with pytest.raises(SystemExit) as exc_info:
@@ -474,14 +474,14 @@ class TestTriggerJsonOutput:
         result.duration_ms = 150.0
         return result
 
-    def test_success_json_output(self, tmp_path, monkeypatch, capsys):
+    def test_success_json_output(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """JSON output contains correct fields on success."""
         from rots.commands.workflow.app import trigger
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
@@ -513,14 +513,14 @@ class TestTriggerJsonOutput:
         assert "results" in output
         assert len(output["results"]) == 2
 
-    def test_failure_json_output(self, tmp_path, monkeypatch, capsys):
+    def test_failure_json_output(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """JSON output contains error info on failure."""
         from rots.commands.workflow.app import trigger
 
         monkeypatch.chdir(tmp_path)
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=2)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
@@ -543,7 +543,7 @@ class TestTriggerJsonOutput:
         assert output["results"][0]["success"] is False
         assert output["results"][0]["error"] == "connection refused"
 
-    def test_exception_json_output(self, tmp_path, monkeypatch, capsys):
+    def test_exception_json_output(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """JSON output on unexpected exception includes error and partial results."""
         from rots.commands.workflow.app import trigger
 
@@ -554,7 +554,7 @@ class TestTriggerJsonOutput:
             raise RuntimeError("Connection lost")
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=2, step_count=4)
+            mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = yield_then_raise()
                 with pytest.raises(SystemExit) as exc_info:
@@ -579,7 +579,7 @@ class TestTriggerJsonOutput:
 class TestTriggerResultDict:
     """Tests for result serialization in trigger command."""
 
-    def test_result_to_dict_fields(self, tmp_path, monkeypatch, capsys):
+    def test_result_to_dict_fields(self, tmp_path, monkeypatch, capsys, make_mock_plan):
         """Result dict includes all required fields."""
         from rots.commands.workflow.app import trigger
 
@@ -598,7 +598,7 @@ class TestTriggerResultDict:
         result.duration_ms = 1234.5
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
-            mock_plan.return_value = MagicMock(host_count=1, step_count=1)
+            mock_plan.return_value = make_mock_plan(host_count=1, step_count=1)
             with patch("rots.commands.workflow.app.execute") as mock_exec:
                 mock_exec.return_value = iter([result])
                 with pytest.raises(SystemExit):

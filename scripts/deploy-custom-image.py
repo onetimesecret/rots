@@ -32,12 +32,20 @@ _src_dir = _script_dir.parent / "src"
 if _src_dir.exists() and str(_src_dir) not in sys.path:
     sys.path.insert(0, str(_src_dir))
 
-from rots.deploy import FailureMode, create_plan, execute, resolve_hosts  # noqa: E402
+from rots.deploy import (  # noqa: E402
+    EXIT_FAILURE,
+    EXIT_SUCCESS,
+    FailureMode,
+    create_plan,
+    determine_exit_code,
+    display_plan,
+    execute,
+    format_results,
+    resolve_hosts,
+    result_to_dict,
+)
 
-# Exit codes (matching rots convention)
-EXIT_SUCCESS = 0
-EXIT_FAILURE = 1
-EXIT_PARTIAL = 2
+# Precondition failure (not exported from deploy - script-specific)
 EXIT_PRECOND = 3
 
 
@@ -148,32 +156,11 @@ def main() -> int:
         redeploy_timeout=float(args.timeout),
     )
 
-    # Dry run
+    # Dry run: show plan and exit
     if args.dry_run:
-        if args.json:
-            output = {
-                "action": "plan",
-                "image_tag": plan.image_tag,
-                "host_count": plan.host_count,
-                "step_count": plan.step_count,
-                "failure_mode": plan.failure_mode.value,
-                "steps": [
-                    {
-                        "host_id": s.host_id,
-                        "command": s.command,
-                        "args": s.payload.get("args", []),
-                    }
-                    for s in plan.steps
-                ],
-            }
-            print(json.dumps(output, indent=2))
-        else:
-            logger.info("Deployment plan for %s:", plan.image_tag)
-            logger.info("  Hosts: %d", plan.host_count)
-            logger.info("  Steps: %d", plan.step_count)
-            logger.info("  Failure mode: %s", plan.failure_mode.value)
-            for i, step in enumerate(plan.steps, 1):
-                logger.info("  [%d] %s: %s", i, step.host_id, step.description)
+        fmt = "json" if args.json else "text"
+        output = display_plan(plan, format=fmt)
+        print(output)
         return EXIT_SUCCESS
 
     # Execute
@@ -185,24 +172,19 @@ def main() -> int:
         )
 
     results = []
-    succeeded = 0
-    failed = 0
 
     try:
         for result in execute(plan):
             results.append(result)
-            if result.success:
-                succeeded += 1
-                if not args.json:
+            if not args.json:
+                if result.success:
                     logger.info(
                         "  %s: %s ... OK (%.1fs)",
                         result.host_id,
                         result.step.description,
                         result.duration_ms / 1000,
                     )
-            else:
-                failed += 1
-                if not args.json:
+                else:
                     logger.error(
                         "  %s: %s ... FAILED: %s",
                         result.host_id,
@@ -212,41 +194,27 @@ def main() -> int:
     except Exception as e:
         logger.exception("Unexpected error")
         if args.json:
-            print(json.dumps({"error": str(e), "exit_code": EXIT_FAILURE}))
+            # Include partial results for debugging (matches CLI behavior)
+            print(
+                json.dumps(
+                    {
+                        "error": str(e),
+                        "results": [result_to_dict(r) for r in results],
+                        "exit_code": EXIT_FAILURE,
+                    }
+                )
+            )
         return EXIT_FAILURE
 
-    # Output
+    # Output results
     if args.json:
-        output = {
-            "action": "deploy",
-            "image_tag": args.tag,
-            "total_hosts": plan.host_count,
-            "executed_steps": len(results),
-            "succeeded": succeeded,
-            "failed": failed,
-            "results": [
-                {
-                    "host_id": r.host_id,
-                    "command": r.step.command,
-                    "success": r.success,
-                    "error": r.error,
-                    "duration_ms": r.duration_ms,
-                }
-                for r in results
-            ],
-        }
-        print(json.dumps(output, indent=2))
+        output = format_results(results, plan, format="json", action="deploy")
+        print(output)
     else:
         logger.info("")
-        logger.info("Summary: %d/%d succeeded, %d failed", succeeded, len(results), failed)
+        logger.info(format_results(results, plan, format="text"))
 
-    # Exit code
-    if failed == 0:
-        return EXIT_SUCCESS
-    elif succeeded > 0:
-        return EXIT_PARTIAL
-    else:
-        return EXIT_FAILURE
+    return determine_exit_code(results)
 
 
 if __name__ == "__main__":

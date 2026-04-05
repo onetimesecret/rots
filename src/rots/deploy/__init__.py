@@ -28,6 +28,15 @@ from .orchestrator import (
     execute,
     publish_and_wait,
 )
+from .reporting import (
+    EXIT_FAILURE,
+    EXIT_PARTIAL,
+    EXIT_SUCCESS,
+    determine_exit_code,
+    display_plan,
+    format_results,
+    result_to_dict,
+)
 
 __all__ = [
     # orchestrator
@@ -46,4 +55,12 @@ __all__ = [
     "DeployManifest",
     "ManifestError",
     "find_manifest_file",
+    # reporting
+    "EXIT_SUCCESS",
+    "EXIT_FAILURE",
+    "EXIT_PARTIAL",
+    "display_plan",
+    "format_results",
+    "determine_exit_code",
+    "result_to_dict",
 ]
