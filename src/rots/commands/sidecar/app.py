@@ -12,7 +12,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 import cyclopts
 
@@ -22,6 +22,35 @@ if TYPE_CHECKING:
     from ots_shared.ssh.executor import Executor
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_key_value_args(args: tuple[str, ...]) -> dict[str, Any]:
+    """Parse key=value arguments into a dictionary.
+
+    Repeated keys are collected into a list of values.
+
+    Args:
+        args: Tuple of "key=value" strings.
+
+    Returns:
+        Dictionary with parsed key-value pairs.
+    """
+    payload: dict[str, Any] = {}
+    for arg in args:
+        if "=" in arg:
+            key, value = arg.split("=", 1)
+            if key in payload:
+                existing = payload[key]
+                if isinstance(existing, list):
+                    existing.append(value)
+                else:
+                    payload[key] = [existing, value]
+            else:
+                payload[key] = value
+        else:
+            print(f"Warning: Ignoring invalid argument (no =): {arg}")
+    return payload
+
 
 app = cyclopts.App(
     name="sidecar",
@@ -56,6 +85,8 @@ Environment=PYTHONUNBUFFERED=1
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
+# ProtectHome=no: Required when rots is installed via pipx (~/.local/bin).
+# For hardened deployments, install rots to /usr/local/bin and set ProtectHome=yes.
 ProtectHome=no
 PrivateTmp=yes
 ReadWritePaths=/run /var/lib/onetimesecret /etc/onetimesecret
@@ -489,28 +520,12 @@ def send(
         rots sidecar send status --rabbitmq
         rots sidecar send restart.web identifier=7043
     """
-    from typing import Any
 
     if socket and rabbitmq:
         print("Error: Cannot specify both --socket and --rabbitmq")
         raise SystemExit(1)
 
-    # Parse args into payload (repeated keys become lists)
-    payload: dict[str, Any] = {}
-    for arg in args:
-        if "=" in arg:
-            key, value = arg.split("=", 1)
-            if key in payload:
-                # Convert to list or append to existing list
-                existing = payload[key]
-                if isinstance(existing, list):
-                    existing.append(value)
-                else:
-                    payload[key] = [existing, value]
-            else:
-                payload[key] = value
-        else:
-            print(f"Warning: Ignoring invalid argument (no =): {arg}")
+    payload = _parse_key_value_args(args)
 
     if rabbitmq:
         _send_via_rabbitmq(command, payload, timeout)
@@ -620,7 +635,6 @@ def publish(
         rots sidecar publish --broadcast health
     """
     import json
-    from typing import Any
 
     from rots.sidecar.rabbitmq import RabbitMQConfig, get_host_id, publish_command
 
@@ -649,19 +663,7 @@ def publish(
     except json.JSONDecodeError:
         # Not JSON - treat as command name with key=value args
         command_name = command
-        for arg in args:
-            if "=" in arg:
-                key, value = arg.split("=", 1)
-                if key in payload:
-                    existing = payload[key]
-                    if isinstance(existing, list):
-                        existing.append(value)
-                    else:
-                        payload[key] = [existing, value]
-                else:
-                    payload[key] = value
-            else:
-                print(f"Warning: Ignoring invalid argument (no =): {arg}")
+        payload = _parse_key_value_args(args)
 
     if not command_name:
         print("Error: No command specified")

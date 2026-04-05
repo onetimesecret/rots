@@ -190,7 +190,7 @@ rots sidecar logs --follow     # View logs
 # Send commands via Unix socket (local, default)
 rots sidecar send health --socket
 rots sidecar send status --socket
-rots sidecar send restart.web identifier=7043
+rots sidecar send restart.web identifier=7043 --socket
 
 # Send commands via RabbitMQ (remote)
 rots sidecar send health --rabbitmq
