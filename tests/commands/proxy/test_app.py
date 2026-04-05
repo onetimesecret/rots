@@ -8,6 +8,8 @@ from unittest.mock import ANY
 
 import pytest
 
+pytestmark = pytest.mark.quick
+
 
 class TestRenderCommand:
     """Test render command."""

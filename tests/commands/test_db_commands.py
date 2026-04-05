@@ -8,6 +8,8 @@ import pytest
 
 from rots import db as db_module
 
+pytestmark = pytest.mark.quick
+
 
 def _mock_config(mocker, db_path):
     """Create a mock Config that returns a local executor and the given db_path."""

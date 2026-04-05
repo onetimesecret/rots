@@ -10,6 +10,8 @@ import pytest
 from rots.commands import instance
 from rots.config import DEFAULT_IMAGE, Config
 
+pytestmark = pytest.mark.quick
+
 
 def _setup_shell_mocks(mocker, tmp_path, **config_overrides):
     """Set up standard mocks for shell tests.

@@ -22,6 +22,8 @@ from rots.commands.env.app import (
 )
 from rots.environment_file import SecretSpec
 
+pytestmark = pytest.mark.quick
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

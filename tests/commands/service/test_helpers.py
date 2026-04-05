@@ -20,6 +20,8 @@ from rots.commands.service._helpers import (
 )
 from rots.commands.service.packages import ServicePackage
 
+pytestmark = pytest.mark.quick
+
 
 class TestEnsureInstancesDir:
     """Tests for ensure_instances_dir function."""

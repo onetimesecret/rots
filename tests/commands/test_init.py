@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from ots_shared.ssh import LocalExecutor
 
+pytestmark = pytest.mark.quick
+
 
 def _mock_config(mocker, tmp_path, **overrides):
     """Build a mock Config that returns a LocalExecutor.

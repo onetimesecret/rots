@@ -20,6 +20,8 @@ from rots.commands.instance._helpers import (
 )
 from rots.commands.instance.annotations import InstanceType
 
+pytestmark = pytest.mark.quick
+
 
 class TestDeployLock:
     """Tests for deploy_lock() context manager."""

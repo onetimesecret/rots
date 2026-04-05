@@ -9,6 +9,8 @@ from datetime import UTC
 
 import pytest
 
+pytestmark = pytest.mark.quick
+
 
 class TestRenderTemplate:
     """Test render_template function."""
