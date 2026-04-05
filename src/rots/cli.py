@@ -37,6 +37,7 @@ from .commands import (
     proxy,
     service,
     sidecar,
+    workflow,
 )
 from .commands import db as db_cmd
 from .commands import self as self_cmd
@@ -63,6 +64,7 @@ app.command(env.app)
 app.command(generate.app)
 app.command(db_cmd.app)
 app.command(sidecar.app)
+app.command(workflow.app)
 app.command(self_cmd.app)
 
 
