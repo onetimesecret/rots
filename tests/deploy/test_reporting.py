@@ -12,7 +12,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -514,3 +514,359 @@ class TestResultToDict:
 
         assert "\n" in d["error"]
         assert "retry exhausted" in d["error"]
+
+
+class TestRunPlanWithProgress:
+    """Tests for run_plan_with_progress function.
+
+    Covers:
+    - Success path: all steps succeed
+    - Failure path: all steps fail
+    - Partial failure: some succeed, some fail (with continue-on-failure)
+    - JSON output mode vs text output mode
+    - Exception handling with partial results
+    - Logger integration (custom logger, default logger)
+    - Extra JSON fields
+    """
+
+    def _make_mock_plan(
+        self,
+        image_tag: str = "v1.0.0",
+        host_count: int = 1,
+        step_count: int = 2,
+    ) -> MagicMock:
+        """Create a mock DeployPlan."""
+        plan = MagicMock()
+        plan.image_tag = image_tag
+        plan.host_count = host_count
+        plan.step_count = step_count
+        return plan
+
+    def _make_mock_result(
+        self,
+        host_id: str = "host1",
+        command: str = "rots.image.pull",
+        success: bool = True,
+        error: str | None = None,
+        duration_ms: int = 1000,
+    ) -> MagicMock:
+        """Create a mock StepResult."""
+        step = MagicMock()
+        step.command = command
+        step.description = command.replace("rots.", "")
+
+        result = MagicMock()
+        result.host_id = host_id
+        result.step = step
+        result.success = success
+        result.error = error
+        result.duration_ms = duration_ms
+        return result
+
+    @pytest.fixture
+    def mock_execute(self):
+        """Fixture to mock the execute generator.
+
+        Note: execute is imported inside run_plan_with_progress from .orchestrator,
+        so we patch it at the orchestrator module level.
+        """
+        with patch("rots.deploy.orchestrator.execute") as mock:
+            yield mock
+
+    @pytest.fixture
+    def mock_logger(self):
+        """Fixture to create a mock logger."""
+        return MagicMock()
+
+    def test_success_path_returns_exit_success(self, mock_execute, mock_logger, capsys):
+        """All steps succeeding returns EXIT_SUCCESS (0)."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [
+            self._make_mock_result("host1", "rots.image.pull", success=True),
+            self._make_mock_result("host1", "rots.instance.redeploy", success=True),
+        ]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan()
+
+        exit_code = run_plan_with_progress(plan, json_output=False, logger=mock_logger)
+
+        assert exit_code == EXIT_SUCCESS
+        assert exit_code == 0
+
+    def test_failure_path_returns_exit_failure(self, mock_execute, mock_logger, capsys):
+        """All steps failing returns EXIT_FAILURE (1)."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [
+            self._make_mock_result("host1", "rots.image.pull", success=False, error="pull failed"),
+        ]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan(step_count=1)
+
+        exit_code = run_plan_with_progress(plan, json_output=False, logger=mock_logger)
+
+        assert exit_code == EXIT_FAILURE
+        assert exit_code == 1
+
+    def test_partial_failure_returns_exit_partial(self, mock_execute, mock_logger, capsys):
+        """Mixed success/failure returns EXIT_PARTIAL (2)."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [
+            self._make_mock_result("host1", "rots.image.pull", success=True),
+            self._make_mock_result(
+                "host1", "rots.instance.redeploy", success=False, error="timeout"
+            ),
+        ]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan()
+
+        exit_code = run_plan_with_progress(plan, json_output=False, logger=mock_logger)
+
+        assert exit_code == EXIT_PARTIAL
+        assert exit_code == 2
+
+    def test_text_output_logs_success(self, mock_execute, mock_logger):
+        """Text mode logs success messages via logger.info."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [
+            self._make_mock_result("host1", "rots.image.pull", success=True, duration_ms=1500),
+        ]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan(step_count=1)
+
+        run_plan_with_progress(plan, json_output=False, logger=mock_logger)
+
+        # Check that logger.info was called with success message
+        info_calls = [str(call) for call in mock_logger.info.call_args_list]
+        assert any("OK" in call for call in info_calls)
+        assert any("host1" in call for call in info_calls)
+
+    def test_text_output_logs_failure(self, mock_execute, mock_logger):
+        """Text mode logs failure messages via logger.error."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [
+            self._make_mock_result(
+                "host1", "rots.image.pull", success=False, error="connection refused"
+            ),
+        ]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan(step_count=1)
+
+        run_plan_with_progress(plan, json_output=False, logger=mock_logger)
+
+        # Check that logger.error was called with failure message
+        error_calls = [str(call) for call in mock_logger.error.call_args_list]
+        assert any("FAILED" in call for call in error_calls)
+        assert any("connection refused" in call for call in error_calls)
+
+    def test_text_output_handles_none_error(self, mock_execute, mock_logger):
+        """Text mode handles None error with 'unknown error' fallback."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [
+            self._make_mock_result("host1", "rots.image.pull", success=False, error=None),
+        ]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan(step_count=1)
+
+        run_plan_with_progress(plan, json_output=False, logger=mock_logger)
+
+        error_calls = [str(call) for call in mock_logger.error.call_args_list]
+        assert any("unknown error" in call for call in error_calls)
+
+    def test_json_output_structure(self, mock_execute, mock_logger, capsys):
+        """JSON mode outputs valid JSON with expected structure."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [
+            self._make_mock_result("host1", "rots.image.pull", success=True, duration_ms=1000),
+            self._make_mock_result(
+                "host1", "rots.instance.redeploy", success=True, duration_ms=500
+            ),
+        ]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan()
+
+        run_plan_with_progress(plan, json_output=True, action="deploy", logger=mock_logger)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+
+        assert data["action"] == "deploy"
+        assert data["image_tag"] == "v1.0.0"
+        assert data["succeeded"] == 2
+        assert data["failed"] == 0
+        assert "results" in data
+
+    def test_json_output_custom_action(self, mock_execute, mock_logger, capsys):
+        """JSON mode respects custom action name."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [self._make_mock_result(success=True)]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan(step_count=1)
+
+        run_plan_with_progress(plan, json_output=True, action="trigger", logger=mock_logger)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+
+        assert data["action"] == "trigger"
+
+    def test_json_output_extra_fields(self, mock_execute, mock_logger, capsys):
+        """JSON mode includes extra_json_fields."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [self._make_mock_result(success=True)]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan(step_count=1)
+
+        run_plan_with_progress(
+            plan,
+            json_output=True,
+            logger=mock_logger,
+            extra_json_fields={"port": 7044, "custom_field": "value"},
+        )
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+
+        assert data["port"] == 7044
+        assert data["custom_field"] == "value"
+
+    def test_exception_exits_with_failure(self, mock_execute, mock_logger):
+        """Unexpected exception during execution exits with EXIT_FAILURE."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        mock_execute.side_effect = RuntimeError("Connection lost")
+        plan = self._make_mock_plan()
+
+        with pytest.raises(SystemExit) as exc_info:
+            run_plan_with_progress(plan, json_output=False, logger=mock_logger)
+
+        assert exc_info.value.code == EXIT_FAILURE
+
+    def test_exception_json_includes_partial_results(self, mock_execute, mock_logger, capsys):
+        """Exception in JSON mode outputs partial results before exit."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        # Generator that yields one result then raises
+        def generate_then_fail():
+            yield self._make_mock_result("host1", "rots.image.pull", success=True)
+            raise RuntimeError("Network error during redeploy")
+
+        mock_execute.return_value = generate_then_fail()
+        plan = self._make_mock_plan()
+
+        with pytest.raises(SystemExit) as exc_info:
+            run_plan_with_progress(plan, json_output=True, logger=mock_logger)
+
+        assert exc_info.value.code == EXIT_FAILURE
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+
+        assert data["error"] == "Network error during redeploy"
+        assert data["exit_code"] == EXIT_FAILURE
+        assert len(data["results"]) == 1  # Partial result from before exception
+
+    def test_exception_text_mode_no_json_output(self, mock_execute, mock_logger, capsys):
+        """Exception in text mode does not output JSON."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        mock_execute.side_effect = RuntimeError("Unexpected failure")
+        plan = self._make_mock_plan()
+
+        with pytest.raises(SystemExit):
+            run_plan_with_progress(plan, json_output=False, logger=mock_logger)
+
+        captured = capsys.readouterr()
+        # Should not output JSON in text mode
+        assert captured.out == ""
+
+    def test_uses_default_logger_when_none_provided(self, mock_execute, capsys):
+        """Uses default 'rots.deploy' logger when logger is None."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [self._make_mock_result(success=True)]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan(step_count=1)
+
+        # Should not raise when no logger provided
+        exit_code = run_plan_with_progress(plan, json_output=True)
+
+        assert exit_code == EXIT_SUCCESS
+
+    def test_empty_results_returns_exit_failure(self, mock_execute, mock_logger):
+        """Empty results (no steps executed) returns EXIT_FAILURE."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        mock_execute.return_value = iter([])
+        plan = self._make_mock_plan(step_count=0)
+
+        exit_code = run_plan_with_progress(plan, json_output=False, logger=mock_logger)
+
+        assert exit_code == EXIT_FAILURE
+
+    def test_text_output_logs_summary(self, mock_execute, mock_logger):
+        """Text mode outputs summary at the end."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [
+            self._make_mock_result(success=True),
+            self._make_mock_result(success=True),
+        ]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan()
+
+        run_plan_with_progress(plan, json_output=False, logger=mock_logger)
+
+        # Summary should be logged
+        info_calls = [str(call) for call in mock_logger.info.call_args_list]
+        assert any("succeeded" in call.lower() for call in info_calls)
+
+    def test_multiple_hosts_multiple_results(self, mock_execute, mock_logger, capsys):
+        """Correctly processes results from multiple hosts."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [
+            self._make_mock_result("host-alpha", "rots.image.pull", success=True),
+            self._make_mock_result("host-alpha", "rots.instance.redeploy", success=True),
+            self._make_mock_result("host-beta", "rots.image.pull", success=True),
+            self._make_mock_result(
+                "host-beta", "rots.instance.redeploy", success=False, error="timeout"
+            ),
+        ]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan(host_count=2, step_count=4)
+
+        exit_code = run_plan_with_progress(plan, json_output=True, logger=mock_logger)
+
+        assert exit_code == EXIT_PARTIAL
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+
+        assert data["succeeded"] == 3
+        assert data["failed"] == 1
+        assert data["executed_steps"] == 4
+
+    def test_duration_formatting_in_text_mode(self, mock_execute, mock_logger):
+        """Duration is formatted correctly in text output (ms to seconds)."""
+        from rots.deploy.reporting import run_plan_with_progress
+
+        results = [
+            self._make_mock_result(success=True, duration_ms=2500),  # 2.5 seconds
+        ]
+        mock_execute.return_value = iter(results)
+        plan = self._make_mock_plan(step_count=1)
+
+        run_plan_with_progress(plan, json_output=False, logger=mock_logger)
+
+        # Check that duration is logged in seconds
+        info_calls = [str(call) for call in mock_logger.info.call_args_list]
+        assert any("2.5" in call for call in info_calls)

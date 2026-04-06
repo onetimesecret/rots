@@ -33,16 +33,12 @@ if _src_dir.exists() and str(_src_dir) not in sys.path:
     sys.path.insert(0, str(_src_dir))
 
 from rots.deploy import (  # noqa: E402
-    EXIT_FAILURE,
     EXIT_SUCCESS,
     FailureMode,
     create_plan,
-    determine_exit_code,
     display_plan,
-    execute,
-    format_results,
     resolve_hosts,
-    result_to_dict,
+    run_plan_with_progress,
 )
 
 # Precondition failure (not exported from deploy - script-specific)
@@ -171,50 +167,7 @@ def main() -> int:
             plan.host_count,
         )
 
-    results = []
-
-    try:
-        for result in execute(plan):
-            results.append(result)
-            if not args.json:
-                if result.success:
-                    logger.info(
-                        "  %s: %s ... OK (%.1fs)",
-                        result.host_id,
-                        result.step.description,
-                        result.duration_ms / 1000,
-                    )
-                else:
-                    logger.error(
-                        "  %s: %s ... FAILED: %s",
-                        result.host_id,
-                        result.step.description,
-                        result.error,
-                    )
-    except Exception as e:
-        logger.exception("Unexpected error")
-        if args.json:
-            # Include partial results for debugging (matches CLI behavior)
-            print(
-                json.dumps(
-                    {
-                        "error": str(e),
-                        "results": [result_to_dict(r) for r in results],
-                        "exit_code": EXIT_FAILURE,
-                    }
-                )
-            )
-        return EXIT_FAILURE
-
-    # Output results
-    if args.json:
-        output = format_results(results, plan, format="json", action="deploy")
-        print(output)
-    else:
-        logger.info("")
-        logger.info(format_results(results, plan, format="text"))
-
-    return determine_exit_code(results)
+    return run_plan_with_progress(plan, json_output=args.json, action="deploy", logger=logger)
 
 
 if __name__ == "__main__":

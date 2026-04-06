@@ -22,7 +22,6 @@ from typing import Annotated
 import cyclopts
 
 from rots.commands.common import (
-    EXIT_FAILURE,
     EXIT_PRECOND,
     EXIT_SUCCESS,
     DryRun,
@@ -33,12 +32,9 @@ from rots.deploy import (
     FailureMode,
     ManifestError,
     create_plan,
-    determine_exit_code,
     display_plan,
-    execute,
-    format_results,
     resolve_hosts,
-    result_to_dict,
+    run_plan_with_progress,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,76 +43,6 @@ app = cyclopts.App(
     name="workflow",
     help="Fleet orchestration workflows (deploy, status).",
 )
-
-
-def _execute_and_stream(
-    plan,
-    *,
-    json_output: bool,
-    action: str = "deploy",
-    extra_json_fields: dict | None = None,
-) -> int:
-    """Execute plan with streaming output and return exit code.
-
-    This helper consolidates the execution loop used by deploy and trigger
-    commands, streaming step results to console in real-time.
-
-    Args:
-        plan: The deployment plan to execute.
-        json_output: If True, output JSON; otherwise text.
-        action: Action name for JSON output.
-        extra_json_fields: Additional fields to include in JSON output.
-
-    Returns:
-        Exit code (0, 1, or 2).
-    """
-    results = []
-
-    try:
-        for result in execute(plan):
-            results.append(result)
-            if not json_output:
-                if result.success:
-                    logger.info(
-                        "  %s: %s ... OK (%.1fs)",
-                        result.host_id,
-                        result.step.description,
-                        result.duration_ms / 1000,
-                    )
-                else:
-                    logger.error(
-                        "  %s: %s ... FAILED: %s",
-                        result.host_id,
-                        result.step.description,
-                        result.error or "unknown error",
-                    )
-    except Exception as e:
-        logger.exception("Unexpected error during deployment")
-        if json_output:
-            print(
-                json.dumps(
-                    {
-                        "error": str(e),
-                        "results": [result_to_dict(r) for r in results],
-                        "exit_code": EXIT_FAILURE,
-                    }
-                )
-            )
-        sys.exit(EXIT_FAILURE)
-
-    # Output results
-    if json_output:
-        # Use shared format_results for consistency, then add extra fields
-        base_json = format_results(results, plan, format="json", action=action)
-        output = json.loads(base_json)
-        if extra_json_fields:
-            output.update(extra_json_fields)
-        print(json.dumps(output, indent=2))
-    else:
-        logger.info("")
-        logger.info(format_results(results, plan, format="text"))
-
-    return determine_exit_code(results)
 
 
 @app.command
@@ -229,7 +155,9 @@ def deploy(
             delay,
         )
 
-    exit_code = _execute_and_stream(plan, json_output=json_output, action="deploy")
+    exit_code = run_plan_with_progress(
+        plan, json_output=json_output, action="deploy", logger=logger
+    )
     sys.exit(exit_code)
 
 
@@ -399,10 +327,11 @@ def trigger(
             plan.host_count,
         )
 
-    exit_code = _execute_and_stream(
+    exit_code = run_plan_with_progress(
         plan,
         json_output=json_output,
         action="trigger",
+        logger=logger,
         extra_json_fields={"port": resolved_port},
     )
     sys.exit(exit_code)

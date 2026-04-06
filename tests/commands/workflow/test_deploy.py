@@ -232,7 +232,7 @@ class TestDeployDryRun:
                 host_count=1,
                 step_count=2,
             )
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 with pytest.raises(SystemExit) as exc_info:
                     deploy(
                         hosts=("host1",),
@@ -359,7 +359,7 @@ class TestDeployExecution:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
                         self._make_result("host1", "rots.image.pull", True),
@@ -382,7 +382,7 @@ class TestDeployExecution:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
                         self._make_result("host1", "rots.image.pull", True),
@@ -407,7 +407,7 @@ class TestDeployExecution:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
                         self._make_result("host1", "rots.image.pull", False, "connection refused"),
@@ -429,7 +429,7 @@ class TestDeployExecution:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.side_effect = RuntimeError("Connection lost")
                 with pytest.raises(SystemExit) as exc_info:
                     deploy(
@@ -466,7 +466,7 @@ class TestDeployJsonOutput:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
                         self._make_result("host1", "rots.image.pull", True),
@@ -503,7 +503,7 @@ class TestDeployJsonOutput:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
                         self._make_result("host1", "rots.image.pull", False, "connection refused"),
@@ -537,7 +537,7 @@ class TestDeployJsonOutput:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = yield_then_raise()
                 with pytest.raises(SystemExit) as exc_info:
                     deploy(
@@ -581,7 +581,7 @@ class TestDeployResultDict:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=1)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter([result])
                 with pytest.raises(SystemExit):
                     deploy(

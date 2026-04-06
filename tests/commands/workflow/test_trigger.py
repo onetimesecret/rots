@@ -35,7 +35,7 @@ class TestTriggerHostResolution:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter([])
                 with pytest.raises(SystemExit) as exc_info:
                     trigger(
@@ -246,7 +246,7 @@ class TestTriggerDryRun:
             plan.steps = [mock_step]
             mock_plan.return_value = plan
 
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 with pytest.raises(SystemExit) as exc_info:
                     trigger(
                         tag="v1.0.0",
@@ -375,7 +375,7 @@ class TestTriggerExecution:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
                         self._make_result("host1", "rots.image.pull", True),
@@ -398,7 +398,7 @@ class TestTriggerExecution:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
                         self._make_result("host1", "rots.image.pull", True),
@@ -423,7 +423,7 @@ class TestTriggerExecution:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
                         self._make_result("host1", "rots.image.pull", False, "connection refused"),
@@ -445,7 +445,7 @@ class TestTriggerExecution:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.side_effect = RuntimeError("Connection lost")
                 with pytest.raises(SystemExit) as exc_info:
                     trigger(
@@ -482,7 +482,7 @@ class TestTriggerJsonOutput:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
                         self._make_result("host1", "rots.image.pull", True),
@@ -521,7 +521,7 @@ class TestTriggerJsonOutput:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=2)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter(
                     [
                         self._make_result("host1", "rots.image.pull", False, "connection refused"),
@@ -555,7 +555,7 @@ class TestTriggerJsonOutput:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=2, step_count=4)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = yield_then_raise()
                 with pytest.raises(SystemExit) as exc_info:
                     trigger(
@@ -599,7 +599,7 @@ class TestTriggerResultDict:
 
         with patch("rots.commands.workflow.app.create_plan") as mock_plan:
             mock_plan.return_value = make_mock_plan(host_count=1, step_count=1)
-            with patch("rots.commands.workflow.app.execute") as mock_exec:
+            with patch("rots.deploy.orchestrator.execute") as mock_exec:
                 mock_exec.return_value = iter([result])
                 with pytest.raises(SystemExit):
                     trigger(

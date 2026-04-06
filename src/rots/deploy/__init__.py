@@ -36,6 +36,7 @@ from .reporting import (
     display_plan,
     format_results,
     result_to_dict,
+    run_plan_with_progress,
 )
 
 __all__ = [
@@ -63,4 +64,5 @@ __all__ = [
     "format_results",
     "determine_exit_code",
     "result_to_dict",
+    "run_plan_with_progress",
 ]

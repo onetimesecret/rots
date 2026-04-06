@@ -5,12 +5,16 @@ Provides consistent formatting for deployment plans and results across
 CLI commands and standalone scripts.
 
 Example:
-    from rots.deploy import create_plan, execute
+    from rots.deploy import create_plan, execute, run_plan_with_progress
     from rots.deploy.reporting import display_plan, format_results, determine_exit_code
 
     plan = create_plan(hosts, tag)
     print(display_plan(plan, format="text"))
 
+    # Simple: use the consolidated execution loop
+    exit_code = run_plan_with_progress(plan, json_output=False, action="deploy")
+
+    # Manual: stream results yourself
     results = list(execute(plan))
     print(format_results(results, plan, format="json"))
     sys.exit(determine_exit_code(results))
@@ -19,6 +23,8 @@ Example:
 from __future__ import annotations
 
 import json
+import logging
+import sys
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -165,3 +171,86 @@ def determine_exit_code(results: list[StepResult]) -> int:
         return EXIT_PARTIAL
     else:
         return EXIT_FAILURE
+
+
+def run_plan_with_progress(
+    plan: DeployPlan,
+    *,
+    json_output: bool,
+    action: str = "deploy",
+    logger: logging.Logger | None = None,
+    extra_json_fields: dict | None = None,
+) -> int:
+    """Execute a deployment plan with streaming progress output.
+
+    This consolidates the execution loop used by CLI commands and standalone
+    scripts. It iterates through the plan, logs progress in real-time, handles
+    exceptions with partial results in JSON mode, and outputs final results.
+
+    Args:
+        plan: The deployment plan to execute.
+        json_output: If True, output JSON; otherwise text to logger.
+        action: Action name for JSON output (e.g., "deploy", "trigger").
+        logger: Logger for text output. Defaults to "rots.deploy" logger.
+        extra_json_fields: Additional fields to include in JSON output.
+
+    Returns:
+        Exit code (0=success, 1=failure, 2=partial).
+
+    Note:
+        On unexpected exceptions, this function calls sys.exit(EXIT_FAILURE)
+        after outputting partial results (in JSON mode). This matches the
+        behavior expected by both CLI commands and runbook scripts.
+    """
+    # Import here to avoid circular import
+    from .orchestrator import execute
+
+    if logger is None:
+        logger = logging.getLogger("rots.deploy")
+
+    results: list[StepResult] = []
+
+    try:
+        for result in execute(plan):
+            results.append(result)
+            if not json_output:
+                if result.success:
+                    logger.info(
+                        "  %s: %s ... OK (%.1fs)",
+                        result.host_id,
+                        result.step.description,
+                        result.duration_ms / 1000,
+                    )
+                else:
+                    logger.error(
+                        "  %s: %s ... FAILED: %s",
+                        result.host_id,
+                        result.step.description,
+                        result.error or "unknown error",
+                    )
+    except Exception as e:
+        logger.exception("Unexpected error during deployment")
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "error": str(e),
+                        "results": [result_to_dict(r) for r in results],
+                        "exit_code": EXIT_FAILURE,
+                    }
+                )
+            )
+        sys.exit(EXIT_FAILURE)
+
+    # Output results
+    if json_output:
+        base_json = format_results(results, plan, format="json", action=action)
+        output = json.loads(base_json)
+        if extra_json_fields:
+            output.update(extra_json_fields)
+        print(json.dumps(output, indent=2))
+    else:
+        logger.info("")
+        logger.info(format_results(results, plan, format="text"))
+
+    return determine_exit_code(results)
