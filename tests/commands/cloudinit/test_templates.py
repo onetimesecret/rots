@@ -93,6 +93,27 @@ class TestGenerateCloudInitConfig:
         assert "packages" in data
         assert "valkey" in data["packages"]
 
+    def test_config_with_rabbitmq(self):
+        """Config with RabbitMQ should include apt source."""
+        config = generate_cloudinit_config(
+            include_rabbitmq=True,
+            rabbitmq_gpg_key=_DUMMY_GPG_KEY,
+        )
+        data = yaml.safe_load(config)
+
+        assert "apt" in data
+        assert "sources" in data["apt"]
+        assert "rabbitmq" in data["apt"]["sources"]
+
+        rabbitmq_source = data["apt"]["sources"]["rabbitmq"]
+        assert "source" in rabbitmq_source
+        assert "cloudsmith.io" in rabbitmq_source["source"]
+        assert "key" in rabbitmq_source
+
+        # Check packages
+        assert "packages" in data
+        assert "rabbitmq-server" in data["packages"]
+
     def test_config_with_custom_gpg_keys(self):
         """Config should use provided GPG keys."""
         pg_key = (
@@ -200,9 +221,9 @@ class TestXcaddyCloudInit:
         assert "runcmd" in data
         runcmd = data["runcmd"]
 
-        # 5 base commands + 9 xcaddy commands (gpg, repo, apt-get update, install,
+        # 7 base commands + 9 xcaddy commands (gpg, repo, apt-get update, install,
         # build, install binary, daemon-reload, enable, start)
-        assert len(runcmd) == 14
+        assert len(runcmd) == 16
 
         # Base setup commands (always present)
         assert "mkdir -p" in runcmd[0]
@@ -210,39 +231,41 @@ class TestXcaddyCloudInit:
         assert "podman.socket" in runcmd[2]
         assert "pip3 install" in runcmd[3]
         assert "rots init" in runcmd[4]
+        assert "rots sidecar install" in runcmd[5]
+        assert "rots sidecar start" in runcmd[6]
 
-        # GPG key import (xcaddy commands start at index 5)
-        assert "gpg.key" in runcmd[5]
-        assert "caddy-xcaddy-archive-keyring.gpg" in runcmd[5]
+        # GPG key import (xcaddy commands start at index 7)
+        assert "gpg.key" in runcmd[7]
+        assert "caddy-xcaddy-archive-keyring.gpg" in runcmd[7]
 
         # Repo file
-        assert "debian.deb.txt" in runcmd[6]
-        assert "caddy-xcaddy.list" in runcmd[6]
+        assert "debian.deb.txt" in runcmd[8]
+        assert "caddy-xcaddy.list" in runcmd[8]
 
         # apt-get update and install
-        assert runcmd[7] == "apt-get update"
-        assert runcmd[8] == "apt-get install -y xcaddy"
+        assert runcmd[9] == "apt-get update"
+        assert runcmd[10] == "apt-get install -y xcaddy"
 
         # Build with default plugins
-        assert "xcaddy build" in runcmd[9]
+        assert "xcaddy build" in runcmd[11]
         for plugin in DEFAULT_CADDY_PLUGINS:
-            assert f"--with {plugin}" in runcmd[9]
+            assert f"--with {plugin}" in runcmd[11]
 
         # Install binary
-        assert "install -m 0755" in runcmd[10]
-        assert "/usr/local/bin/caddy" in runcmd[10]
+        assert "install -m 0755" in runcmd[12]
+        assert "/usr/local/bin/caddy" in runcmd[12]
 
         # Enable and start caddy service
-        assert runcmd[11] == "systemctl daemon-reload"
-        assert runcmd[12] == "systemctl enable caddy"
-        assert runcmd[13] == "systemctl start caddy"
+        assert runcmd[13] == "systemctl daemon-reload"
+        assert runcmd[14] == "systemctl enable caddy"
+        assert runcmd[15] == "systemctl start caddy"
 
     def test_xcaddy_uses_default_caddy_version(self):
         """xcaddy build should use DEFAULT_CADDY_VERSION."""
         config = generate_cloudinit_config(include_xcaddy=True)
         data = yaml.safe_load(config)
 
-        build_cmd = data["runcmd"][9]
+        build_cmd = data["runcmd"][11]  # Index shifted by 2 for sidecar commands
         assert f"CADDY_VERSION={DEFAULT_CADDY_VERSION}" in build_cmd
 
     def test_xcaddy_custom_caddy_version(self):
@@ -250,7 +273,7 @@ class TestXcaddyCloudInit:
         config = generate_cloudinit_config(include_xcaddy=True, caddy_version="v2.9.0")
         data = yaml.safe_load(config)
 
-        build_cmd = data["runcmd"][9]
+        build_cmd = data["runcmd"][11]  # Index shifted by 2 for sidecar commands
         assert "CADDY_VERSION=v2.9.0" in build_cmd
 
     def test_xcaddy_custom_plugins(self):
@@ -259,7 +282,7 @@ class TestXcaddyCloudInit:
         config = generate_cloudinit_config(include_xcaddy=True, caddy_plugins=plugins)
         data = yaml.safe_load(config)
 
-        build_cmd = data["runcmd"][9]
+        build_cmd = data["runcmd"][11]  # Index shifted by 2 for sidecar commands
         assert "--with github.com/caddy-dns/cloudflare" in build_cmd
         # Default plugins should not be present
         assert "caddy-l4" not in build_cmd
@@ -270,8 +293,8 @@ class TestXcaddyCloudInit:
         data = yaml.safe_load(config)
 
         runcmd = data.get("runcmd", [])
-        # runcmd always has the 5 base setup commands
-        assert len(runcmd) == 5
+        # runcmd always has the 7 base setup commands (dirs, podman, rots, sidecar)
+        assert len(runcmd) == 7
         assert "mkdir -p" in runcmd[0]
         assert "chown" in runcmd[1]
         # No xcaddy-specific commands
@@ -386,7 +409,7 @@ class TestOTSBaseConfig:
         data = yaml.safe_load(config)
 
         runcmd = data["runcmd"]
-        assert len(runcmd) == 5
+        assert len(runcmd) == 7  # 5 base + 2 sidecar
 
         assert "mkdir -p" in runcmd[0]
         assert "/etc/onetimesecret" in runcmd[0]
@@ -394,6 +417,8 @@ class TestOTSBaseConfig:
         assert runcmd[2] == "systemctl enable --now podman.socket"
         assert runcmd[3] == "pip3 install rots"
         assert runcmd[4] == "rots init"
+        assert runcmd[5] == "rots sidecar install"
+        assert runcmd[6] == "rots sidecar start"
 
     def test_default_timezone_is_utc(self):
         """Default timezone should be UTC."""

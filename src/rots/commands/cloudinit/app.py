@@ -45,6 +45,9 @@ def generate(
     include_valkey: Annotated[
         bool, cyclopts.Parameter(help="Include Valkey apt repository")
     ] = False,
+    include_rabbitmq: Annotated[
+        bool, cyclopts.Parameter(help="Include RabbitMQ apt repository (CloudSmith)")
+    ] = False,
     include_xcaddy: Annotated[
         bool,
         cyclopts.Parameter(help="Include xcaddy repo and build custom Caddy (web profile)"),
@@ -64,6 +67,10 @@ def generate(
     valkey_key: Annotated[
         str | None,
         cyclopts.Parameter(help="Path to Valkey GPG key file"),
+    ] = None,
+    rabbitmq_key: Annotated[
+        str | None,
+        cyclopts.Parameter(help="Path to RabbitMQ GPG key file"),
     ] = None,
     ssh_authorized_key: Annotated[
         list[str] | None,
@@ -89,6 +96,7 @@ def generate(
     - podman socket enabled; rots init invoked via runcmd
     - Optional PostgreSQL official repository
     - Optional Valkey repository
+    - Optional RabbitMQ official repository (CloudSmith)
     - Optional xcaddy repo and custom Caddy build (web profile)
     - Package update/upgrade configuration
 
@@ -96,6 +104,8 @@ def generate(
         rots cloudinit generate > user-data.yaml
         rots cloudinit generate --output /tmp/cloud-init.yaml
         rots cloudinit generate --include-postgresql --postgresql-key /path/to/pgp.asc
+        rots cloudinit generate --include-valkey --valkey-key /path/to/valkey.gpg
+        rots cloudinit generate --include-rabbitmq --rabbitmq-key /path/to/rabbitmq.asc
         rots cloudinit generate --include-xcaddy
         rots cloudinit generate --include-xcaddy --caddy-version v2.10.2
         rots cloudinit generate --timezone America/New_York --hostname ots-prod-1
@@ -104,6 +114,7 @@ def generate(
     # Read GPG keys if provided
     postgresql_gpg = None
     valkey_gpg = None
+    rabbitmq_gpg = None
 
     if include_postgresql and postgresql_key:
         postgresql_gpg = Path(postgresql_key).read_text()
@@ -111,14 +122,19 @@ def generate(
     if include_valkey and valkey_key:
         valkey_gpg = Path(valkey_key).read_text()
 
+    if include_rabbitmq and rabbitmq_key:
+        rabbitmq_gpg = Path(rabbitmq_key).read_text()
+
     # Generate configuration
     try:
         config = generate_cloudinit_config(
             include_postgresql=include_postgresql,
             include_valkey=include_valkey,
+            include_rabbitmq=include_rabbitmq,
             include_xcaddy=include_xcaddy,
             postgresql_gpg_key=postgresql_gpg,
             valkey_gpg_key=valkey_gpg,
+            rabbitmq_gpg_key=rabbitmq_gpg,
             caddy_version=caddy_version,
             caddy_plugins=caddy_plugins,
             ssh_authorized_keys=ssh_authorized_key or None,
