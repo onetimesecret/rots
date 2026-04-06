@@ -313,7 +313,7 @@ class Config:
             Path("/run/containers/0/auth.json"),  # rootless podman on systemd
             Path("/etc/containers/auth.json"),  # root on Linux
         ]:
-            result = executor.run(["test", "-f", str(candidate)])  # type: ignore[union-attr]
+            result = executor.run(["test", "-f", str(candidate)])
             if result.ok:
                 return candidate
 
@@ -422,7 +422,7 @@ class Config:
         files: list[Path] = []
         for fname in CONFIG_FILES:
             fpath = self.config_dir / fname
-            result = executor.run(["test", "-f", str(fpath)])  # type: ignore[union-attr]
+            result = executor.run(["test", "-f", str(fpath)])
             if result.ok:
                 files.append(fpath)
         return files

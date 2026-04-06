@@ -151,7 +151,7 @@ def get_secrets_section(
     env_path = env_file_path or DEFAULT_ENV_FILE
 
     if _is_remote(executor):
-        result = executor.run(["test", "-f", str(env_path)])  # type: ignore[union-attr]
+        result = executor.run(["test", "-f", str(env_path)])
         env_exists = result.ok
     else:
         env_exists = env_path.exists()
@@ -436,8 +436,8 @@ def _write_template(
     )
     content = template.format(**fmt_vars)
     if _is_remote(executor):
-        executor.run(["mkdir", "-p", str(path.parent)])  # type: ignore[union-attr]
-        executor.run(["tee", str(path)], input=content)  # type: ignore[union-attr]
+        executor.run(["mkdir", "-p", str(path.parent)])
+        executor.run(["tee", str(path)], input=content)
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
@@ -719,8 +719,8 @@ def write_image_template(
     content = render_image_template(cfg, executor=executor)
     path = cfg.image_template_path
     if _is_remote(executor):
-        executor.run(["mkdir", "-p", str(path.parent)])  # type: ignore[union-attr]
-        executor.run(["tee", str(path)], input=content)  # type: ignore[union-attr]
+        executor.run(["mkdir", "-p", str(path.parent)])
+        executor.run(["tee", str(path)], input=content)
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
