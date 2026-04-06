@@ -337,11 +337,14 @@ def init(
     update_config_value(config_path, pkg.port_config_key, str(port_num), pkg, executor=ex)
     update_config_value(config_path, pkg.bind_config_key, bind, pkg, executor=ex)
 
-    # Step 3: Set data directory
-    data_dir = ensure_data_dir(pkg, instance, executor=ex)
-    logger.info(f"  Data dir: {data_dir}")
-    # Update config to point to instance-specific data dir
-    update_config_value(config_path, "dir", str(data_dir), pkg, executor=ex)
+    # Step 3: Set data directory (skip for singletons — they manage their own data dirs)
+    if pkg.singleton:
+        data_dir = pkg.data_dir  # Use package default for singletons
+    else:
+        data_dir = ensure_data_dir(pkg, instance, executor=ex)
+        logger.info(f"  Data dir: {data_dir}")
+        # Update config to point to instance-specific data dir
+        update_config_value(config_path, "dir", str(data_dir), pkg, executor=ex)
 
     # Step 4: Create secrets file (if applicable)
     if not no_secrets and pkg.secrets:

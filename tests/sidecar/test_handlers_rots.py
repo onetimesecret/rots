@@ -238,6 +238,51 @@ class TestInvokeRots:
         # Check timeout was passed
         assert mock_run.call_args[1]["timeout"] == 60
 
+    def test_timeout_clamped_to_minimum(self):
+        """Timeout below 5s should be clamped to 5s."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        with patch(
+            "rots.sidecar.handlers_rots.subprocess.run", return_value=mock_result
+        ) as mock_run:
+            with patch("rots.sidecar.handlers_rots.shutil.which", return_value="/usr/bin/rots"):
+                invoke_rots("rots.doctor", {"timeout": 1})
+
+        assert mock_run.call_args[1]["timeout"] == 5
+
+    def test_timeout_clamped_to_maximum(self):
+        """Timeout above 600s should be clamped to 600s."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        with patch(
+            "rots.sidecar.handlers_rots.subprocess.run", return_value=mock_result
+        ) as mock_run:
+            with patch("rots.sidecar.handlers_rots.shutil.which", return_value="/usr/bin/rots"):
+                invoke_rots("rots.doctor", {"timeout": 86400})
+
+        assert mock_run.call_args[1]["timeout"] == 600
+
+    def test_timeout_invalid_type_uses_default(self):
+        """Invalid timeout type should use default 300s."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        with patch(
+            "rots.sidecar.handlers_rots.subprocess.run", return_value=mock_result
+        ) as mock_run:
+            with patch("rots.sidecar.handlers_rots.shutil.which", return_value="/usr/bin/rots"):
+                invoke_rots("rots.doctor", {"timeout": "invalid"})
+
+        assert mock_run.call_args[1]["timeout"] == 300
+
     def test_exception_handling(self):
         with patch("rots.sidecar.handlers_rots.subprocess.run") as mock_run:
             mock_run.side_effect = OSError("No such file")

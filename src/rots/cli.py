@@ -340,8 +340,9 @@ def doctor():
 
     # 11. RabbitMQ running (best-effort — only relevant on hosts running sidecar)
     rabbitmq_ok = False
-    rabbitmq_detail = "sidecar needs this for remote commands"
+    rabbitmq_detail = "not applicable (no systemctl)"
     if _has_command("systemctl"):
+        rabbitmq_detail = "sidecar needs this for remote commands"
         result = ex.run(["systemctl", "is-active", "rabbitmq-server"], timeout=10)
         if result.ok:
             rabbitmq_ok = result.stdout.strip() == "active"
