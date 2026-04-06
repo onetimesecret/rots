@@ -8,6 +8,8 @@ import yaml
 
 from rots.commands.cloudinit.app import app
 
+pytestmark = pytest.mark.quick
+
 
 class TestCloudInitGenerate:
     """Tests for cloudinit generate command."""

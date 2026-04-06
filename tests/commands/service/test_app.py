@@ -21,6 +21,8 @@ from rots.commands.service.app import (
     stop,
 )
 
+pytestmark = pytest.mark.quick
+
 
 def _make_command_error(stderr: str = "", command: str = "systemctl") -> CommandError:
     """Create a CommandError with the given stderr for test assertions."""

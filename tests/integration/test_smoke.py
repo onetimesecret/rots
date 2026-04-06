@@ -24,7 +24,14 @@ import sys
 import pytest
 
 # ---------------------------------------------------------------------------
-# Skip markers — applied to the whole module
+# Skip entire module on non-Linux platforms (no systemd/D-Bus)
+# ---------------------------------------------------------------------------
+
+if sys.platform != "linux":
+    pytest.skip("Integration tests require Linux (systemd/D-Bus)", allow_module_level=True)
+
+# ---------------------------------------------------------------------------
+# Skip markers — evaluated lazily via fixtures to avoid subprocess at collection
 # ---------------------------------------------------------------------------
 
 
@@ -50,15 +57,26 @@ def _podman_available() -> bool:
     return shutil.which("podman") is not None
 
 
-requires_systemd = pytest.mark.skipif(
-    not _systemd_available(),
-    reason="systemd not available or not running (requires Linux with systemd as PID 1)",
-)
+@pytest.fixture(scope="module")
+def require_systemd():
+    """Skip test if systemd is not available.
 
-requires_podman = pytest.mark.skipif(
-    not _podman_available(),
-    reason="podman not installed",
-)
+    Use via @pytest.mark.usefixtures("require_systemd") on classes or functions.
+    Evaluation is deferred to test execution, avoiding subprocess calls during
+    pytest collection (which can add ~5-10s on large test suites).
+    """
+    if not _systemd_available():
+        pytest.skip("systemd not available or not running (requires Linux with systemd as PID 1)")
+
+
+@pytest.fixture(scope="module")
+def require_podman():
+    """Skip test if podman is not installed.
+
+    Use via @pytest.mark.usefixtures("require_podman") on classes or functions.
+    """
+    if not _podman_available():
+        pytest.skip("podman not installed")
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +165,7 @@ class TestCliAvailability:
 # ---------------------------------------------------------------------------
 
 
-@requires_systemd
+@pytest.mark.usefixtures("require_systemd")
 class TestSystemdIntegration:
     """Verify CLI commands that shell out to systemctl work correctly.
 
@@ -193,7 +211,7 @@ class TestSystemdIntegration:
         ), f"Unexpected dry-run output: {combined!r}"
 
 
-@requires_podman
+@pytest.mark.usefixtures("require_podman")
 class TestPodmanIntegration:
     """Smoke tests that require podman to be installed."""
 

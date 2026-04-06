@@ -5,6 +5,10 @@ These functions were added for dry-run support in the deploy and redeploy comman
 They render quadlet template content without writing to disk.
 """
 
+import pytest
+
+pytestmark = pytest.mark.quick
+
 
 def _make_cfg(mocker, tmp_path, image="ghcr.io/test/image", tag="v1.0.0", registry=None):
     """Return a minimal Config mock for render tests."""

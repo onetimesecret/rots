@@ -4,6 +4,10 @@
 import subprocess
 import sys
 
+import pytest
+
+pytestmark = pytest.mark.quick
+
 
 class TestMainEntryPoint:
     """Test python -m rots invocation covers __main__.py."""

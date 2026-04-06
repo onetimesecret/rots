@@ -9,6 +9,8 @@ import pytest
 
 from rots.config import parse_image_reference
 
+pytestmark = pytest.mark.quick
+
 
 class TestBasicImageTag:
     """Basic image:tag splitting."""

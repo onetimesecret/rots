@@ -15,6 +15,8 @@ from rots.commands.service.packages import (
     list_packages,
 )
 
+pytestmark = pytest.mark.quick
+
 
 class TestSecretConfig:
     """Tests for SecretConfig dataclass."""

@@ -423,52 +423,53 @@ def publish_command(
     )
 
     connection = pika.BlockingConnection(parameters)
-    channel = connection.channel()
+    try:
+        channel = connection.channel()
 
-    # Declare callback queue
-    result = channel.queue_declare(queue="", exclusive=True)
-    callback_queue = result.method.queue
+        # Declare callback queue
+        result = channel.queue_declare(queue="", exclusive=True)
+        callback_queue = result.method.queue
 
-    correlation_id = str(uuid.uuid4())
-    response: dict[str, Any] | None = None
+        correlation_id = str(uuid.uuid4())
+        response: dict[str, Any] | None = None
 
-    def on_response(
-        ch: BlockingChannel,
-        method: Basic.Deliver,
-        props: BasicProperties,
-        body: bytes,
-    ) -> None:
-        nonlocal response
-        if props.correlation_id == correlation_id:
-            response = json.loads(body.decode("utf-8"))
+        def on_response(
+            ch: BlockingChannel,
+            method: Basic.Deliver,
+            props: BasicProperties,
+            body: bytes,
+        ) -> None:
+            nonlocal response
+            if props.correlation_id == correlation_id:
+                response = json.loads(body.decode("utf-8"))
 
-    channel.basic_consume(
-        queue=callback_queue,
-        on_message_callback=on_response,
-        auto_ack=True,
-    )
+        channel.basic_consume(
+            queue=callback_queue,
+            on_message_callback=on_response,
+            auto_ack=True,
+        )
 
-    # Publish command
-    message = {"command": command, "payload": payload or {}}
-    routing_key = f"{COMMAND_QUEUE}.{target_host}" if target_host else COMMAND_QUEUE
-    channel.basic_publish(
-        exchange=COMMAND_EXCHANGE,
-        routing_key=routing_key,
-        body=json.dumps(message).encode("utf-8"),
-        properties=pika.BasicProperties(
-            reply_to=callback_queue,
-            correlation_id=correlation_id,
-            content_type="application/json",
-        ),
-    )
+        # Publish command
+        message = {"command": command, "payload": payload or {}}
+        routing_key = f"{COMMAND_QUEUE}.{target_host}" if target_host else COMMAND_QUEUE
+        channel.basic_publish(
+            exchange=COMMAND_EXCHANGE,
+            routing_key=routing_key,
+            body=json.dumps(message).encode("utf-8"),
+            properties=pika.BasicProperties(
+                reply_to=callback_queue,
+                correlation_id=correlation_id,
+                content_type="application/json",
+            ),
+        )
 
-    # Wait for response
-    deadline = __import__("time").time() + timeout
-    while response is None:
-        connection.process_data_events(time_limit=1)
-        if __import__("time").time() > deadline:
-            connection.close()
-            raise TimeoutError(f"No response within {timeout}s")
+        # Wait for response
+        deadline = __import__("time").time() + timeout
+        while response is None:
+            connection.process_data_events(time_limit=1)
+            if __import__("time").time() > deadline:
+                raise TimeoutError(f"No response within {timeout}s")
 
-    connection.close()
-    return response
+        return response
+    finally:
+        connection.close()

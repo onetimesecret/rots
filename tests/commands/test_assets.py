@@ -3,6 +3,8 @@
 
 import pytest
 
+pytestmark = pytest.mark.quick
+
 
 class TestAssetsCommandImports:
     """Verify assets command module imports correctly."""

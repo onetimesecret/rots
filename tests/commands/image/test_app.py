@@ -5,6 +5,8 @@ import logging
 
 import pytest
 
+pytestmark = pytest.mark.quick
+
 
 class TestImageAppImports:
     """Test image app structure."""

@@ -24,22 +24,6 @@ from typing import Annotated
 import cyclopts
 
 from . import __version__
-from .commands import assets as assets_cmd
-from .commands import (
-    cloudinit,
-    dns,
-    env,
-    generate,
-    host,
-    image,
-    init,
-    instance,
-    proxy,
-    service,
-    sidecar,
-)
-from .commands import db as db_cmd
-from .commands import self as self_cmd
 
 logger = logging.getLogger(__name__)
 
@@ -49,21 +33,25 @@ app = cyclopts.App(
     version=__version__,
 )
 
-# Register topic sub-apps
-app.command(init.app)
-app.command(instance.app)
-app.command(image.app)
-app.command(assets_cmd.app)
-app.command(proxy.app)
-app.command(host.app)
-app.command(service.app)
-app.command(dns.app)
-app.command(cloudinit.app)
-app.command(env.app)
-app.command(generate.app)
-app.command(db_cmd.app)
-app.command(sidecar.app)
-app.command(self_cmd.app)
+# Register topic sub-apps lazily via import path strings.
+# This avoids importing all command modules at CLI startup, significantly
+# speeding up pytest collection and CLI responsiveness.
+# Format: "module.path:attribute_name"
+app.command("rots.commands.init:app", name="init")
+app.command("rots.commands.instance:app", name="instance")
+app.command("rots.commands.image:app", name="image")
+app.command("rots.commands.assets:app", name="assets")
+app.command("rots.commands.proxy:app", name="proxy")
+app.command("rots.commands.host:app", name="host")
+app.command("rots.commands.service:app", name="service")
+app.command("rots.commands.dns:app", name="dns")
+app.command("rots.commands.cloudinit:app", name="cloudinit")
+app.command("rots.commands.env:app", name="env")
+app.command("rots.commands.generate:app", name="generate")
+app.command("rots.commands.db:app", name="db")
+app.command("rots.commands.sidecar:app", name="sidecar")
+app.command("rots.commands.workflow:app", name="workflow")
+app.command("rots.commands.self:app", name="self")
 
 
 class _CLIFormatter(logging.Formatter):

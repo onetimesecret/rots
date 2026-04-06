@@ -8,6 +8,8 @@ from ots_shared.ssh.executor import CommandError, Result
 
 from rots.podman import Podman, podman
 
+pytestmark = pytest.mark.quick
+
 
 class TestPodmanWrapper:
     """Test the Podman class wrapper."""

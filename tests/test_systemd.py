@@ -8,6 +8,8 @@ import pytest
 from rots._dbus import UnitInfo
 from rots.systemd import SystemctlError
 
+pytestmark = pytest.mark.quick
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

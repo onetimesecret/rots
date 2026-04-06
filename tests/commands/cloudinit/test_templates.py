@@ -1,6 +1,7 @@
 # tests/commands/cloudinit/test_templates.py
 """Tests for cloud-init template generation."""
 
+import pytest
 import yaml
 
 from rots.commands.cloudinit.templates import (
@@ -9,6 +10,8 @@ from rots.commands.cloudinit.templates import (
     generate_cloudinit_config,
     get_debian13_sources_list,
 )
+
+pytestmark = pytest.mark.quick
 
 _DUMMY_GPG_KEY = (
     "-----BEGIN PGP PUBLIC KEY BLOCK-----\ntest-key\n-----END PGP PUBLIC KEY BLOCK-----"
