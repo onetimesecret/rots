@@ -93,27 +93,6 @@ class TestGenerateCloudInitConfig:
         assert "packages" in data
         assert "valkey" in data["packages"]
 
-    def test_config_with_rabbitmq(self):
-        """Config with RabbitMQ should include apt source."""
-        config = generate_cloudinit_config(
-            include_rabbitmq=True,
-            rabbitmq_gpg_key=_DUMMY_GPG_KEY,
-        )
-        data = yaml.safe_load(config)
-
-        assert "apt" in data
-        assert "sources" in data["apt"]
-        assert "rabbitmq" in data["apt"]["sources"]
-
-        rabbitmq_source = data["apt"]["sources"]["rabbitmq"]
-        assert "source" in rabbitmq_source
-        assert "cloudsmith.io" in rabbitmq_source["source"]
-        assert "key" in rabbitmq_source
-
-        # Check packages
-        assert "packages" in data
-        assert "rabbitmq-server" in data["packages"]
-
     def test_config_with_custom_gpg_keys(self):
         """Config should use provided GPG keys."""
         pg_key = (
@@ -221,51 +200,50 @@ class TestXcaddyCloudInit:
         assert "runcmd" in data
         runcmd = data["runcmd"]
 
-        # 7 base commands + 9 xcaddy commands (gpg, repo, apt-get update, install,
+        # 6 base commands + 9 xcaddy commands (gpg, repo, apt-get update, install,
         # build, install binary, daemon-reload, enable, start)
-        assert len(runcmd) == 16
+        assert len(runcmd) == 15
 
         # Base setup commands (always present)
         assert "mkdir -p" in runcmd[0]
         assert "chown" in runcmd[1]
         assert "podman.socket" in runcmd[2]
-        assert "pip3 install" in runcmd[3]
-        assert "rots init" in runcmd[4]
-        assert "rots sidecar install" in runcmd[5]
-        assert "rots sidecar start" in runcmd[6]
+        assert runcmd[3] == "pipx install rots"
+        assert runcmd[4] == "pipx ensurepath"
+        assert "/root/.local/bin/rots init" in runcmd[5]
 
-        # GPG key import (xcaddy commands start at index 7)
-        assert "gpg.key" in runcmd[7]
-        assert "caddy-xcaddy-archive-keyring.gpg" in runcmd[7]
+        # GPG key import (xcaddy commands start at index 6)
+        assert "gpg.key" in runcmd[6]
+        assert "caddy-xcaddy-archive-keyring.gpg" in runcmd[6]
 
         # Repo file
-        assert "debian.deb.txt" in runcmd[8]
-        assert "caddy-xcaddy.list" in runcmd[8]
+        assert "debian.deb.txt" in runcmd[7]
+        assert "caddy-xcaddy.list" in runcmd[7]
 
         # apt-get update and install
-        assert runcmd[9] == "apt-get update"
-        assert runcmd[10] == "apt-get install -y xcaddy"
+        assert runcmd[8] == "apt-get update"
+        assert runcmd[9] == "apt-get install -y xcaddy"
 
         # Build with default plugins
-        assert "xcaddy build" in runcmd[11]
+        assert "xcaddy build" in runcmd[10]
         for plugin in DEFAULT_CADDY_PLUGINS:
-            assert f"--with {plugin}" in runcmd[11]
+            assert f"--with {plugin}" in runcmd[10]
 
         # Install binary
-        assert "install -m 0755" in runcmd[12]
-        assert "/usr/local/bin/caddy" in runcmd[12]
+        assert "install -m 0755" in runcmd[11]
+        assert "/usr/local/bin/caddy" in runcmd[11]
 
         # Enable and start caddy service
-        assert runcmd[13] == "systemctl daemon-reload"
-        assert runcmd[14] == "systemctl enable caddy"
-        assert runcmd[15] == "systemctl start caddy"
+        assert runcmd[12] == "systemctl daemon-reload"
+        assert runcmd[13] == "systemctl enable caddy"
+        assert runcmd[14] == "systemctl start caddy"
 
     def test_xcaddy_uses_default_caddy_version(self):
         """xcaddy build should use DEFAULT_CADDY_VERSION."""
         config = generate_cloudinit_config(include_xcaddy=True)
         data = yaml.safe_load(config)
 
-        build_cmd = data["runcmd"][11]  # Index shifted by 2 for sidecar commands
+        build_cmd = data["runcmd"][10]
         assert f"CADDY_VERSION={DEFAULT_CADDY_VERSION}" in build_cmd
 
     def test_xcaddy_custom_caddy_version(self):
@@ -273,7 +251,7 @@ class TestXcaddyCloudInit:
         config = generate_cloudinit_config(include_xcaddy=True, caddy_version="v2.9.0")
         data = yaml.safe_load(config)
 
-        build_cmd = data["runcmd"][11]  # Index shifted by 2 for sidecar commands
+        build_cmd = data["runcmd"][10]
         assert "CADDY_VERSION=v2.9.0" in build_cmd
 
     def test_xcaddy_custom_plugins(self):
@@ -282,7 +260,7 @@ class TestXcaddyCloudInit:
         config = generate_cloudinit_config(include_xcaddy=True, caddy_plugins=plugins)
         data = yaml.safe_load(config)
 
-        build_cmd = data["runcmd"][11]  # Index shifted by 2 for sidecar commands
+        build_cmd = data["runcmd"][10]
         assert "--with github.com/caddy-dns/cloudflare" in build_cmd
         # Default plugins should not be present
         assert "caddy-l4" not in build_cmd
@@ -293,8 +271,8 @@ class TestXcaddyCloudInit:
         data = yaml.safe_load(config)
 
         runcmd = data.get("runcmd", [])
-        # runcmd always has the 7 base setup commands (dirs, podman, rots, sidecar)
-        assert len(runcmd) == 7
+        # runcmd always has the 6 base setup commands
+        assert len(runcmd) == 6
         assert "mkdir -p" in runcmd[0]
         assert "chown" in runcmd[1]
         # No xcaddy-specific commands
@@ -372,6 +350,97 @@ class TestXcaddyCloudInit:
         assert "apt" in data
 
 
+class TestPostgreSQLServer:
+    """Tests for --include-postgresql-server flag."""
+
+    def test_include_postgresql_server_installs_server(self):
+        """include_postgresql_server should install postgresql-17 package."""
+        config = generate_cloudinit_config(
+            include_postgresql_server=True,
+            postgresql_gpg_key=_DUMMY_GPG_KEY,
+        )
+        data = yaml.safe_load(config)
+
+        packages = data["packages"]
+        assert "postgresql-17" in packages
+        # Should NOT include the client when server is requested
+        assert "postgresql-client" not in packages
+
+    def test_include_postgresql_server_adds_apt_source(self):
+        """include_postgresql_server should add PostgreSQL apt repository."""
+        config = generate_cloudinit_config(
+            include_postgresql_server=True,
+            postgresql_gpg_key=_DUMMY_GPG_KEY,
+        )
+        data = yaml.safe_load(config)
+
+        assert "apt" in data
+        assert "sources" in data["apt"]
+        assert "postgresql" in data["apt"]["sources"]
+
+        pg_source = data["apt"]["sources"]["postgresql"]
+        assert "trixie-pgdg" in pg_source["source"]
+
+    def test_include_postgresql_client_only(self):
+        """include_postgresql (without server) should only install client."""
+        config = generate_cloudinit_config(
+            include_postgresql=True,
+            postgresql_gpg_key=_DUMMY_GPG_KEY,
+        )
+        data = yaml.safe_load(config)
+
+        packages = data["packages"]
+        assert "postgresql-client" in packages
+        assert "postgresql-17" not in packages
+
+    def test_include_postgresql_server_requires_gpg_key(self):
+        """include_postgresql_server should require GPG key."""
+        with pytest.raises(ValueError, match="PostgreSQL GPG key is required"):
+            generate_cloudinit_config(include_postgresql_server=True)
+
+
+class TestPipxInstallation:
+    """Tests for PEP 668 compliant pipx installation."""
+
+    def test_generate_cloudinit_uses_pipx(self):
+        """Cloud-init should use pipx instead of pip3 for PEP 668 compliance."""
+        config = generate_cloudinit_config()
+        data = yaml.safe_load(config)
+
+        runcmd = data["runcmd"]
+        runcmd_str = " ".join(runcmd)
+
+        # Should use pipx, not pip3
+        assert "pipx install rots" in runcmd_str
+        assert "pip3 install rots" not in runcmd_str
+
+    def test_pipx_in_packages(self):
+        """pipx should be in the packages list."""
+        config = generate_cloudinit_config()
+        data = yaml.safe_load(config)
+
+        packages = data["packages"]
+        assert "pipx" in packages
+        # python3-pip should not be present (replaced by pipx)
+        assert "python3-pip" not in packages
+
+    def test_pipx_ensurepath_included(self):
+        """pipx ensurepath should be run to set up PATH."""
+        config = generate_cloudinit_config()
+        data = yaml.safe_load(config)
+
+        runcmd = data["runcmd"]
+        assert "pipx ensurepath" in runcmd
+
+    def test_rots_init_uses_full_path(self):
+        """rots init should use full path since pipx installs to ~/.local/bin."""
+        config = generate_cloudinit_config()
+        data = yaml.safe_load(config)
+
+        runcmd = data["runcmd"]
+        assert "/root/.local/bin/rots init" in runcmd
+
+
 class TestOTSBaseConfig:
     """Tests for always-present OTS-specific sections added by the yaml.dump() rewrite."""
 
@@ -409,16 +478,15 @@ class TestOTSBaseConfig:
         data = yaml.safe_load(config)
 
         runcmd = data["runcmd"]
-        assert len(runcmd) == 7  # 5 base + 2 sidecar
+        assert len(runcmd) == 6
 
         assert "mkdir -p" in runcmd[0]
         assert "/etc/onetimesecret" in runcmd[0]
         assert "chown onetimesecret:onetimesecret" in runcmd[1]
         assert runcmd[2] == "systemctl enable --now podman.socket"
-        assert runcmd[3] == "pip3 install rots"
-        assert runcmd[4] == "rots init"
-        assert runcmd[5] == "rots sidecar install"
-        assert runcmd[6] == "rots sidecar start"
+        assert runcmd[3] == "pipx install rots"
+        assert runcmd[4] == "pipx ensurepath"
+        assert runcmd[5] == "/root/.local/bin/rots init"
 
     def test_default_timezone_is_utc(self):
         """Default timezone should be UTC."""

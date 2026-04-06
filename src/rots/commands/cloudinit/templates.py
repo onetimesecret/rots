@@ -138,12 +138,11 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 def generate_cloudinit_config(
     *,
     include_postgresql: bool = False,
+    include_postgresql_server: bool = False,
     include_valkey: bool = False,
-    include_rabbitmq: bool = False,
     include_xcaddy: bool = False,
     postgresql_gpg_key: str | None = None,
     valkey_gpg_key: str | None = None,
-    rabbitmq_gpg_key: str | None = None,
     caddy_version: str = DEFAULT_CADDY_VERSION,
     caddy_plugins: list[str] | None = None,
     ssh_authorized_keys: list[str] | None = None,
@@ -160,12 +159,14 @@ def generate_cloudinit_config(
     - ``/etc/default/onetimesecret`` scaffolded with placeholder values
     - ``/etc/onetimesecret/`` and ``/var/lib/onetimesecret/`` directories
     - podman socket enabled and ``rots init`` invoked via runcmd
-    - Optional third-party repositories (PostgreSQL, Valkey, RabbitMQ, xcaddy)
+    - Optional third-party repositories (PostgreSQL, Valkey, xcaddy/Caddy)
 
     Args:
-        include_postgresql: Include PostgreSQL official repository
+        include_postgresql: Include PostgreSQL official repository (client only)
+        include_postgresql_server: Include PostgreSQL server package (implies
+            include_postgresql repository). Installs ``postgresql-17`` instead
+            of just the client.
         include_valkey: Include Valkey repository
-        include_rabbitmq: Include RabbitMQ official repository (CloudSmith)
         include_xcaddy: Include xcaddy repo and build custom Caddy binary
         postgresql_gpg_key: PostgreSQL GPG public key content (required when
             include_postgresql=True). Obtain with:
@@ -173,9 +174,6 @@ def generate_cloudinit_config(
         valkey_gpg_key: Valkey GPG public key content (required when
             include_valkey=True). Obtain with:
             ``curl -fsSL https://packages.valkey.io/valkey.gpg``
-        rabbitmq_gpg_key: RabbitMQ GPG public key content (required when
-            include_rabbitmq=True). Obtain with:
-            ``curl -fsSL https://dl.cloudsmith.io/public/rabbitmq/rabbitmq-server/gpg.key``
         caddy_version: Caddy version to build (default: v2.10.2)
         caddy_plugins: Caddy plugins to include (default: OTS web profile)
         ssh_authorized_keys: SSH public keys to add to the default cloud-init user
@@ -191,9 +189,10 @@ def generate_cloudinit_config(
             invalid, so refusing to generate is safer than emitting a
             placeholder.
     """
-    if include_postgresql and not postgresql_gpg_key:
+    if (include_postgresql or include_postgresql_server) and not postgresql_gpg_key:
         raise ValueError(
-            "PostgreSQL GPG key is required when --include-postgresql is used.\n"
+            "PostgreSQL GPG key is required when --include-postgresql or "
+            "--include-postgresql-server is used.\n"
             "Obtain the key with:\n"
             "  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc\n"
             "Then pass it with: --postgresql-key /path/to/key.asc"
@@ -205,13 +204,6 @@ def generate_cloudinit_config(
             "  curl -fsSL https://packages.valkey.io/valkey.gpg\n"
             "Then pass it with: --valkey-key /path/to/key.gpg"
         )
-    if include_rabbitmq and not rabbitmq_gpg_key:
-        raise ValueError(
-            "RabbitMQ GPG key is required when --include-rabbitmq is used.\n"
-            "Obtain the key with:\n"
-            "  curl -fsSL https://dl.cloudsmith.io/public/rabbitmq/rabbitmq-server/gpg.key\n"
-            "Then pass it with: --rabbitmq-key /path/to/key.asc"
-        )
 
     # ------------------------------------------------------------------ apt --
     apt: dict = {
@@ -219,7 +211,7 @@ def generate_cloudinit_config(
     }
 
     sources: dict = {}
-    if include_postgresql:
+    if include_postgresql or include_postgresql_server:
         pg_entry: dict = {
             "source": "deb http://apt.postgresql.org/pub/repos/apt trixie-pgdg main",
         }
@@ -235,15 +227,6 @@ def generate_cloudinit_config(
             valkey_entry["key"] = _LiteralStr(valkey_gpg_key)
         sources["valkey"] = valkey_entry
 
-    if include_rabbitmq:
-        rabbitmq_url = "https://dl.cloudsmith.io/public/rabbitmq/rabbitmq-server/deb/debian"
-        rabbitmq_entry: dict = {
-            "source": f"deb {rabbitmq_url} trixie main",
-        }
-        if rabbitmq_gpg_key:
-            rabbitmq_entry["key"] = _LiteralStr(rabbitmq_gpg_key)
-        sources["rabbitmq"] = rabbitmq_entry
-
     if sources:
         apt["sources"] = sources
 
@@ -255,17 +238,16 @@ def generate_cloudinit_config(
         "vim",
         "podman",
         "systemd-container",
-        "python3-pip",
+        "pipx",
     ]
 
-    if include_postgresql:
+    if include_postgresql_server:
+        packages.append("postgresql-17")
+    elif include_postgresql:
         packages.append("postgresql-client")
 
     if include_valkey:
         packages.append("valkey")
-
-    if include_rabbitmq:
-        packages.append("rabbitmq-server")
 
     if include_xcaddy:
         packages.extend(
@@ -337,12 +319,11 @@ def generate_cloudinit_config(
         "chown onetimesecret:onetimesecret /etc/onetimesecret /var/lib/onetimesecret",
         # Enable podman socket so rots can manage containers
         "systemctl enable --now podman.socket",
-        # Install rots CLI then run init to scaffold the deployment DB
-        "pip3 install rots",
-        "rots init",
-        # Install and start sidecar for remote management via RabbitMQ
-        "rots sidecar install",
-        "rots sidecar start",
+        # Install rots CLI via pipx (PEP 668 compliant) then run init
+        "pipx install rots",
+        "pipx ensurepath",
+        # Run rots init using full path (pipx installs to ~/.local/bin)
+        "/root/.local/bin/rots init",
     ]
 
     if include_xcaddy:
