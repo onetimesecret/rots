@@ -7,6 +7,7 @@ import pytest
 
 from rots.commands.service.packages import (
     PACKAGES,
+    RABBITMQ,
     REDIS,
     VALKEY,
     SecretConfig,
@@ -125,6 +126,57 @@ class TestServicePackage:
             setattr(VALKEY, "name", "changed")
 
 
+class TestSingletonPackage:
+    """Tests for singleton service packages (e.g., RabbitMQ)."""
+
+    def test_rabbitmq_package_exists(self):
+        """Test RABBITMQ package is defined correctly."""
+        assert RABBITMQ.name == "rabbitmq"
+        assert RABBITMQ.template == "rabbitmq-server"
+        assert RABBITMQ.config_dir == Path("/etc/rabbitmq")
+        assert RABBITMQ.data_dir == Path("/var/lib/rabbitmq")
+        assert RABBITMQ.default_port == 5672
+        assert RABBITMQ.singleton is True
+
+    def test_singleton_instance_unit(self):
+        """Singleton instance_unit() returns template.service (no @)."""
+        assert RABBITMQ.instance_unit() == "rabbitmq-server.service"
+
+    def test_singleton_instance_unit_ignores_argument(self):
+        """Singleton instance_unit() ignores any instance argument."""
+        assert RABBITMQ.instance_unit("foo") == "rabbitmq-server.service"
+        assert RABBITMQ.instance_unit("5672") == "rabbitmq-server.service"
+
+    def test_singleton_template_unit(self):
+        """Singleton template_unit returns same as instance_unit (no @)."""
+        assert RABBITMQ.template_unit == "rabbitmq-server.service"
+
+    def test_singleton_config_file(self):
+        """Singleton config_file() returns fixed path without instance substitution."""
+        assert RABBITMQ.config_file() == Path("/etc/rabbitmq/rabbitmq.conf")
+
+    def test_singleton_config_file_ignores_argument(self):
+        """Singleton config_file() ignores any instance argument."""
+        assert RABBITMQ.config_file("5672") == Path("/etc/rabbitmq/rabbitmq.conf")
+
+    def test_singleton_data_path(self):
+        """Singleton data_path() returns data_dir directly (no instance subdir)."""
+        assert RABBITMQ.data_path() == Path("/var/lib/rabbitmq")
+
+    def test_singleton_data_path_ignores_argument(self):
+        """Singleton data_path() ignores any instance argument."""
+        assert RABBITMQ.data_path("5672") == Path("/var/lib/rabbitmq")
+
+    def test_singleton_secrets_file_returns_none(self):
+        """RABBITMQ has no secrets config, so secrets_file() returns None."""
+        assert RABBITMQ.secrets_file() is None
+
+    def test_non_singleton_packages_unchanged(self):
+        """Existing packages are not singletons."""
+        assert VALKEY.singleton is False
+        assert REDIS.singleton is False
+
+
 class TestPackageRegistry:
     """Tests for package registry functions."""
 
@@ -137,6 +189,11 @@ class TestPackageRegistry:
         """Test PACKAGES contains redis."""
         assert "redis" in PACKAGES
         assert PACKAGES["redis"] is REDIS
+
+    def test_packages_dict_contains_rabbitmq(self):
+        """Test PACKAGES contains rabbitmq."""
+        assert "rabbitmq" in PACKAGES
+        assert PACKAGES["rabbitmq"] is RABBITMQ
 
     def test_get_package_valkey(self):
         """Test get_package returns valkey."""
@@ -155,6 +212,11 @@ class TestPackageRegistry:
         assert "unknown" in str(exc_info.value)
         assert "Available" in str(exc_info.value)
 
+    def test_get_package_rabbitmq(self):
+        """Test get_package returns rabbitmq."""
+        pkg = get_package("rabbitmq")
+        assert pkg is RABBITMQ
+
     def test_get_package_unknown_lists_available_packages(self):
         """SystemExit message for unknown package lists all available package names."""
         with pytest.raises(SystemExit) as exc_info:
@@ -162,9 +224,10 @@ class TestPackageRegistry:
         msg = str(exc_info.value)
         assert "valkey" in msg
         assert "redis" in msg
+        assert "rabbitmq" in msg
 
     def test_list_packages(self):
         """Test list_packages returns sorted list."""
         packages = list_packages()
-        assert packages == ["redis", "valkey"]
+        assert packages == ["rabbitmq", "redis", "valkey"]
         assert packages == sorted(packages)

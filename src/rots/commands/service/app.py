@@ -29,7 +29,7 @@ from ._helpers import (
     systemctl,
     update_config_value,
 )
-from .packages import get_package, list_packages
+from .packages import ServicePackage, get_package, list_packages
 
 # systemctl() always returns Result and raises CommandError on failure
 # (it wraps all calls through an Executor, even locally).
@@ -48,13 +48,16 @@ logger = logging.getLogger(__name__)
 
 app = cyclopts.App(
     name=["service", "services"],
-    help="Manage systemd template services (valkey, redis)",
+    help="Manage systemd services (valkey, redis, rabbitmq)",
 )
 
 # Type aliases for cyclopts annotations
-Package = Annotated[str, cyclopts.Parameter(help="Package name (valkey, redis)")]
+Package = Annotated[str, cyclopts.Parameter(help="Package name (valkey, redis, rabbitmq)")]
 Instance = Annotated[str, cyclopts.Parameter(help="Instance identifier (usually port)")]
-OptInstance = Annotated[str | None, cyclopts.Parameter(help="Instance identifier (optional)")]
+OptInstance = Annotated[
+    str | None,
+    cyclopts.Parameter(help="Instance identifier (port); omit for singleton services"),
+]
 
 
 def _get_executor() -> Executor | None:
@@ -67,6 +70,20 @@ def _get_executor() -> Executor | None:
     if host is None:
         return None
     return cfg.get_executor(host=host)
+
+
+def _resolve_unit(pkg: ServicePackage, instance: str | None) -> str:
+    """Return the systemd unit name for the given package and instance.
+
+    Singletons reject an instance argument; template services require one.
+    """
+    if pkg.singleton:
+        if instance is not None:
+            raise SystemExit(f"'{pkg.name}' is a singleton service; instance argument not needed.")
+        return pkg.instance_unit()
+    if instance is None:
+        raise SystemExit(f"Instance required for template service '{pkg.name}'.")
+    return pkg.instance_unit(instance)
 
 
 def _list_units_for_template(
@@ -110,23 +127,41 @@ def list_all(json_output: JsonOutput = False):
             for line in output.splitlines():
                 if pkg.template in line:
                     parts = line.split()
-                    if parts:
-                        unit_name = parts[0]
-                        if "@" in unit_name and ".service" in unit_name:
-                            instance = unit_name.split("@")[1].replace(".service", "")
+                    if not parts:
+                        continue
+                    unit_name = parts[0]
+
+                    if pkg.singleton:
+                        # Singleton: no @ in unit name
+                        if unit_name == pkg.instance_unit():
                             active = is_service_active(unit_name, executor=ex)
                             enabled = is_service_enabled(unit_name, executor=ex)
-                            config_exists = _file_exists(pkg.config_file(instance), ex)
+                            config_exists = _file_exists(pkg.config_file(), ex)
                             all_instances.append(
                                 {
                                     "package": pkg_name,
-                                    "instance": instance,
+                                    "instance": "-",
                                     "unit": unit_name,
                                     "active": active,
                                     "enabled": enabled,
                                     "config_exists": config_exists,
                                 }
                             )
+                    elif "@" in unit_name and ".service" in unit_name:
+                        instance = unit_name.split("@")[1].replace(".service", "")
+                        active = is_service_active(unit_name, executor=ex)
+                        enabled = is_service_enabled(unit_name, executor=ex)
+                        config_exists = _file_exists(pkg.config_file(instance), ex)
+                        all_instances.append(
+                            {
+                                "package": pkg_name,
+                                "instance": instance,
+                                "unit": unit_name,
+                                "active": active,
+                                "enabled": enabled,
+                                "config_exists": config_exists,
+                            }
+                        )
 
     if json_output:
         import json
@@ -162,7 +197,7 @@ def list_all(json_output: JsonOutput = False):
 @app.command
 def init(
     package: Package,
-    instance: Instance,
+    instance: OptInstance = None,
     *,
     port: Annotated[
         int | None,
@@ -216,17 +251,31 @@ def init(
     Idempotent by default: if the config already exists, prints a notice and
     skips all modifications. Use --force to overwrite the existing config.
 
+    For singleton services (e.g., rabbitmq), the instance argument is omitted.
+
     Examples:
         ots service init valkey 6379                          # Configure only
         ots service init valkey 6379 --start --enable         # Configure, start, and enable
         ots service init redis 6380 --port 6380 --bind 0.0.0.0
         ots service init valkey 6379 --dry-run
         ots service init valkey 6379 --force                  # Overwrite existing config
+        ots service init rabbitmq                             # Singleton service
     """
     ex = _get_executor()
     pkg = get_package(package)
+
+    # Validate instance vs singleton
+    if pkg.singleton:
+        if instance is not None:
+            raise SystemExit(f"'{pkg.name}' is a singleton service; instance argument not needed.")
+        instance = ""  # sentinel for method calls that accept instance
+    elif instance is None:
+        raise SystemExit(f"Instance required for template service '{pkg.name}'.")
+
     if port is not None:
         port_num = port
+    elif pkg.singleton:
+        port_num = pkg.default_port or 0
     elif instance.isnumeric():
         port_num = int(instance)
     else:
@@ -249,7 +298,7 @@ def init(
             verb = "overwrite" if config_exists else "create"
             logger.info(f"[dry-run] Would {verb}:")
             logger.info(f"  Config: {pkg.config_file(instance)}")
-            logger.info(f"  Data:   {pkg.data_dir / instance}")
+            logger.info(f"  Data:   {pkg.data_path(instance)}")
             if not no_secrets and pkg.secrets:
                 logger.info(f"  Secrets: {pkg.secrets_file(instance)}")
         return
@@ -332,15 +381,16 @@ def init(
 
 
 @app.command
-def enable(package: Package, instance: Instance):
+def enable(package: Package, instance: OptInstance = None):
     """Enable a service instance to start at boot.
 
     Examples:
         ots service enable valkey 6379
+        ots service enable rabbitmq
     """
     ex = _get_executor()
     pkg = get_package(package)
-    unit = pkg.instance_unit(instance)
+    unit = _resolve_unit(pkg, instance)
 
     logger.info(f"Enabling {unit}...")
     try:
@@ -354,7 +404,7 @@ def enable(package: Package, instance: Instance):
 @app.command
 def disable(
     package: Package,
-    instance: Instance,
+    instance: OptInstance = None,
     yes: Yes = False,
 ):
     """Disable a service instance and stop it.
@@ -362,10 +412,11 @@ def disable(
     Examples:
         ots service disable valkey 6379
         ots service disable valkey 6379 -y
+        ots service disable rabbitmq -y
     """
     ex = _get_executor()
     pkg = get_package(package)
-    unit = pkg.instance_unit(instance)
+    unit = _resolve_unit(pkg, instance)
 
     if not yes:
         print(f"This will disable {unit}")
@@ -397,7 +448,16 @@ def status(package: Package, instance: OptInstance = None):
     ex = _get_executor()
     pkg = get_package(package)
 
-    if instance:
+    if pkg.singleton:
+        # Singletons always have exactly one unit
+        if instance is not None:
+            raise SystemExit(f"'{pkg.name}' is a singleton service; instance argument not needed.")
+        unit = pkg.instance_unit()
+        result = systemctl("status", unit, check=False, executor=ex)
+        print(result.stdout)
+        if result.stderr:
+            print(result.stderr)
+    elif instance:
         unit = pkg.instance_unit(instance)
         result = systemctl("status", unit, check=False, executor=ex)
         print(result.stdout)
@@ -417,15 +477,16 @@ def status(package: Package, instance: OptInstance = None):
 
 
 @app.command
-def start(package: Package, instance: Instance):
+def start(package: Package, instance: OptInstance = None):
     """Start a service instance.
 
     Examples:
         ots service start valkey 6379
+        ots service start rabbitmq
     """
     ex = _get_executor()
     pkg = get_package(package)
-    unit = pkg.instance_unit(instance)
+    unit = _resolve_unit(pkg, instance)
 
     logger.info(f"Starting {unit}...")
     try:
@@ -437,15 +498,16 @@ def start(package: Package, instance: Instance):
 
 
 @app.command
-def stop(package: Package, instance: Instance):
+def stop(package: Package, instance: OptInstance = None):
     """Stop a service instance.
 
     Examples:
         ots service stop valkey 6379
+        ots service stop rabbitmq
     """
     ex = _get_executor()
     pkg = get_package(package)
-    unit = pkg.instance_unit(instance)
+    unit = _resolve_unit(pkg, instance)
 
     logger.info(f"Stopping {unit}...")
     try:
@@ -457,15 +519,16 @@ def stop(package: Package, instance: Instance):
 
 
 @app.command
-def restart(package: Package, instance: Instance):
+def restart(package: Package, instance: OptInstance = None):
     """Restart a service instance.
 
     Examples:
         ots service restart valkey 6379
+        ots service restart rabbitmq
     """
     ex = _get_executor()
     pkg = get_package(package)
-    unit = pkg.instance_unit(instance)
+    unit = _resolve_unit(pkg, instance)
 
     logger.info(f"Restarting {unit}...")
     try:
@@ -479,7 +542,7 @@ def restart(package: Package, instance: Instance):
 @app.command
 def logs(
     package: Package,
-    instance: Instance,
+    instance: OptInstance = None,
     *,
     follow: Follow = False,
     lines: Lines = 50,
@@ -490,12 +553,13 @@ def logs(
         ots service logs valkey 6379
         ots service logs valkey 6379 -f
         ots service logs valkey 6379 -n 100
+        ots service logs rabbitmq
     """
     from ots_shared.ssh import is_remote
 
     ex = _get_executor()
     pkg = get_package(package)
-    unit = pkg.instance_unit(instance)
+    unit = _resolve_unit(pkg, instance)
 
     cmd = ["journalctl", "-u", unit, "-n", str(lines), "--no-pager"]
     if follow:
@@ -503,7 +567,7 @@ def logs(
 
     if is_remote(ex):
         # Stream logs from remote host
-        ex.run_stream(cmd)
+        ex.run_stream(cmd)  # type: ignore[union-attr]
     else:
         import subprocess
 
@@ -534,24 +598,40 @@ def list_instances(
         for line in output.splitlines():
             if pkg.template in line:
                 parts = line.split()
-                if parts:
-                    unit_name = parts[0]
-                    # Extract instance from unit name
-                    # e.g., valkey-server@6379.service -> 6379
-                    if "@" in unit_name and ".service" in unit_name:
-                        instance = unit_name.split("@")[1].replace(".service", "")
+                if not parts:
+                    continue
+                unit_name = parts[0]
+
+                if pkg.singleton:
+                    if unit_name == pkg.instance_unit():
                         active = is_service_active(unit_name, executor=ex)
                         enabled = is_service_enabled(unit_name, executor=ex)
-                        config_exists = _file_exists(pkg.config_file(instance), ex)
+                        config_exists = _file_exists(pkg.config_file(), ex)
                         instances.append(
                             {
-                                "instance": instance,
+                                "instance": "-",
                                 "unit": unit_name,
                                 "active": active,
                                 "enabled": enabled,
                                 "config_exists": config_exists,
                             }
                         )
+                elif "@" in unit_name and ".service" in unit_name:
+                    # Extract instance from unit name
+                    # e.g., valkey-server@6379.service -> 6379
+                    instance = unit_name.split("@")[1].replace(".service", "")
+                    active = is_service_active(unit_name, executor=ex)
+                    enabled = is_service_enabled(unit_name, executor=ex)
+                    config_exists = _file_exists(pkg.config_file(instance), ex)
+                    instances.append(
+                        {
+                            "instance": instance,
+                            "unit": unit_name,
+                            "active": active,
+                            "enabled": enabled,
+                            "config_exists": config_exists,
+                        }
+                    )
 
     if json_output:
         import json
@@ -572,6 +652,10 @@ def list_instances(
     # Also check for config files (local only — remote would need ls)
     from ots_shared.ssh import is_remote
 
+    if pkg.singleton:
+        # Singletons have a single config file; skip the directory scan
+        return
+
     if not is_remote(ex):
         config_dir = pkg.instances_dir if pkg.use_instances_subdir else pkg.config_dir
         if config_dir.exists():
@@ -589,7 +673,7 @@ def list_instances(
     else:
         # Remote: list config files via executor
         config_dir = pkg.instances_dir if pkg.use_instances_subdir else pkg.config_dir
-        result = ex.run(["ls", str(config_dir)], timeout=10)
+        result = ex.run(["ls", str(config_dir)], timeout=10)  # type: ignore[union-attr]
         if result.ok and result.stdout.strip():
             print()
             print("Config files in config directory:")

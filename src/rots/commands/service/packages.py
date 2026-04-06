@@ -102,6 +102,9 @@ class ServicePackage:
     # Comment prefix in config files
     comment_prefix: str = "#"
 
+    # Whether this is a singleton service (no @-template, e.g., rabbitmq-server.service)
+    singleton: bool = False
+
     @property
     def instances_dir(self) -> Path:
         """Directory for instance-specific config files."""
@@ -112,28 +115,51 @@ class ServicePackage:
         """Full template unit name with .service suffix."""
         return f"{self.template}.service"
 
-    def instance_unit(self, instance: str) -> str:
-        """Get full unit name for a specific instance."""
+    def instance_unit(self, instance: str = "") -> str:
+        """Get full unit name for a specific instance.
+
+        For singleton services the instance argument is ignored; the unit
+        name is always ``{template}.service`` (no ``@``).
+        """
+        if self.singleton:
+            return f"{self.template}.service"
         return f"{self.template}{instance}.service"
 
-    def config_file(self, instance: str) -> Path:
-        """Get config file path for a specific instance."""
-        config_name = self.config_file_pattern.format(instance=instance)
+    def config_file(self, instance: str = "") -> Path:
+        """Get config file path for a specific instance.
+
+        Singletons use the pattern literally (no ``{instance}`` substitution).
+        """
+        if self.singleton:
+            config_name = self.config_file_pattern
+        else:
+            config_name = self.config_file_pattern.format(instance=instance)
         if self.use_instances_subdir:
             return self.instances_dir / config_name
         return self.config_dir / config_name
 
-    def secrets_file(self, instance: str) -> Path | None:
-        """Get secrets file path for a specific instance, if using separate secrets."""
+    def secrets_file(self, instance: str = "") -> Path | None:
+        """Get secrets file path for a specific instance, if using separate secrets.
+
+        Singletons use the pattern literally (no ``{instance}`` substitution).
+        """
         if self.secrets and self.secrets.secrets_file_pattern:
-            secrets_name = self.secrets.secrets_file_pattern.format(instance=instance)
+            if self.singleton:
+                secrets_name = self.secrets.secrets_file_pattern
+            else:
+                secrets_name = self.secrets.secrets_file_pattern.format(instance=instance)
             if self.use_instances_subdir:
                 return self.instances_dir / secrets_name
             return self.config_dir / secrets_name
         return None
 
-    def data_path(self, instance: str) -> Path:
-        """Get data directory for a specific instance."""
+    def data_path(self, instance: str = "") -> Path:
+        """Get data directory for a specific instance.
+
+        Singletons return ``data_dir`` directly (no instance subdirectory).
+        """
+        if self.singleton:
+            return self.data_dir
         return self.data_dir / instance
 
 
@@ -188,10 +214,30 @@ REDIS = ServicePackage(
     config_format="space",
 )
 
+RABBITMQ = ServicePackage(
+    name="rabbitmq",
+    template="rabbitmq-server",
+    config_dir=Path("/etc/rabbitmq"),
+    data_dir=Path("/var/lib/rabbitmq"),
+    config_file_pattern="rabbitmq.conf",
+    use_instances_subdir=False,
+    default_service="rabbitmq-server.service",
+    default_config=Path("/etc/rabbitmq/rabbitmq.conf"),
+    secrets=None,
+    service_user="rabbitmq",
+    service_group="rabbitmq",
+    default_port=5672,
+    port_config_key="listeners.tcp.default",
+    bind_config_key="listeners.tcp.default",
+    config_format="equals",
+    singleton=True,
+)
+
 # Registry of all known packages
 PACKAGES: dict[str, ServicePackage] = {
     "valkey": VALKEY,
     "redis": REDIS,
+    "rabbitmq": RABBITMQ,
 }
 
 

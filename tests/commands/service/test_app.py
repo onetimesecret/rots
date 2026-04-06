@@ -8,6 +8,7 @@ import pytest
 from ots_shared.ssh.executor import CommandError, Result
 
 from rots.commands.service.app import (
+    _resolve_unit,
     app,
     disable,
     enable,
@@ -347,6 +348,7 @@ class TestInitIdempotency:
         with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
+            mock_pkg.singleton = False
             mock_pkg.template_unit = "valkey-server@.service"
             mock_pkg.port_config_key = "port"
             mock_pkg.bind_config_key = "bind"
@@ -367,6 +369,7 @@ class TestInitIdempotency:
         with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
+            mock_pkg.singleton = False
             mock_pkg.template_unit = "valkey-server@.service"
             mock_pkg.port_config_key = "port"
             mock_pkg.bind_config_key = "bind"
@@ -814,6 +817,7 @@ class TestListAllWithInstances:
         with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
+            mock_pkg.singleton = False
             mock_pkg.template = "valkey-server@"
             mock_pkg.config_file.return_value = MagicMock(exists=lambda: True)
             mock_get_pkg.return_value = mock_pkg
@@ -840,6 +844,7 @@ class TestListAllWithInstances:
         with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
+            mock_pkg.singleton = False
             mock_pkg.template = "valkey-server@"
             mock_pkg.config_file.return_value = MagicMock(exists=lambda: False)
             mock_get_pkg.return_value = mock_pkg
@@ -871,6 +876,7 @@ class TestListInstancesWithInstances:
         with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
+            mock_pkg.singleton = False
             mock_pkg.template = "valkey-server@"
             mock_pkg.config_file.return_value = MagicMock(exists=lambda: True)
             mock_pkg.use_instances_subdir = True
@@ -900,6 +906,7 @@ class TestListInstancesWithInstances:
         with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
+            mock_pkg.singleton = False
             mock_pkg.template = "valkey-server@"
             mock_pkg.config_file.return_value = MagicMock(exists=lambda: False)
             mock_pkg.use_instances_subdir = True
@@ -924,6 +931,7 @@ class TestInitDryRunCreate:
         with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
+            mock_pkg.singleton = False
             mock_pkg.template_unit = "valkey-server@.service"
             mock_pkg.port_config_key = "port"
             mock_pkg.bind_config_key = "bind"
@@ -977,6 +985,7 @@ class TestInitForceFileNotFound:
         with patch("rots.commands.service.app.get_package") as mock_get_pkg:
             mock_pkg = MagicMock()
             mock_pkg.name = "valkey"
+            mock_pkg.singleton = False
             mock_pkg.template_unit = "valkey-server@.service"
             mock_pkg.port_config_key = "port"
             mock_pkg.bind_config_key = "bind"
@@ -1044,3 +1053,185 @@ class TestDisableAbort:
 
         mock_systemctl.assert_not_called()
         assert "Aborted" in caplog.text
+
+
+class TestResolveUnit:
+    """Tests for _resolve_unit helper."""
+
+    def test_template_service_with_instance(self):
+        """_resolve_unit returns correct unit for template service with instance."""
+        from rots.commands.service.packages import VALKEY
+
+        assert _resolve_unit(VALKEY, "6379") == "valkey-server@6379.service"
+
+    def test_template_service_without_instance_exits(self):
+        """_resolve_unit raises SystemExit when template service gets no instance."""
+        from rots.commands.service.packages import VALKEY
+
+        with pytest.raises(SystemExit, match="Instance required"):
+            _resolve_unit(VALKEY, None)
+
+    def test_singleton_without_instance(self):
+        """_resolve_unit returns correct unit for singleton without instance."""
+        from rots.commands.service.packages import RABBITMQ
+
+        assert _resolve_unit(RABBITMQ, None) == "rabbitmq-server.service"
+
+    def test_singleton_with_instance_exits(self):
+        """_resolve_unit raises SystemExit when singleton gets an instance."""
+        from rots.commands.service.packages import RABBITMQ
+
+        with pytest.raises(SystemExit, match="singleton"):
+            _resolve_unit(RABBITMQ, "5672")
+
+
+class TestSingletonCommands:
+    """Tests for service commands with singleton packages (rabbitmq)."""
+
+    @patch("rots.commands.service.app.systemctl")
+    def test_start_singleton_without_instance(self, mock_systemctl):
+        """start() works for singleton without instance argument."""
+        start("rabbitmq")
+
+        mock_systemctl.assert_called_once_with("start", "rabbitmq-server.service", executor=None)
+
+    @patch("rots.commands.service.app.systemctl")
+    def test_stop_singleton_without_instance(self, mock_systemctl):
+        """stop() works for singleton without instance argument."""
+        stop("rabbitmq")
+
+        mock_systemctl.assert_called_once_with("stop", "rabbitmq-server.service", executor=None)
+
+    @patch("rots.commands.service.app.systemctl")
+    def test_restart_singleton_without_instance(self, mock_systemctl):
+        """restart() works for singleton without instance argument."""
+        restart("rabbitmq")
+
+        mock_systemctl.assert_called_once_with("restart", "rabbitmq-server.service", executor=None)
+
+    @patch("rots.commands.service.app.systemctl")
+    def test_enable_singleton_without_instance(self, mock_systemctl):
+        """enable() works for singleton without instance argument."""
+        enable("rabbitmq")
+
+        mock_systemctl.assert_called_once_with("enable", "rabbitmq-server.service", executor=None)
+
+    @patch("rots.commands.service.app.systemctl")
+    def test_disable_singleton_without_instance(self, mock_systemctl):
+        """disable() works for singleton without instance argument."""
+        disable("rabbitmq", yes=True)
+
+        assert mock_systemctl.call_count >= 2
+
+    def test_start_singleton_with_instance_exits(self):
+        """start() with singleton and instance should raise SystemExit."""
+        with pytest.raises(SystemExit, match="singleton"):
+            start("rabbitmq", "5672")
+
+    def test_stop_singleton_with_instance_exits(self):
+        """stop() with singleton and instance should raise SystemExit."""
+        with pytest.raises(SystemExit, match="singleton"):
+            stop("rabbitmq", "5672")
+
+    def test_restart_singleton_with_instance_exits(self):
+        """restart() with singleton and instance should raise SystemExit."""
+        with pytest.raises(SystemExit, match="singleton"):
+            restart("rabbitmq", "5672")
+
+    def test_enable_singleton_with_instance_exits(self):
+        """enable() with singleton and instance should raise SystemExit."""
+        with pytest.raises(SystemExit, match="singleton"):
+            enable("rabbitmq", "5672")
+
+    @patch("rots.commands.service.app.systemctl")
+    def test_status_singleton_without_instance(self, mock_systemctl, capsys):
+        """status() works for singleton without instance argument."""
+        mock_systemctl.return_value = MagicMock(stdout="active", stderr="")
+
+        status("rabbitmq")
+
+        mock_systemctl.assert_called_once_with(
+            "status", "rabbitmq-server.service", check=False, executor=None
+        )
+
+    def test_status_singleton_with_instance_exits(self):
+        """status() with singleton and instance should raise SystemExit."""
+        with pytest.raises(SystemExit, match="singleton"):
+            status("rabbitmq", "5672")
+
+    @patch("subprocess.run")
+    def test_logs_singleton_without_instance(self, mock_run):
+        """logs() works for singleton without instance argument."""
+        logs("rabbitmq")
+
+        call_args = mock_run.call_args[0][0]
+        assert "journalctl" in call_args
+        assert "rabbitmq-server.service" in call_args
+
+
+class TestSingletonInit:
+    """Tests for init command with singleton services."""
+
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
+    def test_init_singleton_without_instance(
+        self,
+        mock_copy,
+        mock_update,
+        mock_data,
+        mock_secrets,
+        mock_systemctl,
+        mock_check_conflict,
+        tmp_path,
+    ):
+        """init() works for singleton without instance argument."""
+        mock_copy.return_value = tmp_path / "rabbitmq.conf"
+        mock_data.return_value = tmp_path / "data"
+        mock_secrets.return_value = None
+
+        init("rabbitmq", start=False, enable=False)
+
+        mock_copy.assert_called_once()
+        call_args = mock_copy.call_args
+        assert call_args[0][0].name == "rabbitmq"
+        # Instance is "" for singletons
+        assert call_args[0][1] == ""
+
+    @patch("rots.commands.service.app.check_default_service_conflict")
+    @patch("rots.commands.service.app.systemctl")
+    @patch("rots.commands.service.app.create_secrets_file")
+    @patch("rots.commands.service.app.ensure_data_dir")
+    @patch("rots.commands.service.app.update_config_value")
+    @patch("rots.commands.service.app.copy_default_config")
+    def test_init_singleton_uses_default_port(
+        self,
+        mock_copy,
+        mock_update,
+        mock_data,
+        mock_secrets,
+        mock_systemctl,
+        mock_check_conflict,
+        tmp_path,
+    ):
+        """init() for singleton uses pkg.default_port when no --port given."""
+        mock_copy.return_value = tmp_path / "rabbitmq.conf"
+        mock_data.return_value = tmp_path / "data"
+        mock_secrets.return_value = None
+
+        init("rabbitmq", start=False, enable=False)
+
+        # Check update_config_value was called with port 5672 (default for rabbitmq)
+        port_calls = [
+            call for call in mock_update.call_args_list if call[0][1] == "listeners.tcp.default"
+        ]
+        assert len(port_calls) >= 1
+        assert port_calls[0][0][2] == "5672"
+
+    def test_init_singleton_with_instance_exits(self):
+        """init() with singleton and instance should raise SystemExit."""
+        with pytest.raises(SystemExit, match="singleton"):
+            init("rabbitmq", "5672")
