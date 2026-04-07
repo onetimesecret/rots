@@ -178,8 +178,8 @@ def doctor():
     """Validate the full stack before deploying.
 
     Checks systemd, podman, images, secrets, env file, quadlets, caddy,
-    and required directories.  Prints a pass/fail line for each check so
-    operators can quickly identify what needs to be fixed.
+    RabbitMQ, and required directories.  Prints a pass/fail line for each
+    check so operators can quickly identify what needs to be fixed.
 
     When ``--host`` is set, runs checks on the remote host via the executor.
 
@@ -337,6 +337,20 @@ def doctor():
         else:
             caddy_detail = "systemctl query failed; run: systemctl status caddy"
     _check("caddy running", caddy_ok, caddy_detail)
+
+    # 11. RabbitMQ running (best-effort — only relevant on hosts running sidecar)
+    rabbitmq_ok = False
+    rabbitmq_detail = "not applicable (no systemctl)"
+    if _has_command("systemctl"):
+        rabbitmq_detail = "sidecar needs this for remote commands"
+        result = ex.run(["systemctl", "is-active", "rabbitmq-server"], timeout=10)
+        if result.ok:
+            rabbitmq_ok = result.stdout.strip() == "active"
+            if not rabbitmq_ok:
+                rabbitmq_detail = "run: sudo systemctl start rabbitmq-server"
+        else:
+            rabbitmq_detail = "systemctl query failed; run: systemctl status rabbitmq-server"
+    _check("rabbitmq-server running", rabbitmq_ok, rabbitmq_detail)
 
     # --- Report ---
     width = max(len(label) for label, _, _ in checks)

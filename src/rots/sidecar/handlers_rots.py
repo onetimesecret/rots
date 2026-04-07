@@ -180,7 +180,12 @@ def invoke_rots(command_path: str, params: dict[str, Any]) -> dict[str, Any]:
     # Ensure all args are strings
     extra_args = [str(a) for a in extra_args]
 
-    timeout = params.get("timeout", 300)
+    # Clamp timeout to sane bounds (5s - 600s) to prevent DoS via resource exhaustion
+    raw_timeout = params.get("timeout", 300)
+    try:
+        timeout = min(max(int(raw_timeout), 5), 600)
+    except (TypeError, ValueError):
+        timeout = 300
     capture_output = params.get("capture_output", True)
 
     # Build command

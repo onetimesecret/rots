@@ -15,6 +15,7 @@ from rots.sidecar.commands import (
     Command,
     CommandResult,
     _handlers,
+    _import_handlers,
     dispatch,
     get_all_commands,
     get_registered_commands,
@@ -241,3 +242,56 @@ class TestHelperFunctions:
         all_cmds = set(get_all_commands())
 
         assert registered <= all_cmds
+
+
+class TestRotsDispatch:
+    """Tests for rots.* prefix routing in dispatch()."""
+
+    def test_rots_command_routes_to_invoke(self, monkeypatch):
+        """rots.* commands should route through invoke_rots()."""
+        mock_result = {"status": "ok", "stdout": "output", "returncode": 0}
+        monkeypatch.setattr(
+            "rots.sidecar.handlers_rots.invoke_rots", lambda cmd, params: mock_result
+        )
+        _import_handlers()
+        result = dispatch("rots.service.status", {})
+        assert result.success is True
+        assert result.data == mock_result
+
+    def test_rots_error_maps_to_failure(self, monkeypatch):
+        """rots.* error results should map to CommandResult with success=False."""
+        mock_result = {"status": "error", "error": "something broke", "returncode": 1}
+        monkeypatch.setattr(
+            "rots.sidecar.handlers_rots.invoke_rots", lambda cmd, params: mock_result
+        )
+        _import_handlers()
+        result = dispatch("rots.service.status", {})
+        assert result.success is False
+        assert result.error == "something broke"
+
+    def test_rots_blocked_command_fails(self):
+        """rots.sidecar.start should be blocked by allowlist."""
+        _import_handlers()
+        result = dispatch("rots.sidecar.start", {})
+        assert result.success is False
+        assert "not allowed" in (result.error or "").lower()
+
+    def test_rots_allowed_command_dispatches(self, monkeypatch):
+        """rots.service.status should dispatch (mock subprocess)."""
+        import subprocess
+
+        mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="active", stderr="")
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: mock_proc)
+        _import_handlers()
+        result = dispatch("rots.service.status", {"args": ["valkey", "5212"]})
+        assert result.success is True
+        assert result.data["stdout"] == "active"
+
+    def test_non_rots_command_still_dispatches_normally(self):
+        """Non-rots commands should use the existing Command enum path."""
+        _import_handlers()
+        # "health" is a valid Command enum value, dispatch should use normal path
+        # (may fail if no handler is registered, but should NOT hit the rots path)
+        result = dispatch("completely.unknown.command", {})
+        assert result.success is False
+        assert "Unknown command" in (result.error or "")

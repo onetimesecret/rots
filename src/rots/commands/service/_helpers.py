@@ -424,6 +424,10 @@ def check_default_service_conflict(
     if not pkg.default_service:
         return False
 
+    # Singletons don't have template instances, so no conflict possible
+    if pkg.singleton:
+        return False
+
     if is_service_active(pkg.default_service, executor=executor):
         logger.warning(
             f"Default service {pkg.default_service} is running.\n"

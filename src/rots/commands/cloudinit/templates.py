@@ -138,6 +138,7 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 def generate_cloudinit_config(
     *,
     include_postgresql: bool = False,
+    include_postgresql_server: bool = False,
     include_valkey: bool = False,
     include_xcaddy: bool = False,
     postgresql_gpg_key: str | None = None,
@@ -161,7 +162,10 @@ def generate_cloudinit_config(
     - Optional third-party repositories (PostgreSQL, Valkey, xcaddy/Caddy)
 
     Args:
-        include_postgresql: Include PostgreSQL official repository
+        include_postgresql: Include PostgreSQL official repository (client only)
+        include_postgresql_server: Include PostgreSQL server package (implies
+            include_postgresql repository). Installs ``postgresql-17`` instead
+            of just the client.
         include_valkey: Include Valkey repository
         include_xcaddy: Include xcaddy repo and build custom Caddy binary
         postgresql_gpg_key: PostgreSQL GPG public key content (required when
@@ -185,9 +189,10 @@ def generate_cloudinit_config(
             invalid, so refusing to generate is safer than emitting a
             placeholder.
     """
-    if include_postgresql and not postgresql_gpg_key:
+    if (include_postgresql or include_postgresql_server) and not postgresql_gpg_key:
         raise ValueError(
-            "PostgreSQL GPG key is required when --include-postgresql is used.\n"
+            "PostgreSQL GPG key is required when --include-postgresql or "
+            "--include-postgresql-server is used.\n"
             "Obtain the key with:\n"
             "  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc\n"
             "Then pass it with: --postgresql-key /path/to/key.asc"
@@ -206,7 +211,7 @@ def generate_cloudinit_config(
     }
 
     sources: dict = {}
-    if include_postgresql:
+    if include_postgresql or include_postgresql_server:
         pg_entry: dict = {
             "source": "deb http://apt.postgresql.org/pub/repos/apt trixie-pgdg main",
         }
@@ -233,10 +238,12 @@ def generate_cloudinit_config(
         "vim",
         "podman",
         "systemd-container",
-        "python3-pip",
+        "pipx",
     ]
 
-    if include_postgresql:
+    if include_postgresql_server:
+        packages.append("postgresql-17")
+    elif include_postgresql:
         packages.append("postgresql-client")
 
     if include_valkey:
@@ -312,9 +319,13 @@ def generate_cloudinit_config(
         "chown onetimesecret:onetimesecret /etc/onetimesecret /var/lib/onetimesecret",
         # Enable podman socket so rots can manage containers
         "systemctl enable --now podman.socket",
-        # Install rots CLI then run init to scaffold the deployment DB
-        "pip3 install rots",
-        "rots init",
+        # Install rots CLI via pipx (PEP 668 compliant) then run init
+        "pipx install rots",
+        "pipx ensurepath",
+        # Run rots init using full path (pipx installs to ~/.local/bin)
+        "/root/.local/bin/rots init",
+        # Install sidecar systemd unit for remote management (start via systemctl)
+        "/root/.local/bin/rots sidecar install",
     ]
 
     if include_xcaddy:

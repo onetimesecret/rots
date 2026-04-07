@@ -60,6 +60,9 @@ class Command(StrEnum):
     HEALTH = "health"
     STATUS = "status"
 
+    # Discovery
+    DISCOVER_PING = "discover.ping"
+
 
 @dataclass
 class CommandResult:
@@ -117,13 +120,27 @@ def register_handler(command: Command) -> Callable[[Handler], Handler]:
 def dispatch(command_name: str, params: dict[str, Any]) -> CommandResult:
     """Dispatch a command to its registered handler.
 
+    Routes rots.* delegated commands to invoke_rots() before checking
+    the Command enum, so that rots.service.status etc. are reachable.
+
     Args:
-        command_name: The command string (e.g., "restart.web")
+        command_name: The command string (e.g., "restart.web" or "rots.service.status")
         params: Parameters for the command handler
 
     Returns:
         CommandResult from the handler, or failure if command is unknown
     """
+    from .handlers_rots import invoke_rots, is_rots_command
+
+    # Route rots.* delegated commands first
+    if is_rots_command(command_name):
+        result_dict = invoke_rots(command_name, params)
+        return CommandResult(
+            success=result_dict.get("status") == "ok",
+            data=result_dict,
+            error=result_dict.get("error"),
+        )
+
     # Validate command exists
     try:
         command = Command(command_name)
@@ -174,6 +191,7 @@ def _import_handlers() -> None:
     # Import handler modules to trigger @register_handler decorators
     from . import (
         handlers_config,  # noqa: F401
+        handlers_discovery,  # noqa: F401
         handlers_lifecycle,  # noqa: F401
         handlers_phased,  # noqa: F401
         handlers_rolling,  # noqa: F401

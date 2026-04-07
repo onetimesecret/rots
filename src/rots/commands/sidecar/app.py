@@ -599,6 +599,136 @@ def _send_via_rabbitmq(command: str, payload: dict, timeout: float) -> None:
 
 
 @app.command
+def discover(
+    timeout: Annotated[
+        float,
+        cyclopts.Parameter(
+            name=["--timeout", "-t"],
+            help="Seconds to wait for sidecar responses",
+        ),
+    ] = 5.0,
+    json_output: JsonOutput = False,
+):
+    """Discover active sidecars by broadcasting a ping.
+
+    Publishes discover.ping via a fanout exchange so every sidecar
+    receives it. Collects responses within the timeout window.
+    Each running sidecar responds with its host_id.
+
+    Examples:
+        rots sidecar discover
+        rots sidecar discover --timeout 10
+        rots sidecar discover --json
+    """
+    import json
+    import time
+    import uuid
+
+    logger.info("Broadcasting discover.ping (timeout=%.1fs)", timeout)
+
+    try:
+        import pika
+
+        from rots.sidecar.rabbitmq import (
+            DISCOVER_EXCHANGE,
+            RabbitMQConfig,
+        )
+
+        config = RabbitMQConfig.from_environment()
+        credentials = pika.PlainCredentials(config.username, config.password)
+        parameters = pika.ConnectionParameters(
+            host=config.host,
+            port=config.port,
+            virtual_host=config.vhost,
+            credentials=credentials,
+        )
+
+        connection = pika.BlockingConnection(parameters)
+        channel = connection.channel()
+        logger.debug(
+            "Connected to RabbitMQ at %s:%d/%s",
+            config.host,
+            config.port,
+            config.vhost,
+        )
+
+        # Fanout exchange delivers to every sidecar's exclusive queue
+        channel.exchange_declare(
+            exchange=DISCOVER_EXCHANGE,
+            exchange_type="fanout",
+            durable=True,
+        )
+
+        # Declare exclusive callback queue for collecting responses
+        result = channel.queue_declare(queue="", exclusive=True)
+        callback_queue = result.method.queue
+
+        correlation_id = str(uuid.uuid4())
+        responses: list[dict[str, Any]] = []
+
+        def on_response(ch, method, props, body):
+            if props.correlation_id == correlation_id:
+                responses.append(json.loads(body.decode("utf-8")))
+
+        channel.basic_consume(
+            queue=callback_queue,
+            on_message_callback=on_response,
+            auto_ack=True,
+        )
+
+        # Publish discover.ping via fanout — all sidecars receive it
+        message = {"command": "discover.ping", "payload": {}}
+        channel.basic_publish(
+            exchange=DISCOVER_EXCHANGE,
+            routing_key="",  # fanout ignores routing key
+            body=json.dumps(message).encode("utf-8"),
+            properties=pika.BasicProperties(
+                reply_to=callback_queue,
+                correlation_id=correlation_id,
+                content_type="application/json",
+            ),
+        )
+        logger.debug(
+            "Published discover.ping: correlation_id=%s callback_queue=%s",
+            correlation_id,
+            callback_queue,
+        )
+
+        # Collect responses until timeout
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            connection.process_data_events(time_limit=1)
+
+        connection.close()
+        logger.info(
+            "Discovery complete: %d sidecar(s) responded in %.1fs",
+            len(responses),
+            timeout,
+        )
+
+        if json_output:
+            print(json.dumps({"sidecars": responses, "count": len(responses)}, indent=2))
+        else:
+            if not responses:
+                print("No sidecars responded within timeout")
+            else:
+                print(f"Discovered {len(responses)} sidecar(s):")
+                for resp in responses:
+                    result_data = resp.get("result", resp)
+                    host_id = result_data.get("host_id", "unknown")
+                    print(f"  - {host_id}")
+
+    except ImportError as e:
+        print(f"Error: Missing dependency: {e}")
+        print("Install with: pipx inject rots pika")
+        raise SystemExit(1)
+    except Exception as e:
+        logger.error("Discovery failed: %s", e)
+        print(f"Error: {e}")
+        raise SystemExit(1)
+
+
+@app.command
 def publish(
     command: Annotated[str, cyclopts.Parameter(help="Command name or JSON message")],
     *args: Annotated[str, cyclopts.Parameter(help="key=value arguments")],

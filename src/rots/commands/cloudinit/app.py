@@ -40,7 +40,11 @@ def generate(
     ] = None,
     *,
     include_postgresql: Annotated[
-        bool, cyclopts.Parameter(help="Include PostgreSQL apt repository")
+        bool, cyclopts.Parameter(help="Include PostgreSQL apt repository (client only)")
+    ] = False,
+    include_postgresql_server: Annotated[
+        bool,
+        cyclopts.Parameter(help="Include PostgreSQL server (postgresql-17) instead of client"),
     ] = False,
     include_valkey: Annotated[
         bool, cyclopts.Parameter(help="Include Valkey apt repository")
@@ -96,6 +100,7 @@ def generate(
         rots cloudinit generate > user-data.yaml
         rots cloudinit generate --output /tmp/cloud-init.yaml
         rots cloudinit generate --include-postgresql --postgresql-key /path/to/pgp.asc
+        rots cloudinit generate --include-postgresql-server --postgresql-key /path/to/pgp.asc
         rots cloudinit generate --include-xcaddy
         rots cloudinit generate --include-xcaddy --caddy-version v2.10.2
         rots cloudinit generate --timezone America/New_York --hostname ots-prod-1
@@ -115,6 +120,7 @@ def generate(
     try:
         config = generate_cloudinit_config(
             include_postgresql=include_postgresql,
+            include_postgresql_server=include_postgresql_server,
             include_valkey=include_valkey,
             include_xcaddy=include_xcaddy,
             postgresql_gpg_key=postgresql_gpg,
