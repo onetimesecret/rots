@@ -172,6 +172,44 @@ class TestSingletonPackage:
         """RABBITMQ has no secrets config, so secrets_file() returns None."""
         assert RABBITMQ.secrets_file() is None
 
+    def test_singleton_secrets_file_with_secrets_config(self):
+        """Singleton with secrets should return fixed secrets path (no instance substitution)."""
+        secrets = SecretConfig(
+            secret_keys=("password",),
+            secrets_file_pattern="service.secrets",
+        )
+        pkg = ServicePackage(
+            name="singleton-with-secrets",
+            template="singleton-svc",
+            config_dir=Path("/etc/singleton"),
+            data_dir=Path("/var/lib/singleton"),
+            config_file_pattern="singleton.conf",
+            use_instances_subdir=True,
+            secrets=secrets,
+            singleton=True,
+        )
+        # Singleton secrets_file should use the pattern literally
+        assert pkg.secrets_file() == Path("/etc/singleton/instances/service.secrets")
+
+    def test_singleton_secrets_file_ignores_instance_arg(self):
+        """Singleton secrets_file() ignores instance argument, returning fixed path."""
+        secrets = SecretConfig(
+            secret_keys=("password",),
+            secrets_file_pattern="service.secrets",
+        )
+        pkg = ServicePackage(
+            name="singleton-with-secrets",
+            template="singleton-svc",
+            config_dir=Path("/etc/singleton"),
+            data_dir=Path("/var/lib/singleton"),
+            config_file_pattern="singleton.conf",
+            use_instances_subdir=False,
+            secrets=secrets,
+            singleton=True,
+        )
+        assert pkg.secrets_file("5432") == Path("/etc/singleton/service.secrets")
+        assert pkg.secrets_file() == Path("/etc/singleton/service.secrets")
+
     def test_non_singleton_packages_unchanged(self):
         """Existing packages are not singletons."""
         assert VALKEY.singleton is False

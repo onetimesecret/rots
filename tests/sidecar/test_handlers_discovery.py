@@ -110,3 +110,48 @@ class TestHandleDiscoverPing:
         result = handle_discover_ping({"extra": "ignored", "keys": 42})
         assert result.success is True
         assert result.data["host_id"] == "test-host"
+
+
+class TestDiscoverPingDispatch:
+    """dispatch('discover.ping', ...) should route to handle_discover_ping."""
+
+    def test_dispatch_discover_ping_succeeds(self, monkeypatch):
+        """dispatch routes discover.ping to the registered handler."""
+        monkeypatch.setattr(
+            "rots.sidecar.handlers_discovery.get_host_id",
+            lambda: "dispatch-test-host",
+        )
+        from rots.sidecar.commands import _import_handlers, dispatch
+
+        _import_handlers()
+        result = dispatch("discover.ping", {})
+        assert result.success is True
+        assert result.data["host_id"] == "dispatch-test-host"
+
+    def test_dispatch_discover_ping_result_keys(self, monkeypatch):
+        """dispatch result for discover.ping contains host_id, pid, timestamp."""
+        monkeypatch.setattr(
+            "rots.sidecar.handlers_discovery.get_host_id",
+            lambda: "key-check-host",
+        )
+        from rots.sidecar.commands import _import_handlers, dispatch
+
+        _import_handlers()
+        result = dispatch("discover.ping", {})
+        assert set(result.data.keys()) == {"host_id", "pid", "timestamp"}
+
+
+class TestDiscoverExchange:
+    """DISCOVER_EXCHANGE constant should be available and correctly named."""
+
+    def test_discover_exchange_value(self):
+        """DISCOVER_EXCHANGE is the expected fanout exchange name."""
+        from rots.sidecar.rabbitmq import DISCOVER_EXCHANGE
+
+        assert DISCOVER_EXCHANGE == "ots.sidecar.discover"
+
+    def test_discover_exchange_differs_from_command_exchange(self):
+        """DISCOVER_EXCHANGE is distinct from the direct COMMAND_EXCHANGE."""
+        from rots.sidecar.rabbitmq import COMMAND_EXCHANGE, DISCOVER_EXCHANGE
+
+        assert DISCOVER_EXCHANGE != COMMAND_EXCHANGE
