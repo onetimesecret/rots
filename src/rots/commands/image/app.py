@@ -336,8 +336,15 @@ def list_remote(
         raise SystemExit(1)
 
     # Build skopeo command
-    resolved_image = image or _strip_registry_prefix(cfg.image)
+    raw_image = image or cfg.image
+    resolved_image = _strip_registry_prefix(raw_image)
     image_ref = f"docker://{reg}/{resolved_image}"
+    logger.debug(
+        "list-remote resolution: raw_image=%s resolved_image=%s registry=%s",
+        raw_image,
+        resolved_image,
+        reg,
+    )
     cmd = [
         "skopeo",
         "list-tags",
@@ -353,7 +360,7 @@ def list_remote(
         data = json.loads(result.stdout)
         tags = data.get("Tags", [])
 
-        logger.info(f"Tags for {reg}/{image} ({len(tags)} total):")
+        logger.info(f"Tags for {reg}/{resolved_image} ({len(tags)} total):")
 
         # Sort tags (newest-looking first)
         tags_sorted = sorted(tags, reverse=True)
@@ -361,10 +368,10 @@ def list_remote(
             print(f"  {tag}")
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to list tags: {e.stderr}")
+        logger.error("Failed to list tags for %s: %s", image_ref, e.stderr)
         raise SystemExit(1)
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse response: {e}")
+        logger.error("Failed to parse skopeo response for %s: %s", image_ref, e)
         raise SystemExit(1)
 
 
@@ -820,6 +827,13 @@ def push(
     source_full = join_image_tag(src, resolved_tag)
     target_full = join_image_tag(f"{reg}/{src_image_path}", resolved_tag)
 
+    logger.debug(
+        "push resolution: source=%s image_path=%s registry=%s tag=%s",
+        src,
+        src_image_path,
+        reg,
+        resolved_tag,
+    )
     logger.info(f"Tagging {source_full} -> {target_full}")
 
     # Tag the image for the target registry
@@ -935,7 +949,9 @@ def rm(
     p = Podman(executor=ex)
 
     for tag in tags:
-        # Try common image patterns, including configured image
+        # Try common local image patterns — intentionally uses terminal
+        # component only (not _strip_registry_prefix) because podman stores
+        # local images under bare names like "onetimesecret:tag".
         image_basename = cfg.image.split("/")[-1]
         images_to_try = [
             join_image_tag(image_basename, tag),
