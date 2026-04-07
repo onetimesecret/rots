@@ -324,6 +324,8 @@ def generate_cloudinit_config(
         "pipx ensurepath",
         # Run rots init using full path (pipx installs to ~/.local/bin)
         "/root/.local/bin/rots init",
+        # Install sidecar systemd unit for remote management (start via systemctl)
+        "/root/.local/bin/rots sidecar install",
     ]
 
     if include_xcaddy:

@@ -93,8 +93,9 @@ class ServicePackage:
     # Port config key in the config file (e.g., "port")
     port_config_key: str = "port"
 
-    # Bind address config key (e.g., "bind")
-    bind_config_key: str = "bind"
+    # Bind address config key (e.g., "bind"); None to skip bind configuration
+    # (e.g., RabbitMQ uses listeners.tcp.default for port only)
+    bind_config_key: str | None = "bind"
 
     # Config line format: "key value" or "key=value"
     config_format: str = "space"  # "space" or "equals"
@@ -228,7 +229,7 @@ RABBITMQ = ServicePackage(
     service_group="rabbitmq",
     default_port=5672,
     port_config_key="listeners.tcp.default",
-    bind_config_key="listeners.tcp.default",
+    bind_config_key=None,  # RabbitMQ binding needs IP:PORT on a separate key
     config_format="equals",
     singleton=True,
 )

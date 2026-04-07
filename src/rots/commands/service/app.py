@@ -335,7 +335,8 @@ def init(
     # Step 2: Update port and bind in config
     logger.info("Updating config values...")
     update_config_value(config_path, pkg.port_config_key, str(port_num), pkg, executor=ex)
-    update_config_value(config_path, pkg.bind_config_key, bind, pkg, executor=ex)
+    if pkg.bind_config_key:
+        update_config_value(config_path, pkg.bind_config_key, bind, pkg, executor=ex)
 
     # Step 3: Set data directory (skip for singletons — they manage their own data dirs)
     if pkg.singleton:
