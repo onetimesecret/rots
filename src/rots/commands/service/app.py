@@ -571,7 +571,7 @@ def logs(
 
     if is_remote(ex):
         # Stream logs from remote host
-        ex.run_stream(cmd)  # type: ignore[union-attr]
+        ex.run_stream(cmd)
     else:
         import subprocess
 
@@ -594,6 +594,7 @@ def list_instances(
     ex = _get_executor()
     pkg = get_package(package)
     instances = []
+    logger.debug("Listing instances for %s (template=%s)", pkg.name, pkg.template)
 
     output = _list_units_for_template(pkg.template, executor=ex)
 
@@ -658,26 +659,20 @@ def list_instances(
 
     if pkg.singleton:
         # Singletons have a single config file; skip the directory scan
+        logger.debug("Skipping config scan for singleton package %s", pkg.name)
         return
 
-    if not is_remote(ex):
-        config_dir = pkg.instances_dir if pkg.use_instances_subdir else pkg.config_dir
-        if config_dir.exists():
-            print()
-            print("Config files in config directory:")
-            for conf in config_dir.glob("*.conf"):
-                if pkg.use_instances_subdir:
-                    instance = conf.stem
-                else:
-                    instance = conf.stem.replace(f"{pkg.name}-", "")
+    config_dir = pkg.instances_dir if pkg.use_instances_subdir else pkg.config_dir
+    logger.debug(
+        "Scanning config directory %s for %s (remote=%s)",
+        config_dir,
+        pkg.name,
+        is_remote(ex),
+    )
 
-                unit = pkg.instance_unit(instance)
-                active = "active" if is_service_active(unit, executor=ex) else "inactive"
-                print(f"  {conf.name:30} -> {active}")
-    else:
+    if is_remote(ex):
         # Remote: list config files via executor
-        config_dir = pkg.instances_dir if pkg.use_instances_subdir else pkg.config_dir
-        result = ex.run(["ls", str(config_dir)], timeout=10)  # type: ignore[union-attr]
+        result = ex.run(["ls", str(config_dir)], timeout=10)
         if result.ok and result.stdout.strip():
             print()
             print("Config files in config directory:")
@@ -690,4 +685,23 @@ def list_instances(
 
                     unit = pkg.instance_unit(instance)
                     active = "active" if is_service_active(unit, executor=ex) else "inactive"
+                    logger.debug("Remote config %s -> %s", filename, active)
                     print(f"  {filename:30} -> {active}")
+        else:
+            logger.debug("No config files found in remote %s", config_dir)
+    else:
+        if config_dir.exists():
+            print()
+            print("Config files in config directory:")
+            for conf in config_dir.glob("*.conf"):
+                if pkg.use_instances_subdir:
+                    instance = conf.stem
+                else:
+                    instance = conf.stem.replace(f"{pkg.name}-", "")
+
+                unit = pkg.instance_unit(instance)
+                active = "active" if is_service_active(unit, executor=ex) else "inactive"
+                logger.debug("Local config %s -> %s", conf.name, active)
+                print(f"  {conf.name:30} -> {active}")
+        else:
+            logger.debug("Config directory %s does not exist", config_dir)
