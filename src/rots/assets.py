@@ -85,7 +85,7 @@ def update(cfg: Config, create_volume: bool = True, *, executor: Executor | None
         p.cp(f"{container_id}:/app/public/.", str(assets_dir), check=True)
         manifest = assets_dir / "web/dist/.vite/manifest.json"
         if _is_remote(executor):
-            check_result = executor.run(["test", "-f", str(manifest)])  # type: ignore[union-attr]
+            check_result = executor.run(["test", "-f", str(manifest)])
             if check_result.ok:
                 logger.info(f"Manifest found: {manifest}")
             else:

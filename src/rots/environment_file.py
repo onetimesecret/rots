@@ -127,10 +127,10 @@ class EnvFile:
         variables: dict[str, str] = {}
 
         if _is_remote(executor):
-            result = executor.run(["test", "-f", str(path)])  # type: ignore[union-attr]
+            result = executor.run(["test", "-f", str(path)])
             if not result.ok:
                 return cls(path=path, entries=entries, _variables=variables)
-            result = executor.run(["cat", str(path)])  # type: ignore[union-attr]
+            result = executor.run(["cat", str(path)])
             if not result.ok:
                 return cls(path=path, entries=entries, _variables=variables)
             text = result.stdout
@@ -277,7 +277,7 @@ class EnvFile:
 
         content = "\n".join(lines) + "\n"
         if _is_remote(executor):
-            executor.run(["tee", str(path)], input=content)  # type: ignore[union-attr]
+            executor.run(["tee", str(path)], input=content)
         else:
             path.write_text(content)
 

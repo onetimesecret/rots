@@ -36,7 +36,7 @@ def _get_executor(executor: Executor | None = None) -> Executor:
 def _file_exists(path: Path, executor: Executor | None) -> bool:
     """Check if a file exists (local or remote)."""
     if _is_remote(executor):
-        result = executor.run(["test", "-f", str(path)])  # type: ignore[union-attr]
+        result = executor.run(["test", "-f", str(path)])
         return result.ok
     return path.exists()
 
@@ -44,7 +44,7 @@ def _file_exists(path: Path, executor: Executor | None) -> bool:
 def _dir_exists(path: Path, executor: Executor | None) -> bool:
     """Check if a directory exists (local or remote)."""
     if _is_remote(executor):
-        result = executor.run(["test", "-d", str(path)])  # type: ignore[union-attr]
+        result = executor.run(["test", "-d", str(path)])
         return result.ok
     return path.is_dir()
 
@@ -52,7 +52,7 @@ def _dir_exists(path: Path, executor: Executor | None) -> bool:
 def _read_text(path: Path, executor: Executor | None) -> str:
     """Read text content from a file (local or remote)."""
     if _is_remote(executor):
-        result = executor.run(["cat", str(path)], timeout=10)  # type: ignore[union-attr]
+        result = executor.run(["cat", str(path)], timeout=10)
         return result.stdout
     return path.read_text()
 
@@ -60,7 +60,7 @@ def _read_text(path: Path, executor: Executor | None) -> str:
 def _write_text(path: Path, content: str, executor: Executor | None) -> None:
     """Write text content to a file (local or remote)."""
     if _is_remote(executor):
-        executor.run(["tee", str(path)], input=content, timeout=10)  # type: ignore[union-attr]
+        executor.run(["tee", str(path)], input=content, timeout=10)
         return
     path.write_text(content)
 
@@ -68,7 +68,7 @@ def _write_text(path: Path, content: str, executor: Executor | None) -> None:
 def _mkdir_p(path: Path, mode: int, executor: Executor | None) -> None:
     """Create directory with parents (local or remote)."""
     if _is_remote(executor):
-        executor.run(["mkdir", "-p", "-m", f"{mode:o}", str(path)])  # type: ignore[union-attr]
+        executor.run(["mkdir", "-p", "-m", f"{mode:o}", str(path)])
         return
     path.mkdir(parents=True, mode=mode, exist_ok=True)
 
@@ -76,7 +76,7 @@ def _mkdir_p(path: Path, mode: int, executor: Executor | None) -> None:
 def _copy_file(src: Path, dest: Path, executor: Executor | None) -> None:
     """Copy a file preserving attributes (local or remote)."""
     if _is_remote(executor):
-        executor.run(["cp", "-p", str(src), str(dest)])  # type: ignore[union-attr]
+        executor.run(["cp", "-p", str(src), str(dest)])
         return
     shutil.copy2(src, dest)
 
@@ -84,7 +84,7 @@ def _copy_file(src: Path, dest: Path, executor: Executor | None) -> None:
 def _chmod(path: Path, mode: int, executor: Executor | None) -> None:
     """Set file permissions (local or remote)."""
     if _is_remote(executor):
-        executor.run(["chmod", f"{mode:o}", str(path)])  # type: ignore[union-attr]
+        executor.run(["chmod", f"{mode:o}", str(path)])
         return
     path.chmod(mode)
 
@@ -100,7 +100,7 @@ def _chown(
         return
     owner = f"{user}:{group}" if group else user
     if _is_remote(executor):
-        executor.run(["chown", owner, str(path)])  # type: ignore[union-attr]
+        executor.run(["chown", owner, str(path)])
         return
     try:
         shutil.chown(path, user=user, group=group)
@@ -111,7 +111,7 @@ def _chown(
 def _unlink(path: Path, executor: Executor | None) -> None:
     """Remove a file (local or remote)."""
     if _is_remote(executor):
-        executor.run(["rm", "-f", str(path)])  # type: ignore[union-attr]
+        executor.run(["rm", "-f", str(path)])
         return
     import os
 

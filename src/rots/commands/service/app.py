@@ -503,7 +503,7 @@ def logs(
 
     if is_remote(ex):
         # Stream logs from remote host
-        ex.run_stream(cmd)  # type: ignore[union-attr]
+        ex.run_stream(cmd)
     else:
         import subprocess
 
@@ -589,7 +589,7 @@ def list_instances(
     else:
         # Remote: list config files via executor
         config_dir = pkg.instances_dir if pkg.use_instances_subdir else pkg.config_dir
-        result = ex.run(["ls", str(config_dir)], timeout=10)  # type: ignore[union-attr]
+        result = ex.run(["ls", str(config_dir)], timeout=10)
         if result.ok and result.stdout.strip():
             print()
             print("Config files in config directory:")

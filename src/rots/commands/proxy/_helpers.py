@@ -102,15 +102,15 @@ def render_template(template_path: Path, *, executor: Executor | None = None) ->
     """
     if _is_remote(executor):
         # Read template from remote filesystem
-        result = executor.run(["test", "-f", str(template_path)])  # type: ignore[union-attr]
+        result = executor.run(["test", "-f", str(template_path)])
         if not result.ok:
             raise ProxyError(f"Template not found: {template_path}")
-        result = executor.run(["cat", str(template_path)])  # type: ignore[union-attr]
+        result = executor.run(["cat", str(template_path)])
         if not result.ok:
             raise ProxyError(f"Failed to read template: {result.stderr}")
         template_content = result.stdout
         # Pipe through envsubst on the remote host
-        result = executor.run(["envsubst"], input=template_content, timeout=30)  # type: ignore[union-attr]
+        result = executor.run(["envsubst"], input=template_content, timeout=30)
         if not result.ok:
             raise ProxyError(f"envsubst failed: {result.stderr}")
         return result.stdout
@@ -243,7 +243,7 @@ def validate_caddy_config(
             mktemp_template = f"{source_dir}/ots-caddy-validate.XXXXXXXXXX"
         else:
             mktemp_template = "/tmp/ots-caddy-validate.XXXXXXXXXX"
-        mktemp_result = executor.run(  # type: ignore[union-attr]
+        mktemp_result = executor.run(
             ["mktemp", mktemp_template],
             timeout=10,
         )
@@ -253,18 +253,18 @@ def validate_caddy_config(
         if not tmp_remote:
             raise ProxyError("mktemp returned empty path")
 
-        result = executor.run(["tee", tmp_remote], input=content)  # type: ignore[union-attr]
+        result = executor.run(["tee", tmp_remote], input=content)
         if not result.ok:
             raise ProxyError(f"Failed to write temp file on remote: {result.stderr}")
         try:
-            result = executor.run(  # type: ignore[union-attr]
+            result = executor.run(
                 ["caddy", "validate", "--config", tmp_remote, "--adapter", "caddyfile"],
                 timeout=30,
             )
             if not result.ok:
                 raise ProxyError(f"Caddy validation failed:\n{result.stderr}")
         finally:
-            executor.run(["rm", "-f", tmp_remote], timeout=10)  # type: ignore[union-attr]
+            executor.run(["rm", "-f", tmp_remote], timeout=10)
         return
 
     # Local execution — write temp file into source_dir so relative imports resolve
@@ -311,10 +311,10 @@ def adapt_to_json(config_path: Path, *, executor: Executor | None = None) -> str
     cmd = ["caddy", "adapt", "--config", str(config_path), "--adapter", "caddyfile"]
 
     if _is_remote(executor):
-        result = executor.run(["test", "-f", str(config_path)])  # type: ignore[union-attr]
+        result = executor.run(["test", "-f", str(config_path)])
         if not result.ok:
             raise ProxyError(f"Config file not found: {config_path}")
-        result = executor.run(cmd, timeout=30)  # type: ignore[union-attr]
+        result = executor.run(cmd, timeout=30)
         if not result.ok:
             raise ProxyError(f"caddy adapt failed for {config_path}:\n{result.stderr}")
         raw = result.stdout
@@ -352,7 +352,7 @@ def reload_caddy(*, executor: Executor | None = None) -> None:
         from ots_shared.ssh.executor import CommandError
 
         try:
-            executor.run(["systemctl", "reload", "caddy"], sudo=True, timeout=30, check=True)  # type: ignore[union-attr]
+            executor.run(["systemctl", "reload", "caddy"], sudo=True, timeout=30, check=True)
         except CommandError as e:
             raise ProxyError(f"Failed to reload caddy: {e}") from e
     else:
@@ -863,7 +863,7 @@ def run_probe(
     subprocess_timeout = timeout + 5
 
     if _is_remote(executor):
-        result = executor.run(cmd, timeout=subprocess_timeout)  # type: ignore[union-attr]
+        result = executor.run(cmd, timeout=subprocess_timeout)
         if not result.ok:
             raise ProxyError(f"curl failed (exit {result.returncode}): {result.stderr}")
         return parse_curl_output(result.stdout)

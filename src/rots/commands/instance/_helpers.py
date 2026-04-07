@@ -65,11 +65,11 @@ def deploy_lock(
             systemd.start(unit)
     """
     if _is_remote(executor):
-        _remote_lock_acquire(lock_path, executor)  # type: ignore[arg-type]
+        _remote_lock_acquire(lock_path, executor)
         try:
             yield
         finally:
-            _remote_lock_release(lock_path, executor)  # type: ignore[arg-type]
+            _remote_lock_release(lock_path, executor)
         return
 
     # --- Local locking (fcntl) ---
@@ -279,7 +279,7 @@ def build_secret_args(env_file: Path, *, executor: Executor | None = None) -> li
         List of command arguments: ["--secret", "name,type=env,target=VAR", ...]
     """
     if _is_remote(executor):
-        result = executor.run(["test", "-f", str(env_file)])  # type: ignore[union-attr]
+        result = executor.run(["test", "-f", str(env_file)])
         if not result.ok:
             return []
     elif not env_file.exists():
