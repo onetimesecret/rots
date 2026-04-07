@@ -611,9 +611,9 @@ def discover(
 ):
     """Discover active sidecars by broadcasting a ping.
 
-    Sends a discover.ping to the shared command queue and collects
-    responses within the timeout window. Each running sidecar responds
-    with its host_id.
+    Publishes discover.ping via a fanout exchange so every sidecar
+    receives it. Collects responses within the timeout window.
+    Each running sidecar responds with its host_id.
 
     Examples:
         rots sidecar discover
