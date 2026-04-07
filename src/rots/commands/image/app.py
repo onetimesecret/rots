@@ -24,7 +24,12 @@ from typing import Annotated
 import cyclopts
 
 from rots import context, db
-from rots.config import Config, join_image_tag, parse_image_reference
+from rots.config import (
+    Config,
+    _strip_registry_prefix,
+    join_image_tag,
+    parse_image_reference,
+)
 from rots.podman import Podman
 
 from ..common import JsonOutput, Lines, Quiet, Yes
@@ -331,7 +336,7 @@ def list_remote(
         raise SystemExit(1)
 
     # Build skopeo command
-    resolved_image = image or cfg.image.split("/")[-1]
+    resolved_image = image or _strip_registry_prefix(cfg.image)
     image_ref = f"docker://{reg}/{resolved_image}"
     cmd = [
         "skopeo",
@@ -810,10 +815,10 @@ def push(
         logger.error("Tag required. Use --tag or set TAG env var")
         raise SystemExit(1)
     src = source_image or cfg.image
-    # Derive target image name from source basename (strip host prefix if present)
-    src_basename = src.split("/")[-1]
+    # Derive target image path from source (strip registry hostname if present)
+    src_image_path = _strip_registry_prefix(src)
     source_full = join_image_tag(src, resolved_tag)
-    target_full = join_image_tag(f"{reg}/{src_basename}", resolved_tag)
+    target_full = join_image_tag(f"{reg}/{src_image_path}", resolved_tag)
 
     logger.info(f"Tagging {source_full} -> {target_full}")
 
@@ -843,7 +848,7 @@ def push(
     # Record the push action
     db.record_deployment(
         cfg.db_path,
-        image=f"{reg}/{src_basename}",
+        image=f"{reg}/{src_image_path}",
         tag=resolved_tag,
         action="push",
         success=True,

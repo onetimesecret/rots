@@ -1275,7 +1275,7 @@ class TestRegistryEnvVarResolution:
         cmd = mock_run.call_args[0][0]
         full_cmd = " ".join(cmd)
         assert "registry.example.com" in full_cmd
-        assert "docker://registry.example.com/onetimesecret" in full_cmd
+        assert "docker://registry.example.com/onetimesecret/onetimesecret" in full_cmd
 
     def test_push_uses_registry_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario 22: push with OTS_REGISTRY env var should use registry for target."""
@@ -1306,16 +1306,19 @@ class TestRegistryEnvVarResolution:
         # Verify the tag command targets the registry
         tag_cmd = mock_run.call_args_list[0][0][0]
         tag_cmd_str = " ".join(tag_cmd)
-        assert "registry.example.com/onetimesecret:v1.0.0" in tag_cmd_str
+        assert "registry.example.com/onetimesecret/onetimesecret:v1.0.0" in tag_cmd_str
 
         # Verify the push command targets the registry
         push_cmd = mock_run.call_args_list[1][0][0]
         push_cmd_str = " ".join(push_cmd)
-        assert "registry.example.com/onetimesecret:v1.0.0" in push_cmd_str
+        assert "registry.example.com/onetimesecret/onetimesecret:v1.0.0" in push_cmd_str
 
         # Verify db record uses the registry
         mock_record.assert_called_once()
-        assert mock_record.call_args.kwargs["image"] == "registry.example.com/onetimesecret"
+        assert (
+            mock_record.call_args.kwargs["image"]
+            == "registry.example.com/onetimesecret/onetimesecret"
+        )
         assert mock_record.call_args.kwargs["tag"] == "v1.0.0"
 
 
@@ -1366,7 +1369,7 @@ class TestPushEnvVarResolution:
         push_cmd = " ".join(mock_run.call_args_list[1][0][0])
         assert "v1.2.3" in push_cmd
 
-    def test_push_derives_src_basename_from_image_env_var(self, mocker, monkeypatch, tmp_path):
+    def test_push_derives_image_path_from_image_env_var(self, mocker, monkeypatch, tmp_path):
         """Scenario: IMAGE env var constructs source_full and target_full correctly."""
         from rots.commands.image.app import push
 
@@ -1382,11 +1385,12 @@ class TestPushEnvVarResolution:
         tag_cmd = " ".join(mock_run.call_args_list[0][0][0])
         # source_full = IMAGE:TAG
         assert "ghcr.io/myorg/myapp:v2.0.0" in tag_cmd
-        # target_full = REGISTRY/basename:TAG  (basename of "ghcr.io/myorg/myapp" is "myapp")
-        assert "registry.example.com/myapp:v2.0.0" in tag_cmd
+        # target_full = REGISTRY/image_path:TAG
+        # (image path of "ghcr.io/myorg/myapp" is "myorg/myapp")
+        assert "registry.example.com/myorg/myapp:v2.0.0" in tag_cmd
 
     def test_push_strips_registry_prefix_from_image_env_var(self, mocker, monkeypatch, tmp_path):
-        """Scenario: custom IMAGE env var with registry host produces correct target basename."""
+        """Scenario: custom IMAGE env var with registry host produces correct target image path."""
         from rots.commands.image.app import push
 
         monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
@@ -1399,8 +1403,8 @@ class TestPushEnvVarResolution:
 
         assert mock_run.call_count == 2
         tag_cmd = " ".join(mock_run.call_args_list[0][0][0])
-        # basename of "docker.io/myorg/myapp" is "myapp"
-        assert "myreg.example.com/myapp:v3.0.0" in tag_cmd
+        # image path of "docker.io/myorg/myapp" is "myorg/myapp"
+        assert "myreg.example.com/myorg/myapp:v3.0.0" in tag_cmd
         # source should use the full IMAGE reference
         assert "docker.io/myorg/myapp:v3.0.0" in tag_cmd
 
@@ -1439,9 +1443,10 @@ class TestPushEnvVarResolution:
 class TestListRemoteImageResolution:
     """Tests for list_remote IMAGE env var and --image CLI flag resolution.
 
-    list_remote defaults --image to None and resolves the image name from
-    cfg.image.split("/")[-1] (the basename). Tests verify this behavior
-    for custom IMAGE env vars, --image flag override, and the default case.
+    list_remote defaults --image to None and resolves the image path via
+    _strip_registry_prefix() (strips registry hostname, preserves org/repo).
+    Tests verify this behavior for custom IMAGE env vars, --image flag
+    override, and the default case.
     """
 
     @pytest.fixture(autouse=True)
@@ -1467,10 +1472,8 @@ class TestListRemoteImageResolution:
         )
         return mock_run
 
-    def test_list_remote_image_env_var_basename_passed_to_skopeo(
-        self, mocker, monkeypatch, tmp_path
-    ):
-        """IMAGE=docker.io/myorg/myapp should pass 'myapp' as image basename to skopeo."""
+    def test_list_remote_image_env_var_path_passed_to_skopeo(self, mocker, monkeypatch, tmp_path):
+        """IMAGE=docker.io/myorg/myapp should pass 'myorg/myapp' as image path to skopeo."""
 
         from rots.commands.image.app import list_remote
 
@@ -1493,16 +1496,16 @@ class TestListRemoteImageResolution:
 
         list_remote(quiet=True)
 
-        # Verify skopeo was called with "myapp" as the image basename
+        # Verify skopeo was called with "myorg/myapp" as the image path
         mock_subrun.assert_called_once()
         cmd = mock_subrun.call_args[0][0]
         full_cmd = " ".join(cmd)
-        assert "docker://registry.example.com/myapp" in full_cmd
+        assert "docker://registry.example.com/myorg/myapp" in full_cmd
         # Should NOT use "docker.io/myorg/myapp" directly
         assert "docker.io/myorg/myapp" not in full_cmd
 
     def test_list_remote_cli_image_flag_overrides_env_var(self, mocker, monkeypatch, tmp_path):
-        """--image CLI flag should override IMAGE env var basename resolution."""
+        """--image CLI flag should override IMAGE env var image path resolution."""
         from rots.commands.image.app import list_remote
 
         monkeypatch.setenv("IMAGE", "docker.io/myorg/myapp")
@@ -1532,10 +1535,10 @@ class TestListRemoteImageResolution:
         # Should NOT use "myapp" from IMAGE env var
         assert "myapp" not in full_cmd
 
-    def test_list_remote_default_image_uses_onetimesecret_basename(
+    def test_list_remote_default_image_uses_onetimesecret_path(
         self, mocker, monkeypatch, tmp_path, capsys
     ):
-        """With no IMAGE env var, list_remote uses 'onetimesecret' as basename."""
+        """With no IMAGE env var, list_remote uses 'onetimesecret/onetimesecret' as image path."""
         from rots.commands.image.app import list_remote
 
         # No IMAGE env var set (cleared by autouse fixture)
@@ -1560,8 +1563,8 @@ class TestListRemoteImageResolution:
         mock_subrun.assert_called_once()
         cmd = mock_subrun.call_args[0][0]
         full_cmd = " ".join(cmd)
-        # Default IMAGE env var produces 'onetimesecret' as basename
-        assert "docker://registry.example.com/onetimesecret" in full_cmd
+        # Default IMAGE env var produces 'onetimesecret/onetimesecret' as image path
+        assert "docker://registry.example.com/onetimesecret/onetimesecret" in full_cmd
 
 
 class TestRmImageBasenameDerivation:
