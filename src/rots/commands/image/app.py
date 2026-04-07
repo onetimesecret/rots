@@ -24,7 +24,12 @@ from typing import Annotated
 import cyclopts
 
 from rots import context, db
-from rots.config import Config, join_image_tag, parse_image_reference
+from rots.config import (
+    Config,
+    _strip_registry_prefix,
+    join_image_tag,
+    parse_image_reference,
+)
 from rots.podman import Podman
 
 from ..common import JsonOutput, Lines, Quiet, Yes
@@ -331,8 +336,15 @@ def list_remote(
         raise SystemExit(1)
 
     # Build skopeo command
-    resolved_image = image or cfg.image.split("/")[-1]
+    raw_image = image or cfg.image
+    resolved_image = _strip_registry_prefix(raw_image)
     image_ref = f"docker://{reg}/{resolved_image}"
+    logger.debug(
+        "list-remote resolution: raw_image=%s resolved_image=%s registry=%s",
+        raw_image,
+        resolved_image,
+        reg,
+    )
     cmd = [
         "skopeo",
         "list-tags",
@@ -348,7 +360,7 @@ def list_remote(
         data = json.loads(result.stdout)
         tags = data.get("Tags", [])
 
-        logger.info(f"Tags for {reg}/{image} ({len(tags)} total):")
+        logger.info(f"Tags for {reg}/{resolved_image} ({len(tags)} total):")
 
         # Sort tags (newest-looking first)
         tags_sorted = sorted(tags, reverse=True)
@@ -356,10 +368,10 @@ def list_remote(
             print(f"  {tag}")
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to list tags: {e.stderr}")
+        logger.error("Failed to list tags for %s: %s", image_ref, e.stderr)
         raise SystemExit(1)
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse response: {e}")
+        logger.error("Failed to parse skopeo response for %s: %s", image_ref, e)
         raise SystemExit(1)
 
 
@@ -810,11 +822,18 @@ def push(
         logger.error("Tag required. Use --tag or set TAG env var")
         raise SystemExit(1)
     src = source_image or cfg.image
-    # Derive target image name from source basename (strip host prefix if present)
-    src_basename = src.split("/")[-1]
+    # Derive target image path from source (strip registry hostname if present)
+    src_image_path = _strip_registry_prefix(src)
     source_full = join_image_tag(src, resolved_tag)
-    target_full = join_image_tag(f"{reg}/{src_basename}", resolved_tag)
+    target_full = join_image_tag(f"{reg}/{src_image_path}", resolved_tag)
 
+    logger.debug(
+        "push resolution: source=%s image_path=%s registry=%s tag=%s",
+        src,
+        src_image_path,
+        reg,
+        resolved_tag,
+    )
     logger.info(f"Tagging {source_full} -> {target_full}")
 
     # Tag the image for the target registry
@@ -843,7 +862,7 @@ def push(
     # Record the push action
     db.record_deployment(
         cfg.db_path,
-        image=f"{reg}/{src_basename}",
+        image=f"{reg}/{src_image_path}",
         tag=resolved_tag,
         action="push",
         success=True,
@@ -930,7 +949,9 @@ def rm(
     p = Podman(executor=ex)
 
     for tag in tags:
-        # Try common image patterns, including configured image
+        # Try common local image patterns — intentionally uses terminal
+        # component only (not _strip_registry_prefix) because podman stores
+        # local images under bare names like "onetimesecret:tag".
         image_basename = cfg.image.split("/")[-1]
         images_to_try = [
             join_image_tag(image_basename, tag),
