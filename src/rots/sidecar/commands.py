@@ -60,6 +60,9 @@ class Command(StrEnum):
     HEALTH = "health"
     STATUS = "status"
 
+    # Discovery
+    DISCOVER_PING = "discover.ping"
+
 
 @dataclass
 class CommandResult:
@@ -188,6 +191,7 @@ def _import_handlers() -> None:
     # Import handler modules to trigger @register_handler decorators
     from . import (
         handlers_config,  # noqa: F401
+        handlers_discovery,  # noqa: F401
         handlers_lifecycle,  # noqa: F401
         handlers_phased,  # noqa: F401
         handlers_rolling,  # noqa: F401

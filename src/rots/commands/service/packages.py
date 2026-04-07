@@ -234,11 +234,31 @@ RABBITMQ = ServicePackage(
     singleton=True,
 )
 
+POSTGRESQL = ServicePackage(
+    name="postgresql",
+    template="postgresql",
+    config_dir=Path("/etc/postgresql"),
+    data_dir=Path("/var/lib/postgresql"),
+    config_file_pattern="postgresql.conf",
+    use_instances_subdir=False,
+    default_service="postgresql.service",
+    default_config=None,  # Managed by pg_createcluster
+    secrets=None,
+    service_user="postgres",
+    service_group="postgres",
+    default_port=5432,
+    port_config_key="port",
+    bind_config_key="listen_addresses",
+    config_format="equals",
+    singleton=True,
+)
+
 # Registry of all known packages
 PACKAGES: dict[str, ServicePackage] = {
     "valkey": VALKEY,
     "redis": REDIS,
     "rabbitmq": RABBITMQ,
+    "postgresql": POSTGRESQL,
 }
 
 

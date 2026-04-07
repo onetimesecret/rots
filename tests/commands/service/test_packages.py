@@ -7,6 +7,7 @@ import pytest
 
 from rots.commands.service.packages import (
     PACKAGES,
+    POSTGRESQL,
     RABBITMQ,
     REDIS,
     VALKEY,
@@ -177,6 +178,81 @@ class TestSingletonPackage:
         assert REDIS.singleton is False
 
 
+class TestPostgresqlPackage:
+    """Tests for PostgreSQL singleton service package."""
+
+    def test_postgresql_package_exists(self):
+        """Test POSTGRESQL package is defined correctly."""
+        assert POSTGRESQL.name == "postgresql"
+        assert POSTGRESQL.template == "postgresql"
+        assert POSTGRESQL.config_dir == Path("/etc/postgresql")
+        assert POSTGRESQL.data_dir == Path("/var/lib/postgresql")
+        assert POSTGRESQL.default_port == 5432
+        assert POSTGRESQL.service_user == "postgres"
+        assert POSTGRESQL.service_group == "postgres"
+
+    def test_postgresql_is_singleton(self):
+        """PostgreSQL is a singleton service (no @-template)."""
+        assert POSTGRESQL.singleton is True
+
+    def test_postgresql_instance_unit(self):
+        """Singleton instance_unit() returns postgresql.service."""
+        assert POSTGRESQL.instance_unit() == "postgresql.service"
+
+    def test_postgresql_instance_unit_ignores_argument(self):
+        """Singleton instance_unit() ignores any instance argument."""
+        assert POSTGRESQL.instance_unit("5432") == "postgresql.service"
+        assert POSTGRESQL.instance_unit("main") == "postgresql.service"
+
+    def test_postgresql_template_unit(self):
+        """Singleton template_unit returns same as instance_unit."""
+        assert POSTGRESQL.template_unit == "postgresql.service"
+
+    def test_postgresql_config_file(self):
+        """Singleton config_file() returns fixed path without instance substitution."""
+        assert POSTGRESQL.config_file() == Path("/etc/postgresql/postgresql.conf")
+
+    def test_postgresql_config_file_ignores_argument(self):
+        """Singleton config_file() ignores any instance argument."""
+        assert POSTGRESQL.config_file("5432") == Path("/etc/postgresql/postgresql.conf")
+
+    def test_postgresql_data_path(self):
+        """Singleton data_path() returns data_dir directly (no instance subdir)."""
+        assert POSTGRESQL.data_path() == Path("/var/lib/postgresql")
+
+    def test_postgresql_data_path_ignores_argument(self):
+        """Singleton data_path() ignores any instance argument."""
+        assert POSTGRESQL.data_path("5432") == Path("/var/lib/postgresql")
+
+    def test_postgresql_no_secrets(self):
+        """PostgreSQL has no secrets config (managed by pg_createcluster)."""
+        assert POSTGRESQL.secrets is None
+        assert POSTGRESQL.secrets_file() is None
+
+    def test_postgresql_no_default_config(self):
+        """PostgreSQL has no default_config (managed by pg_createcluster)."""
+        assert POSTGRESQL.default_config is None
+
+    def test_postgresql_config_format(self):
+        """PostgreSQL uses equals config format (key = value)."""
+        assert POSTGRESQL.config_format == "equals"
+
+    def test_postgresql_bind_config_key(self):
+        """PostgreSQL uses listen_addresses for bind configuration."""
+        assert POSTGRESQL.bind_config_key == "listen_addresses"
+
+    def test_postgresql_use_instances_subdir_false(self):
+        """PostgreSQL does not use instances/ subdirectory."""
+        assert POSTGRESQL.use_instances_subdir is False
+
+    def test_postgresql_frozen(self):
+        """Test POSTGRESQL is immutable (frozen dataclass)."""
+        from dataclasses import FrozenInstanceError
+
+        with pytest.raises(FrozenInstanceError):
+            setattr(POSTGRESQL, "name", "changed")
+
+
 class TestPackageRegistry:
     """Tests for package registry functions."""
 
@@ -194,6 +270,11 @@ class TestPackageRegistry:
         """Test PACKAGES contains rabbitmq."""
         assert "rabbitmq" in PACKAGES
         assert PACKAGES["rabbitmq"] is RABBITMQ
+
+    def test_packages_dict_contains_postgresql(self):
+        """Test PACKAGES contains postgresql."""
+        assert "postgresql" in PACKAGES
+        assert PACKAGES["postgresql"] is POSTGRESQL
 
     def test_get_package_valkey(self):
         """Test get_package returns valkey."""
@@ -217,6 +298,11 @@ class TestPackageRegistry:
         pkg = get_package("rabbitmq")
         assert pkg is RABBITMQ
 
+    def test_get_package_postgresql(self):
+        """Test get_package returns postgresql."""
+        pkg = get_package("postgresql")
+        assert pkg is POSTGRESQL
+
     def test_get_package_unknown_lists_available_packages(self):
         """SystemExit message for unknown package lists all available package names."""
         with pytest.raises(SystemExit) as exc_info:
@@ -225,9 +311,10 @@ class TestPackageRegistry:
         assert "valkey" in msg
         assert "redis" in msg
         assert "rabbitmq" in msg
+        assert "postgresql" in msg
 
     def test_list_packages(self):
         """Test list_packages returns sorted list."""
         packages = list_packages()
-        assert packages == ["rabbitmq", "redis", "valkey"]
+        assert packages == ["postgresql", "rabbitmq", "redis", "valkey"]
         assert packages == sorted(packages)

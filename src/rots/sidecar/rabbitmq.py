@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_ENV_FILE = Path("/etc/default/onetimesecret")
 COMMAND_QUEUE = "ots.sidecar.commands"
 COMMAND_EXCHANGE = "ots.sidecar"
+DISCOVER_EXCHANGE = "ots.sidecar.discover"
 
 
 def get_host_id() -> str:
@@ -272,6 +273,21 @@ class RabbitMQConsumer:
                 exchange=self.exchange,
                 routing_key=q,
             )
+
+        # Fanout exchange for discovery broadcasts — every sidecar receives
+        # every message (unlike the direct exchange where only one consumer gets it).
+        self._channel.exchange_declare(
+            exchange=DISCOVER_EXCHANGE,
+            exchange_type="fanout",
+            durable=True,
+        )
+        discover_result = self._channel.queue_declare(queue="", exclusive=True)
+        self._discover_queue = discover_result.method.queue
+        self._channel.queue_bind(
+            queue=self._discover_queue,
+            exchange=DISCOVER_EXCHANGE,
+        )
+        self.queues.append(self._discover_queue)
 
         # Prefetch 1 message at a time for fair dispatch
         self._channel.basic_qos(prefetch_count=1)
