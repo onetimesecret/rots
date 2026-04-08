@@ -8,6 +8,8 @@ import pytest
 from ots_shared.ssh.executor import CommandError, Result
 
 from rots.commands.service.app import (
+    _discover_config_files,
+    _extract_instance_from_filename,
     _resolve_unit,
     app,
     disable,
@@ -917,8 +919,10 @@ class TestListInstancesWithInstances:
 
         captured = capsys.readouterr()
         data = json.loads(captured.out)
-        assert isinstance(data, list)
-        assert data[0]["instance"] == "6379"
+        assert isinstance(data, dict)
+        assert "instances" in data
+        assert "config_files" in data
+        assert data["instances"][0]["instance"] == "6379"
 
 
 class TestInitDryRunCreate:
@@ -1432,7 +1436,7 @@ class TestListInstancesRemoteConfigScan:
     def test_remote_no_conf_files_in_listing(
         self, mock_run, mock_active, mock_get_executor, capsys, caplog, tmp_path
     ):
-        """Remote: ls output with no .conf files should still print header but no entries."""
+        """Remote: ls output with no .conf files should not print config section."""
         mock_run.return_value = MagicMock(stdout="")
         mock_active.return_value = False
 
@@ -1457,7 +1461,7 @@ class TestListInstancesRemoteConfigScan:
                 list_instances("valkey")
 
         captured = capsys.readouterr()
-        assert "Config files in config directory:" in captured.out
+        assert "Config files in config directory:" not in captured.out
         # No "Remote config" debug lines since no .conf files
         assert "Remote config" not in caplog.text
 
@@ -1495,8 +1499,10 @@ class TestListInstancesRemoteConfigScan:
         captured = capsys.readouterr()
         assert "6379.conf" in captured.out
         assert "6380.conf" in captured.out
-        assert "Remote config 6379.conf -> active" in caplog.text
-        assert "Remote config 6380.conf -> active" in caplog.text
+        # active_units is empty (no units from _list_units_for_template),
+        # so config files correctly report inactive via lookup
+        assert "Remote config 6379.conf -> inactive" in caplog.text
+        assert "Remote config 6380.conf -> inactive" in caplog.text
 
     @patch("rots.commands.service.app._get_executor")
     @patch("rots.commands.service.app.is_service_active")
@@ -1599,8 +1605,10 @@ class TestListInstancesLocalConfigScan:
         assert "6379.conf" in captured.out
         assert "6380.conf" in captured.out
         assert "README.md" not in captured.out
-        assert "Local config 6379.conf -> active" in caplog.text
-        assert "Local config 6380.conf -> active" in caplog.text
+        # active_units is empty (no units from _list_units_for_template),
+        # so config files correctly report inactive via lookup
+        assert "Local config 6379.conf -> inactive" in caplog.text
+        assert "Local config 6380.conf -> inactive" in caplog.text
 
     @patch("rots.commands.service.app.is_service_active")
     @patch("subprocess.run")
@@ -1734,3 +1742,343 @@ class TestListInstancesStructuredLogging:
         assert len(rots_records) >= 3  # At least: listing, scanning, local config
         for record in rots_records:
             assert record.levelno == logging.DEBUG
+
+
+class TestExtractInstanceFromFilename:
+    """Direct unit tests for _extract_instance_from_filename helper."""
+
+    def test_subdir_layout_strips_conf_suffix(self):
+        """With use_instances_subdir=True, stem is the instance identifier."""
+        pkg = MagicMock()
+        pkg.use_instances_subdir = True
+        pkg.name = "valkey"
+
+        assert _extract_instance_from_filename(pkg, "6379.conf") == "6379"
+
+    def test_subdir_layout_preserves_non_numeric_stem(self):
+        """Subdir layout: non-numeric filename stem is returned as-is."""
+        pkg = MagicMock()
+        pkg.use_instances_subdir = True
+        pkg.name = "valkey"
+
+        assert _extract_instance_from_filename(pkg, "primary.conf") == "primary"
+
+    def test_flat_layout_strips_package_prefix_and_suffix(self):
+        """With use_instances_subdir=False, strip pkg.name prefix and .conf suffix."""
+        pkg = MagicMock()
+        pkg.use_instances_subdir = False
+        pkg.name = "redis"
+
+        assert _extract_instance_from_filename(pkg, "redis-6380.conf") == "6380"
+
+    def test_flat_layout_no_prefix_match_returns_stem(self):
+        """Flat layout: if filename doesn't contain pkg name prefix, return full stem."""
+        pkg = MagicMock()
+        pkg.use_instances_subdir = False
+        pkg.name = "redis"
+
+        # filename that doesn't start with "redis-"
+        assert _extract_instance_from_filename(pkg, "other-6380.conf") == "other-6380"
+
+    def test_flat_layout_multiple_conf_in_name(self):
+        """Flat layout: only .conf suffix is stripped, not interior occurrences."""
+        pkg = MagicMock()
+        pkg.use_instances_subdir = False
+        pkg.name = "redis"
+
+        # ".conf" only appears as the suffix
+        assert _extract_instance_from_filename(pkg, "redis-conf-test.conf") == "conf-test"
+
+
+class TestDiscoverConfigFiles:
+    """Direct unit tests for _discover_config_files helper."""
+
+    def test_singleton_returns_empty_list(self, caplog):
+        """Singleton packages should return empty list immediately."""
+        pkg = MagicMock()
+        pkg.singleton = True
+        pkg.name = "rabbitmq"
+
+        with caplog.at_level(logging.DEBUG, logger="rots.commands.service.app"):
+            result = _discover_config_files(pkg, executor=None)
+
+        assert result == []
+        assert "Skipping config scan for singleton package rabbitmq" in caplog.text
+
+    @patch("rots.commands.service.app.is_service_active")
+    def test_local_existing_configs(self, mock_active, tmp_path, caplog):
+        """Local: existing .conf files are discovered with correct fields."""
+        mock_active.return_value = True
+
+        instances_dir = tmp_path / "instances"
+        instances_dir.mkdir()
+        (instances_dir / "6379.conf").write_text("port 6379\n")
+        (instances_dir / "6380.conf").write_text("port 6380\n")
+        (instances_dir / "README.md").write_text("ignore\n")
+
+        pkg = MagicMock()
+        pkg.singleton = False
+        pkg.name = "valkey"
+        pkg.use_instances_subdir = True
+        pkg.instances_dir = instances_dir
+        pkg.instance_unit.side_effect = lambda i: f"valkey-server@{i}.service"
+
+        with caplog.at_level(logging.DEBUG, logger="rots.commands.service.app"):
+            result = _discover_config_files(pkg, executor=None)
+
+        assert len(result) == 2
+        instances = [r["instance"] for r in result]
+        assert "6379" in instances
+        assert "6380" in instances
+
+        # Verify dict keys
+        for entry in result:
+            assert set(entry.keys()) == {"filename", "instance", "unit", "active"}
+            assert entry["active"] is True
+
+        assert "Discovered 2 config file(s) for valkey" in caplog.text
+
+    def test_local_missing_directory(self, tmp_path, caplog):
+        """Local: non-existent config directory returns empty list."""
+        missing_dir = tmp_path / "nonexistent"
+
+        pkg = MagicMock()
+        pkg.singleton = False
+        pkg.name = "valkey"
+        pkg.use_instances_subdir = True
+        pkg.instances_dir = missing_dir
+
+        with caplog.at_level(logging.DEBUG, logger="rots.commands.service.app"):
+            result = _discover_config_files(pkg, executor=None)
+
+        assert result == []
+        assert f"Config directory {missing_dir} does not exist" in caplog.text
+
+    @patch("rots.commands.service.app.is_service_active")
+    def test_local_flat_layout(self, mock_active, tmp_path, caplog):
+        """Local with use_instances_subdir=False: strips package prefix."""
+        mock_active.return_value = False
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "redis-6380.conf").write_text("port 6380\n")
+
+        pkg = MagicMock()
+        pkg.singleton = False
+        pkg.name = "redis"
+        pkg.use_instances_subdir = False
+        pkg.config_dir = config_dir
+        pkg.instance_unit.side_effect = lambda i: f"redis-server@{i}.service"
+
+        with caplog.at_level(logging.DEBUG, logger="rots.commands.service.app"):
+            result = _discover_config_files(pkg, executor=None)
+
+        assert len(result) == 1
+        assert result[0]["instance"] == "6380"
+        assert result[0]["filename"] == "redis-6380.conf"
+        assert result[0]["unit"] == "redis-server@6380.service"
+        assert result[0]["active"] is False
+
+    @patch("rots.commands.service.app._get_executor")
+    @patch("rots.commands.service.app.is_service_active")
+    def test_remote_with_configs(self, mock_active, mock_get_executor, tmp_path, caplog):
+        """Remote: successful ls with .conf files returns populated list."""
+        mock_active.return_value = True
+
+        mock_executor = MagicMock()
+        mock_get_executor.return_value = mock_executor
+        mock_executor.run.return_value = Result(
+            command="ls", returncode=0, stdout="6379.conf\n6380.conf\n", stderr=""
+        )
+
+        instances_dir = tmp_path / "instances"
+
+        pkg = MagicMock()
+        pkg.singleton = False
+        pkg.name = "valkey"
+        pkg.use_instances_subdir = True
+        pkg.instances_dir = instances_dir
+        pkg.instance_unit.side_effect = lambda i: f"valkey-server@{i}.service"
+
+        with caplog.at_level(logging.DEBUG, logger="rots.commands.service.app"):
+            result = _discover_config_files(pkg, executor=mock_executor)
+
+        assert len(result) == 2
+        assert result[0]["instance"] == "6379"
+        assert result[1]["instance"] == "6380"
+        assert "Remote config 6379.conf -> active" in caplog.text
+        assert "Discovered 2 config file(s) for valkey" in caplog.text
+
+    @patch("rots.commands.service.app._get_executor")
+    def test_remote_ls_failure_returns_empty(self, mock_get_executor, tmp_path, caplog):
+        """Remote: failed ls (non-zero rc) returns empty list."""
+        mock_executor = MagicMock()
+        mock_get_executor.return_value = mock_executor
+        mock_executor.run.return_value = Result(
+            command="ls", returncode=2, stdout="", stderr="No such file"
+        )
+
+        instances_dir = tmp_path / "instances"
+
+        pkg = MagicMock()
+        pkg.singleton = False
+        pkg.name = "valkey"
+        pkg.use_instances_subdir = True
+        pkg.instances_dir = instances_dir
+
+        with caplog.at_level(logging.DEBUG, logger="rots.commands.service.app"):
+            result = _discover_config_files(pkg, executor=mock_executor)
+
+        assert result == []
+        assert f"No config files found in remote {instances_dir}" in caplog.text
+
+    @patch("rots.commands.service.app._get_executor")
+    def test_remote_empty_stdout_returns_empty(self, mock_get_executor, tmp_path, caplog):
+        """Remote: ls succeeds but empty stdout returns empty list."""
+        mock_executor = MagicMock()
+        mock_get_executor.return_value = mock_executor
+        mock_executor.run.return_value = Result(command="ls", returncode=0, stdout="", stderr="")
+
+        instances_dir = tmp_path / "instances"
+
+        pkg = MagicMock()
+        pkg.singleton = False
+        pkg.name = "valkey"
+        pkg.use_instances_subdir = True
+        pkg.instances_dir = instances_dir
+
+        with caplog.at_level(logging.DEBUG, logger="rots.commands.service.app"):
+            result = _discover_config_files(pkg, executor=mock_executor)
+
+        assert result == []
+        assert f"No config files found in remote {instances_dir}" in caplog.text
+
+    @patch("rots.commands.service.app._get_executor")
+    @patch("rots.commands.service.app.is_service_active")
+    def test_remote_non_conf_files_filtered(self, mock_active, mock_get_executor, tmp_path, caplog):
+        """Remote: non-.conf files in ls output are ignored."""
+        mock_active.return_value = False
+
+        mock_executor = MagicMock()
+        mock_get_executor.return_value = mock_executor
+        mock_executor.run.return_value = Result(
+            command="ls", returncode=0, stdout="README.md\nnotes.txt\n6379.conf\n", stderr=""
+        )
+
+        instances_dir = tmp_path / "instances"
+
+        pkg = MagicMock()
+        pkg.singleton = False
+        pkg.name = "valkey"
+        pkg.use_instances_subdir = True
+        pkg.instances_dir = instances_dir
+        pkg.instance_unit.side_effect = lambda i: f"valkey-server@{i}.service"
+
+        with caplog.at_level(logging.DEBUG, logger="rots.commands.service.app"):
+            result = _discover_config_files(pkg, executor=mock_executor)
+
+        assert len(result) == 1
+        assert result[0]["instance"] == "6379"
+
+    @patch("rots.commands.service.app.is_service_active")
+    def test_local_empty_dir_returns_empty(self, mock_active, tmp_path, caplog):
+        """Local: existing but empty config directory returns empty list."""
+        empty_dir = tmp_path / "instances"
+        empty_dir.mkdir()
+
+        pkg = MagicMock()
+        pkg.singleton = False
+        pkg.name = "valkey"
+        pkg.use_instances_subdir = True
+        pkg.instances_dir = empty_dir
+
+        with caplog.at_level(logging.DEBUG, logger="rots.commands.service.app"):
+            result = _discover_config_files(pkg, executor=None)
+
+        assert result == []
+        assert "Discovered 0 config file(s) for valkey" in caplog.text
+
+
+class TestListInstancesJsonWithConfigFiles:
+    """Tests that JSON output includes populated config_files when configs exist."""
+
+    @patch("rots.commands.service.app.is_service_enabled")
+    @patch("rots.commands.service.app.is_service_active")
+    @patch("subprocess.run")
+    def test_json_output_includes_config_files(
+        self, mock_run, mock_active, mock_enabled, capsys, tmp_path
+    ):
+        """JSON output should include config_files entries from local config dir."""
+        import json
+
+        mock_active.return_value = True
+        mock_enabled.return_value = True
+        mock_run.return_value = MagicMock(
+            stdout="valkey-server@6379.service loaded active running Valkey\n"
+        )
+
+        instances_dir = tmp_path / "instances"
+        instances_dir.mkdir()
+        (instances_dir / "6379.conf").write_text("port 6379\n")
+        (instances_dir / "6380.conf").write_text("port 6380\n")
+
+        with patch("rots.commands.service.app.get_package") as mock_get_pkg:
+            mock_pkg = MagicMock()
+            mock_pkg.name = "valkey"
+            mock_pkg.singleton = False
+            mock_pkg.template = "valkey-server@"
+            mock_pkg.config_file.return_value = MagicMock(exists=lambda: True)
+            mock_pkg.use_instances_subdir = True
+            mock_pkg.instances_dir = instances_dir
+            mock_pkg.instance_unit.side_effect = lambda i: f"valkey-server@{i}.service"
+            mock_get_pkg.return_value = mock_pkg
+
+            list_instances("valkey", json_output=True)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert isinstance(data, dict)
+        assert "instances" in data
+        assert "config_files" in data
+        assert len(data["config_files"]) == 2
+        config_instances = [cf["instance"] for cf in data["config_files"]]
+        assert "6379" in config_instances
+        assert "6380" in config_instances
+
+    @patch("rots.commands.service.app.is_service_enabled")
+    @patch("rots.commands.service.app.is_service_active")
+    @patch("subprocess.run")
+    def test_json_config_files_have_expected_keys(
+        self, mock_run, mock_active, mock_enabled, capsys, tmp_path
+    ):
+        """Each config_files entry should have filename, instance, unit, active keys."""
+        import json
+
+        mock_active.return_value = False
+        mock_enabled.return_value = False
+        mock_run.return_value = MagicMock(stdout="")
+
+        instances_dir = tmp_path / "instances"
+        instances_dir.mkdir()
+        (instances_dir / "6379.conf").write_text("port 6379\n")
+
+        with patch("rots.commands.service.app.get_package") as mock_get_pkg:
+            mock_pkg = MagicMock()
+            mock_pkg.name = "valkey"
+            mock_pkg.singleton = False
+            mock_pkg.template = "valkey-server@"
+            mock_pkg.use_instances_subdir = True
+            mock_pkg.instances_dir = instances_dir
+            mock_pkg.instance_unit.side_effect = lambda i: f"valkey-server@{i}.service"
+            mock_get_pkg.return_value = mock_pkg
+
+            list_instances("valkey", json_output=True)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert len(data["config_files"]) == 1
+        entry = data["config_files"][0]
+        assert entry["filename"] == "6379.conf"
+        assert entry["instance"] == "6379"
+        assert entry["unit"] == "valkey-server@6379.service"
+        assert entry["active"] is False
