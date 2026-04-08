@@ -39,8 +39,13 @@ def generate(
         cyclopts.Parameter(help="Output file path (default: stdout)"),
     ] = None,
     *,
+    include_rabbitmq: Annotated[
+        bool,
+        cyclopts.Parameter(help="Include RabbitMQ 4.2+ apt repository (server)"),
+    ] = False,
     include_postgresql: Annotated[
-        bool, cyclopts.Parameter(help="Include PostgreSQL apt repository (client only)")
+        bool,
+        cyclopts.Parameter(help="Include PostgreSQL apt repository (client only)"),
     ] = False,
     include_postgresql_server: Annotated[
         bool,
@@ -119,6 +124,7 @@ def generate(
     # Generate configuration
     try:
         config = generate_cloudinit_config(
+            include_rabbitmq=include_rabbitmq,
             include_postgresql=include_postgresql,
             include_postgresql_server=include_postgresql_server,
             include_valkey=include_valkey,
