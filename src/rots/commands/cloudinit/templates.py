@@ -95,7 +95,7 @@ WantedBy=multi-user.target
 
 
 class _LiteralStr(str):
-    """Marker subclass so the YAML dumper renders as a literal block scalar (``|``)."""
+    """Marker subclass so the YAML dumper renders as a literal block scalar (``|``)."""  # noqa: E501
 
 
 def _literal_representer(dumper: yaml.Dumper, data: "_LiteralStr") -> yaml.ScalarNode:
@@ -103,7 +103,7 @@ def _literal_representer(dumper: yaml.Dumper, data: "_LiteralStr") -> yaml.Scala
 
 
 class _OTSDumper(yaml.Dumper):
-    """yaml.Dumper subclass that writes _LiteralStr values as literal block scalars."""
+    """yaml.Dumper subclass that writes _LiteralStr values as literal block scalars."""  # noqa: E501
 
 
 _OTSDumper.add_representer(_LiteralStr, _literal_representer)
@@ -140,9 +140,11 @@ def generate_cloudinit_config(
     include_postgresql: bool = False,
     include_postgresql_server: bool = False,
     include_valkey: bool = False,
+    include_rabbitmq: bool = False,
     include_xcaddy: bool = False,
     postgresql_gpg_key: str | None = None,
     valkey_gpg_key: str | None = None,
+    rabbitmq_gpg_key: str | None = None,
     caddy_version: str = DEFAULT_CADDY_VERSION,
     caddy_plugins: list[str] | None = None,
     ssh_authorized_keys: list[str] | None = None,
@@ -167,6 +169,7 @@ def generate_cloudinit_config(
             include_postgresql repository). Installs ``postgresql-17`` instead
             of just the client.
         include_valkey: Include Valkey repository
+        include_rabbitmq: Include RabbitMQ repository
         include_xcaddy: Include xcaddy repo and build custom Caddy binary
         postgresql_gpg_key: PostgreSQL GPG public key content (required when
             include_postgresql=True). Obtain with:
@@ -174,9 +177,12 @@ def generate_cloudinit_config(
         valkey_gpg_key: Valkey GPG public key content (required when
             include_valkey=True). Obtain with:
             ``curl -fsSL https://packages.valkey.io/valkey.gpg``
+        rabbitmq_gpg_key: RabbitMQ GPG public key content (required when
+            include_rabbitmq=True). Obtain with:
+            ``curl -1sLf "https://keys.openpgp.org/vks/v1/by-fingerprint/0A9AF2115F4687BD29803A206B73A36E6026DFCA" | gpg --dearmor``
         caddy_version: Caddy version to build (default: v2.10.2)
         caddy_plugins: Caddy plugins to include (default: OTS web profile)
-        ssh_authorized_keys: SSH public keys to add to the default cloud-init user
+        ssh_authorized_keys: SSH public keys to add to default cloud-init user
         timezone: System timezone (default: UTC)
         hostname: System hostname (default: not set)
 
@@ -188,7 +194,7 @@ def generate_cloudinit_config(
             cloud-init silently fails to add the repository when the key is
             invalid, so refusing to generate is safer than emitting a
             placeholder.
-    """
+    """  # noqa: E501
     if (include_postgresql or include_postgresql_server) and not postgresql_gpg_key:
         raise ValueError(
             "PostgreSQL GPG key is required when --include-postgresql or "
@@ -203,6 +209,13 @@ def generate_cloudinit_config(
             "Obtain the key with:\n"
             "  curl -fsSL https://packages.valkey.io/valkey.gpg\n"
             "Then pass it with: --valkey-key /path/to/key.gpg"
+        )
+    if include_rabbitmq and not rabbitmq_gpg_key:
+        raise ValueError(
+            "RabbitMQ GPG key is required when --include-rabbitmq is used.\n"
+            "Obtain the key with:\n"
+            '  curl -1sLf "https://keys.openpgp.org/vks/v1/by-fingerprint/0A9AF2115F4687BD29803A206B73A36E6026DFCA" | gpg --dearmor\n'
+            "Then pass it with: --rabbitmq-key /path/to/key.gpg"
         )
 
     # ------------------------------------------------------------------ apt --
@@ -227,6 +240,17 @@ def generate_cloudinit_config(
             valkey_entry["key"] = _LiteralStr(valkey_gpg_key)
         sources["valkey"] = valkey_entry
 
+    if include_rabbitmq:
+        rabbitmq_entry: dict = {
+            "source": (
+                "deb [arch=amd64] https://deb1.rabbitmq.com/rabbitmq-server/debian/trixie trixie main\n"
+                "deb [arch=amd64] https://deb2.rabbitmq.com/rabbitmq-server/debian/trixie trixie main"
+            )
+        }
+        if rabbitmq_gpg_key:
+            rabbitmq_entry["key"] = _LiteralStr(rabbitmq_gpg_key)
+        sources["rabbitmq"] = rabbitmq_entry
+
     if sources:
         apt["sources"] = sources
 
@@ -249,15 +273,34 @@ def generate_cloudinit_config(
     if include_valkey:
         packages.append("valkey")
 
-    if include_xcaddy:
+    if include_rabbitmq:
         packages.extend(
             [
-                "debian-keyring",
-                "debian-archive-keyring",
-                "apt-transport-https",
-                "gnupg",
+                "erlang-base",
+                "erlang-asn1",
+                "erlang-crypto",
+                "erlang-eldap",
+                "erlang-ftp",
+                "erlang-inets",
+                "erlang-mnesia",
+                "erlang-os-mon",
+                "erlang-parsetools",
+                "erlang-public-key",
+                "erlang-runtime-tools",
+                "erlang-snmp",
+                "erlang-ssl",
+                "erlang-syntax-tools",
+                "erlang-tftp",
+                "erlang-tools",
+                "erlang-xmerl",
+                "rabbitmq-server",
             ]
         )
+
+    if include_xcaddy or include_rabbitmq:
+        packages.extend(["apt-transport-https", "gnupg"])
+        if include_xcaddy:
+            packages.extend(["debian-keyring", "debian-archive-keyring"])
 
     # ----------------------------------------------------------------- users --
     # Always create the OTS service account.
