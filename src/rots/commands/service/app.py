@@ -584,17 +584,24 @@ def _extract_instance_from_filename(pkg: ServicePackage, filename: str) -> str:
     Handles both subdir-based layouts (stem is the instance) and
     flat layouts (strip the package-name prefix).
     """
-    stem = filename.replace(".conf", "")
+    stem = filename.removesuffix(".conf")
     if pkg.use_instances_subdir:
         return stem
-    return stem.replace(f"{pkg.name}-", "")
+    return stem.removeprefix(f"{pkg.name}-")
 
 
-def _discover_config_files(pkg: ServicePackage, executor: Executor | None = None) -> list[dict]:
+def _discover_config_files(
+    pkg: ServicePackage,
+    executor: Executor | None = None,
+    active_units: set[str] | None = None,
+) -> list[dict]:
     """Scan the config directory for .conf files and check service status.
 
     Returns a list of dicts with keys: filename, instance, unit, active.
     Returns empty list for singleton packages.
+
+    When *active_units* is provided, uses the pre-built lookup instead of
+    calling ``is_service_active`` per unit (avoids N+1 systemctl calls).
     """
     from ots_shared.ssh import is_remote
 
@@ -615,11 +622,15 @@ def _discover_config_files(pkg: ServicePackage, executor: Executor | None = None
     if is_remote(executor):
         result = executor.run(["ls", str(config_dir)], timeout=10)
         if result.ok and result.stdout.strip():
-            for filename in result.stdout.strip().splitlines():
+            for filename in sorted(result.stdout.strip().splitlines()):
                 if filename.endswith(".conf"):
                     instance = _extract_instance_from_filename(pkg, filename)
                     unit = pkg.instance_unit(instance)
-                    active = is_service_active(unit, executor=executor)
+                    active = (
+                        unit in active_units
+                        if active_units is not None
+                        else is_service_active(unit, executor=executor)
+                    )
                     logger.debug(
                         "Remote config %s -> %s",
                         filename,
@@ -640,7 +651,11 @@ def _discover_config_files(pkg: ServicePackage, executor: Executor | None = None
             for conf in sorted(config_dir.glob("*.conf")):
                 instance = _extract_instance_from_filename(pkg, conf.name)
                 unit = pkg.instance_unit(instance)
-                active = is_service_active(unit, executor=executor)
+                active = (
+                    unit in active_units
+                    if active_units is not None
+                    else is_service_active(unit, executor=executor)
+                )
                 logger.debug(
                     "Local config %s -> %s",
                     conf.name,
@@ -681,9 +696,17 @@ def list_instances(
 
     output = _list_units_for_template(pkg.template, executor=ex)
 
-    if output.strip():
+    # Build active-units lookup to avoid N+1 systemctl is-active calls
+    active_units: set[str] = set()
+    unit_lines = output.strip().splitlines() if output.strip() else []
+    for line in unit_lines:
+        parts = line.split()
+        if len(parts) >= 3 and parts[2] == "active":
+            active_units.add(parts[0])
+
+    if unit_lines:
         # Parse output to extract instance names
-        for line in output.splitlines():
+        for line in unit_lines:
             if pkg.template in line:
                 parts = line.split()
                 if not parts:
@@ -721,7 +744,7 @@ def list_instances(
                         }
                     )
 
-    config_files = _discover_config_files(pkg, executor=ex)
+    config_files = _discover_config_files(pkg, executor=ex, active_units=active_units)
 
     if json_output:
         import json

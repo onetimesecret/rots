@@ -1499,8 +1499,10 @@ class TestListInstancesRemoteConfigScan:
         captured = capsys.readouterr()
         assert "6379.conf" in captured.out
         assert "6380.conf" in captured.out
-        assert "Remote config 6379.conf -> active" in caplog.text
-        assert "Remote config 6380.conf -> active" in caplog.text
+        # active_units is empty (no units from _list_units_for_template),
+        # so config files correctly report inactive via lookup
+        assert "Remote config 6379.conf -> inactive" in caplog.text
+        assert "Remote config 6380.conf -> inactive" in caplog.text
 
     @patch("rots.commands.service.app._get_executor")
     @patch("rots.commands.service.app.is_service_active")
@@ -1603,8 +1605,10 @@ class TestListInstancesLocalConfigScan:
         assert "6379.conf" in captured.out
         assert "6380.conf" in captured.out
         assert "README.md" not in captured.out
-        assert "Local config 6379.conf -> active" in caplog.text
-        assert "Local config 6380.conf -> active" in caplog.text
+        # active_units is empty (no units from _list_units_for_template),
+        # so config files correctly report inactive via lookup
+        assert "Local config 6379.conf -> inactive" in caplog.text
+        assert "Local config 6380.conf -> inactive" in caplog.text
 
     @patch("rots.commands.service.app.is_service_active")
     @patch("subprocess.run")
