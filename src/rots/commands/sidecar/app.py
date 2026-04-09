@@ -89,7 +89,8 @@ ProtectSystem=strict
 # For hardened deployments, install rots to /usr/local/bin and set ProtectHome=yes.
 ProtectHome=no
 PrivateTmp=yes
-ReadWritePaths=/run /var/lib/onetimesecret /etc/onetimesecret
+ReadWritePaths=/run /var/lib/onetimesecret /etc/onetimesecret \
+    /etc/socks-proxy /home/socks-proxy/.ssh
 
 [Install]
 WantedBy=multi-user.target
@@ -766,7 +767,11 @@ def publish(
     """
     import json
 
-    from rots.sidecar.rabbitmq import RabbitMQConfig, get_host_id, publish_command
+    from rots.sidecar.rabbitmq import (
+        RabbitMQConfig,
+        get_host_id,
+        publish_command,
+    )
 
     from ... import context
 
@@ -836,3 +841,132 @@ def publish(
     except Exception as e:
         print(f"Error: {e}")
         raise SystemExit(1)
+
+
+@app.command(name="provision-socks")
+def provision_socks(
+    db_host: Annotated[
+        str,
+        cyclopts.Parameter(
+            name="--db-host",
+            help="Host ID of the database sidecar (source of the public key)",
+        ),
+    ],
+    web_host: Annotated[
+        str,
+        cyclopts.Parameter(
+            name="--web-host",
+            help="Host ID of the web/jumphost sidecar (target for authorized_keys)",
+        ),
+    ],
+    timeout: Annotated[
+        float,
+        cyclopts.Parameter(
+            name=["--timeout", "-t"],
+            help="Per-step timeout in seconds",
+        ),
+    ] = 30.0,
+    dry_run: DryRun = False,
+):
+    """Exchange SOCKS proxy SSH keys between DB and web instances.
+
+    The DB instance has no public IP address. It reaches the internet
+    through an SSH SOCKS tunnel to the web instance (jumphost). During
+    cloud-init provisioning, the DB generates an Ed25519 keypair for
+    this tunnel, but the public key still needs to land in the web
+    server's ``/home/socks-proxy/.ssh/authorized_keys``.
+
+    This command orchestrates that exchange over the private-network
+    RabbitMQ link that both sidecars share:
+
+      1. Read the public key from the DB sidecar
+         (``provision.socks_key_read``)
+      2. Write it to the web sidecar's authorized_keys
+         (``provision.socks_key_write``)
+
+    After this, ``systemctl restart socks-proxy`` on the DB should
+    establish the tunnel.
+
+    Examples:
+        rots sidecar provision-socks --db-host eu-demos-db --web-host eu-demos-web
+        rots sidecar provision-socks --db-host eu-demos-db --web-host eu-demos-web --dry-run
+    """
+
+    from rots.sidecar.rabbitmq import RabbitMQConfig, publish_command
+
+    try:
+        config = RabbitMQConfig.from_environment()
+    except Exception as e:
+        print(f"Error: Failed to load RabbitMQ config: {e}")
+        raise SystemExit(1)
+
+    # Step 1 — read public key from DB sidecar
+    print(f"[1/2] Reading SOCKS proxy public key from {db_host} ...")
+
+    try:
+        read_resp = publish_command(
+            "provision.socks_key_read",
+            {},
+            config=config,
+            timeout=timeout,
+            target_host=db_host,
+        )
+    except TimeoutError:
+        print(f"Error: No response from {db_host} within {timeout}s")
+        print(f"Hint: Is the sidecar running on {db_host}?")
+        raise SystemExit(1)
+    except Exception as e:
+        print(f"Error: {e}")
+        raise SystemExit(1)
+
+    if not read_resp.get("success"):
+        print(f"Error: {read_resp.get('error', 'unknown error')}")
+        raise SystemExit(1)
+
+    result = read_resp.get("result", {})
+    public_key = result.get("public_key", "").strip()
+    if not public_key:
+        print("Error: No public key returned by DB sidecar")
+        print("Hint: Has cloud-init finished generating the keypair?")
+        raise SystemExit(1)
+
+    source_host = result.get("host_id", db_host)
+    print(f"      Key from {source_host}: {public_key[:40]}...")
+
+    if dry_run:
+        print(f"\n[dry-run] Would write key to {web_host} authorized_keys")
+        print("Key contents:")
+        print(f"  {public_key}")
+        return
+
+    # Step 2 — write public key to web sidecar
+    print(f"[2/2] Writing public key to {web_host} authorized_keys ...")
+
+    try:
+        write_resp = publish_command(
+            "provision.socks_key_write",
+            {"public_key": public_key},
+            config=config,
+            timeout=timeout,
+            target_host=web_host,
+        )
+    except TimeoutError:
+        print(f"Error: No response from {web_host} within {timeout}s")
+        print(f"Hint: Is the sidecar running on {web_host}?")
+        raise SystemExit(1)
+    except Exception as e:
+        print(f"Error: {e}")
+        raise SystemExit(1)
+
+    if not write_resp.get("success"):
+        print(f"Error: {write_resp.get('error', 'unknown error')}")
+        raise SystemExit(1)
+
+    write_result = write_resp.get("result", {})
+    target_host_id = write_result.get("host_id", web_host)
+    message = write_result.get("message", "done")
+    print(f"      {target_host_id}: {message}")
+
+    print()
+    print("Key exchange complete. To activate the tunnel:")
+    print(f"  ssh {db_host} systemctl restart socks-proxy.service")
