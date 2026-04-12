@@ -47,6 +47,50 @@ def _file_exists(path: Path, executor: Executor) -> bool:
     return path.exists()
 
 
+@app.command(name="init")
+def init_env(
+    environment: Annotated[
+        str,
+        cyclopts.Parameter(help="Environment name (e.g. eu2, us-prod)"),
+    ],
+    *,
+    directory: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            name=["--directory", "-C"],
+            help="Target directory (default: current directory)",
+        ),
+    ] = None,
+    force: Annotated[
+        bool,
+        cyclopts.Parameter(help="Overwrite existing marker file"),
+    ] = False,
+) -> None:
+    """Create .otsinfra.yaml environment marker.
+
+    The marker signals to lots, pots, and rots that the directory is
+    an OTS environment. Direnv handles env vars; this file carries
+    structured metadata (environment name, creation date).
+
+    Examples:
+        rots env init eu2
+        rots env init us-prod -C ~/ops/environments/prod/us
+    """
+    from ots_shared.ssh.env import create_marker
+
+    target = (directory or Path(".")).resolve()
+    if not target.is_dir():
+        logger.error(f"{target} is not a directory")
+        raise SystemExit(1)
+
+    try:
+        path = create_marker(target, environment, force=force)
+        logger.info(f"Created {path}")
+    except FileExistsError as e:
+        logger.error(str(e))
+        raise SystemExit(1)
+
+
 @app.command
 def process(
     env_file: Annotated[
