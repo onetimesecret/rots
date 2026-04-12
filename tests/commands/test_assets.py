@@ -1,4 +1,5 @@
 # tests/commands/test_assets.py
+
 """Tests for assets command."""
 
 import pytest

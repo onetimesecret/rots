@@ -1,4 +1,5 @@
 # src/rots/commands/workflow/app.py
+
 """Fleet orchestration workflow CLI commands.
 
 Provides multi-host deployment workflows via the sidecar RabbitMQ

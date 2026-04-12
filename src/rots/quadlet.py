@@ -1,4 +1,5 @@
 # src/rots/quadlet.py
+
 """
 Quadlet template generation for OneTimeSecret containers.
 

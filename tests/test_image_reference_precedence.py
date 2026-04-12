@@ -1,4 +1,5 @@
 # tests/test_image_reference_precedence.py
+
 """Tests for image reference precedence chain.
 
 Verifies the precedence order:

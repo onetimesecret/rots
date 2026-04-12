@@ -1,4 +1,5 @@
 # tests/commands/workflow/conftest.py
+
 """Fixtures for workflow command tests."""
 
 from unittest.mock import MagicMock

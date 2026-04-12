@@ -1,4 +1,5 @@
 # tests/commands/test_init.py
+
 """Tests for init command with permission handling."""
 
 import logging

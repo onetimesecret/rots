@@ -1,4 +1,5 @@
 # src/rots/deploy/__init__.py
+
 """Fleet deployment orchestration library.
 
 This module provides orchestration logic for deploying container images

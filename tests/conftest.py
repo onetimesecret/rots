@@ -1,3 +1,5 @@
+# tests/conftest.py
+
 """Shared fixtures for test isolation from host environment.
 
 Prevents tests from shelling out to system binaries (podman, systemctl)

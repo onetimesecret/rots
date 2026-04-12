@@ -1,4 +1,5 @@
 # tests/commands/dns/test_db.py
+
 """Tests for DNS database functions."""
 
 import pytest

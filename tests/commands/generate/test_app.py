@@ -1,4 +1,5 @@
 # tests/commands/generate/test_app.py
+
 """Tests for the generate command - standalone unit file export."""
 
 from rots.commands.generate.app import (

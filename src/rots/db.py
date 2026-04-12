@@ -1,4 +1,5 @@
 # src/rots/db.py
+
 """SQLite database for deployment timeline and image alias tracking.
 
 The deployment timeline is an append-only audit trail that records all

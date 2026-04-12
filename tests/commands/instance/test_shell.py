@@ -1,4 +1,5 @@
 # tests/commands/instance/test_shell.py
+
 """Tests for the shell command.
 
 These tests verify the shell command builds correct podman commands

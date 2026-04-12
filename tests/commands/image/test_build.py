@@ -1,4 +1,5 @@
 # tests/commands/image/test_build.py
+
 """Tests for image build command.
 
 These tests verify the build command functionality for building

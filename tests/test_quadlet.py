@@ -1,4 +1,5 @@
 # tests/test_quadlet.py
+
 """Tests for quadlet module - Podman quadlet file generation."""
 
 from unittest.mock import MagicMock

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# scripts/deploy-custom-image.py
+
 """Standalone deployment script for custom OTS images.
 
 This is a runbook artifact that can run from any directory without
