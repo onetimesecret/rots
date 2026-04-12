@@ -1,4 +1,5 @@
-# tests/test_cli.py
+# packages/rots/tests/test_cli.py
+
 """Tests for CLI structure and invocation following Cyclopts conventions."""
 
 import pytest

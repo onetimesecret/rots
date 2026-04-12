@@ -1,4 +1,4 @@
-# tests/deploy/test_reporting.py
+# packages/rots/tests/deploy/test_reporting.py
 
 """Tests for rots.deploy.reporting module.
 

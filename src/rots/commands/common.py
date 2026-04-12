@@ -1,4 +1,4 @@
-# src/rots/commands/common.py
+# packages/rots/src/rots/commands/common.py
 
 """Shared CLI annotations and constants for consistency across rots commands.
 

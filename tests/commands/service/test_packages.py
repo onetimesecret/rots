@@ -1,4 +1,5 @@
-# tests/commands/service/test_packages.py
+# packages/rots/tests/commands/service/test_packages.py
+
 """Tests for service package registry."""
 
 from pathlib import Path

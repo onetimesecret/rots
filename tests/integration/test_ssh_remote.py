@@ -1,4 +1,5 @@
-# tests/integration/test_ssh_remote.py
+# packages/rots/tests/integration/test_ssh_remote.py
+
 """Integration tests exercising remote code paths through FakeSSHServer.
 
 These tests use the FakeSSHServer fixture (paramiko server mode) to run

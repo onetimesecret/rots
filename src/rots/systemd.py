@@ -1,4 +1,4 @@
-# src/rots/systemd.py
+# packages/rots/src/rots/systemd.py
 
 """Systemd interaction layer.
 

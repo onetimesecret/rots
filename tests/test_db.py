@@ -1,4 +1,5 @@
-# tests/test_db.py
+# packages/rots/tests/test_db.py
+
 """Tests for deployment timeline database."""
 
 import json

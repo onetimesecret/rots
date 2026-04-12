@@ -1,4 +1,5 @@
-# tests/commands/image/test_app.py
+# packages/rots/tests/commands/image/test_app.py
+
 """Tests for image app commands."""
 
 import logging

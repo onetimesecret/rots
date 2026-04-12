@@ -1,3 +1,5 @@
+# packages/rots/tests/test_common_reexports.py
+
 """Tests for rots.commands.common — re-exports from ots_shared."""
 
 import ots_shared.cli

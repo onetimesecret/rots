@@ -1,4 +1,4 @@
-# src/rots/commands/service/packages.py
+# packages/rots/src/rots/commands/service/packages.py
 
 """Service package registry for systemd template services.
 

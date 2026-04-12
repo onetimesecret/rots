@@ -1,4 +1,4 @@
-# src/rots/commands/cloudinit/app.py
+# packages/rots/src/rots/commands/cloudinit/app.py
 
 """Cloud-init configuration generation commands.
 

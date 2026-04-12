@@ -1,4 +1,4 @@
-# tests/deploy/test_manifest.py
+# packages/rots/tests/deploy/test_manifest.py
 
 """Tests for src/rots/deploy/manifest.py
 

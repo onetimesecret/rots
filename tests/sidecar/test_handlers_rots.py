@@ -1,4 +1,4 @@
-# tests/sidecar/test_handlers_rots.py
+# packages/rots/tests/sidecar/test_handlers_rots.py
 
 """Tests for the generic rots CLI invocation handler."""
 

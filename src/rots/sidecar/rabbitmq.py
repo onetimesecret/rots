@@ -1,4 +1,4 @@
-# src/rots/sidecar/rabbitmq.py
+# packages/rots/src/rots/sidecar/rabbitmq.py
 
 """RabbitMQ queue consumer for sidecar commands.
 

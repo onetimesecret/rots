@@ -1,4 +1,5 @@
-# src/rots/deploy/manifest.py
+# packages/rots/src/rots/deploy/manifest.py
+
 """Deployment manifest schema and discovery.
 
 Provides YAML-based deployment manifests for specifying target hosts

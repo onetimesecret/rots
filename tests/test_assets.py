@@ -1,4 +1,5 @@
-# tests/test_assets.py
+# packages/rots/tests/test_assets.py
+
 """Tests for assets module."""
 
 import subprocess

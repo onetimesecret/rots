@@ -1,4 +1,5 @@
-# tests/commands/test_env.py
+# packages/rots/tests/commands/test_env.py
+
 """Tests for env command subcommands.
 
 Covers process, show, verify, and quadlet-lines commands in

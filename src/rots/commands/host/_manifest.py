@@ -1,4 +1,4 @@
-# src/rots/commands/host/_manifest.py
+# packages/rots/src/rots/commands/host/_manifest.py
 
 """Manifest parsing for config push operations.
 

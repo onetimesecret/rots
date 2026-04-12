@@ -1,4 +1,5 @@
-# tests/commands/service/test_app.py
+# packages/rots/tests/commands/service/test_app.py
+
 """Tests for service command app."""
 
 import logging

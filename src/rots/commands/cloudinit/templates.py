@@ -1,4 +1,4 @@
-# src/rots/commands/cloudinit/templates.py
+# packages/rots/src/rots/commands/cloudinit/templates.py
 
 """Cloud-init configuration templates using a Composition/Builder pattern."""
 

@@ -1,4 +1,5 @@
-# tests/test_image_reference_security.py
+# packages/rots/tests/test_image_reference_security.py
+
 """Security tests for image reference handling.
 
 Verifies that shell metacharacters, path traversal, newline injection,

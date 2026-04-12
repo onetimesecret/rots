@@ -1,4 +1,5 @@
-# tests/test_main.py
+# packages/rots/tests/test_main.py
+
 """Tests for __main__.py entry point (python -m rots)."""
 
 import subprocess

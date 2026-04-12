@@ -1,4 +1,5 @@
-# src/rots/commands/db.py
+# packages/rots/src/rots/commands/db.py
+
 """Deployment database backup and restore commands."""
 
 import logging

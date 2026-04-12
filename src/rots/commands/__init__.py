@@ -1,4 +1,5 @@
-# src/rots/commands/__init__.py
+# packages/rots/src/rots/commands/__init__.py
+
 """Command topic modules for rots CLI."""
 
 from . import assets as assets

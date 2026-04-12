@@ -1,4 +1,4 @@
-# tests/sidecar/test_handlers_lifecycle.py
+# packages/rots/tests/sidecar/test_handlers_lifecycle.py
 
 """Tests for src/rots/sidecar/handlers_lifecycle.py
 

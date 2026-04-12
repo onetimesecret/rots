@@ -1,3 +1,5 @@
+# packages/rots/src/rots/commands/init.py
+
 """Reminder that environment initialization lives in lots/pots.
 
 rots operates on the server side. To create an .otsinfra.yaml

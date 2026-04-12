@@ -1,4 +1,4 @@
-# src/rots/podman.py
+# packages/rots/src/rots/podman.py
 
 """Pythonic wrapper for podman CLI commands."""
 

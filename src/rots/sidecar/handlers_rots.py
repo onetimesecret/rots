@@ -1,4 +1,4 @@
-# src/rots/sidecar/handlers_rots.py
+# packages/rots/src/rots/sidecar/handlers_rots.py
 
 """Generic rots CLI invocation handler.
 

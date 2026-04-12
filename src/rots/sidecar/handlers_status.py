@@ -1,4 +1,4 @@
-# src/rots/sidecar/handlers_status.py
+# packages/rots/src/rots/sidecar/handlers_status.py
 
 """Health and status handlers for sidecar operations."""
 

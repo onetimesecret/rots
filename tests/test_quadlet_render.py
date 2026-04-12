@@ -1,4 +1,5 @@
-# tests/test_quadlet_render.py
+# packages/rots/tests/test_quadlet_render.py
+
 """Tests for render_*_template and _build_fmt_vars functions in quadlet.py.
 
 These functions were added for dry-run support in the deploy and redeploy commands.

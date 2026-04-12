@@ -1,4 +1,4 @@
-# src/rots/commands/instance/_helpers.py
+# packages/rots/src/rots/commands/instance/_helpers.py
 
 """Internal helper functions for instance commands."""
 

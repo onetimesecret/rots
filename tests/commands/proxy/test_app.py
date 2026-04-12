@@ -1,4 +1,5 @@
-# tests/commands/proxy/test_app.py
+# packages/rots/tests/commands/proxy/test_app.py
+
 """Tests for proxy app commands."""
 
 import json

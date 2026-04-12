@@ -1,4 +1,4 @@
-# src/rots/commands/proxy/app.py
+# packages/rots/src/rots/commands/proxy/app.py
 
 """Proxy management commands for OTS containers.
 

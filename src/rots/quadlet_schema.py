@@ -1,4 +1,5 @@
-# src/rots/quadlet_schema.py
+# packages/rots/src/rots/quadlet_schema.py
+
 """
 Validation of rendered Podman Quadlet files against the specification.
 

@@ -1,4 +1,4 @@
-# tests/sidecar/test_allowlist.py
+# packages/rots/tests/sidecar/test_allowlist.py
 
 """Tests for src/rots/sidecar/allowlist.py
 

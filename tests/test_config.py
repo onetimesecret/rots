@@ -1,4 +1,5 @@
-# tests/test_config.py
+# packages/rots/tests/test_config.py
+
 """Tests for config module - Config dataclass."""
 
 from pathlib import Path

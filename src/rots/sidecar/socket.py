@@ -1,4 +1,4 @@
-# src/rots/sidecar/socket.py
+# packages/rots/src/rots/sidecar/socket.py
 
 """Unix socket server for local sidecar communication.
 

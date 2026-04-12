@@ -1,4 +1,5 @@
-# tests/test_podman.py
+# packages/rots/tests/test_podman.py
+
 """Tests for the Podman CLI wrapper."""
 
 import subprocess

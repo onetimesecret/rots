@@ -1,4 +1,4 @@
-# tests/commands/host/test_manifest.py
+# packages/rots/tests/commands/host/test_manifest.py
 
 """Tests for manifest parsing and resolution."""
 

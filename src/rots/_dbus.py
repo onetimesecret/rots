@@ -1,4 +1,4 @@
-# src/rots/_dbus.py
+# packages/rots/src/rots/_dbus.py
 
 """D-Bus backend for systemd operations using pystemd.
 

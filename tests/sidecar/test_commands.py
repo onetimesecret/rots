@@ -1,4 +1,4 @@
-# tests/sidecar/test_commands.py
+# packages/rots/tests/sidecar/test_commands.py
 
 """Tests for src/rots/sidecar/commands.py
 

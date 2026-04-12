@@ -1,4 +1,5 @@
-# tests/test_parse_image_reference.py
+# packages/rots/tests/test_parse_image_reference.py
+
 """Tests for parse_image_reference().
 
 Verifies the last-colon-after-last-slash rule handles registry ports,

@@ -1,4 +1,5 @@
-# tests/commands/dns/test_helpers.py
+# packages/rots/tests/commands/dns/test_helpers.py
+
 """Tests for DNS helper functions."""
 
 import os

@@ -1,4 +1,4 @@
-# src/rots/sidecar/handlers_lifecycle.py
+# packages/rots/src/rots/sidecar/handlers_lifecycle.py
 
 """Lifecycle handlers for start/stop/restart operations.
 

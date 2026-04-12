@@ -1,4 +1,5 @@
-# src/rots/deploy/hosts.py
+# packages/rots/src/rots/deploy/hosts.py
+
 """Host discovery and resolution for fleet deployments.
 
 Provides walk-up discovery for .otsinfra-hosts.txt files, following the

@@ -1,4 +1,4 @@
-# src/rots/sidecar/__init__.py
+# packages/rots/src/rots/sidecar/__init__.py
 
 """Sidecar daemon for remote OTS instance control.
 

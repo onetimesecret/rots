@@ -1,3 +1,5 @@
+# packages/rots/src/rots/context.py
+
 """Context variables for threading global state through the call stack.
 
 Uses contextvars to avoid circular imports and function signature changes

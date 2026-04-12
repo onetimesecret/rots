@@ -1,4 +1,4 @@
-# tests/sidecar/test_handlers_phased.py
+# packages/rots/tests/sidecar/test_handlers_phased.py
 
 """Tests for src/rots/sidecar/handlers_phased.py
 

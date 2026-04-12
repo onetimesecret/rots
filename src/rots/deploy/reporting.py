@@ -1,4 +1,5 @@
-# src/rots/deploy/reporting.py
+# packages/rots/src/rots/deploy/reporting.py
+
 """Shared reporting utilities for deployment workflows.
 
 Provides consistent formatting for deployment plans and results across

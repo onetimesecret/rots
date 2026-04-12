@@ -1,4 +1,4 @@
-# src/rots/commands/image/app.py
+# packages/rots/src/rots/commands/image/app.py
 
 """Image management commands for OTS containers.
 

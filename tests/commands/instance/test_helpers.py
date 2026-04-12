@@ -1,4 +1,5 @@
-# tests/commands/instance/test_helpers.py
+# packages/rots/tests/commands/instance/test_helpers.py
+
 """Tests for instance command helpers."""
 
 import fcntl

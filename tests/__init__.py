@@ -1,1 +1,1 @@
-# tests/__init__.py
+# packages/rots/tests/__init__.py

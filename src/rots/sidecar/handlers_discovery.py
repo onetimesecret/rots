@@ -1,4 +1,4 @@
-# src/rots/sidecar/handlers_discovery.py
+# packages/rots/src/rots/sidecar/handlers_discovery.py
 
 """Discovery handlers for sidecar presence detection.
 

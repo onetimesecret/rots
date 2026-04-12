@@ -1,4 +1,4 @@
-# src/rots/assets.py
+# packages/rots/src/rots/assets.py
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-# src/rots/sidecar/commands.py
+# packages/rots/src/rots/sidecar/commands.py
 
 """Command enum, result type, and dispatcher for sidecar operations.
 

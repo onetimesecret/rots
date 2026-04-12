@@ -1,4 +1,5 @@
-# tests/commands/test_db_commands.py
+# packages/rots/tests/commands/test_db_commands.py
+
 """Tests for db CLI commands (backup, restore, info, deployments)."""
 
 import json

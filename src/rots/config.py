@@ -1,4 +1,4 @@
-# src/rots/config.py
+# packages/rots/src/rots/config.py
 
 from __future__ import annotations
 

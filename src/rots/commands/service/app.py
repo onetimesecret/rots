@@ -1,4 +1,4 @@
-# src/rots/commands/service/app.py
+# packages/rots/src/rots/commands/service/app.py
 
 """Service management commands for systemd template services.
 

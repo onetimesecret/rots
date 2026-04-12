@@ -1,4 +1,5 @@
-# tests/test_systemd.py
+# packages/rots/tests/test_systemd.py
+
 """Tests for systemd module — D-Bus backend (primary) and CLI fallback."""
 
 import subprocess
