@@ -42,19 +42,31 @@ class TestCliAliasReexports:
 
 
 class TestExitCodeReexports:
-    """Re-exported exit codes must match ots_shared.exit_codes values."""
+    """Re-exported exit codes must be the ots_shared.exit_codes attributes."""
 
     def test_exit_success(self):
-        assert EXIT_SUCCESS is ots_shared.exit_codes.EXIT_SUCCESS
+        from rots.commands import common
+
+        assert common.EXIT_SUCCESS is ots_shared.exit_codes.EXIT_SUCCESS
+        assert EXIT_SUCCESS == ots_shared.exit_codes.EXIT_SUCCESS
 
     def test_exit_failure(self):
-        assert EXIT_FAILURE is ots_shared.exit_codes.EXIT_FAILURE
+        from rots.commands import common
+
+        assert common.EXIT_FAILURE is ots_shared.exit_codes.EXIT_FAILURE
+        assert EXIT_FAILURE == ots_shared.exit_codes.EXIT_FAILURE
 
     def test_exit_partial(self):
-        assert EXIT_PARTIAL is ots_shared.exit_codes.EXIT_PARTIAL
+        from rots.commands import common
+
+        assert common.EXIT_PARTIAL is ots_shared.exit_codes.EXIT_PARTIAL
+        assert EXIT_PARTIAL == ots_shared.exit_codes.EXIT_PARTIAL
 
     def test_exit_precond(self):
-        assert EXIT_PRECOND is ots_shared.exit_codes.EXIT_PRECOND
+        from rots.commands import common
+
+        assert common.EXIT_PRECOND is ots_shared.exit_codes.EXIT_PRECOND
+        assert EXIT_PRECOND == ots_shared.exit_codes.EXIT_PRECOND
 
 
 class TestRotsSpecificAliases:

@@ -514,7 +514,7 @@ class Config:
             return LocalExecutor()
 
         if resolved not in _ssh_cache:
-            logger.info("Connecting to %s ...", resolved)
+            logger.info("Connecting to %s...", resolved)
             try:
                 _ssh_cache[resolved] = ssh_connect(resolved)
             except ImportError:
