@@ -12,6 +12,160 @@ Versioning <https://semver.org/spec/v2.0.0.html>`__.
 
    <!--scriv-insert-here-->
 
+.. _changelog-0.7.0:
+
+0.7.0 — 2026-04-12
+==================
+
+Added
+-----
+
+- Add PostgreSQL service package, plus sidecar service discovery via the
+  RabbitMQ fanout exchange.
+- Add RabbitMQ support to cloud-init: repository wiring, sidecar install, and a
+  ``--rabbitmq`` apt repository option.
+- Add ``rots doctor`` RabbitMQ health check.
+- Add singleton ``ServicePackage`` support so services like RabbitMQ can be
+  modelled as a single instance rather than port-indexed.
+- Add ``RemoteExecutor`` protocol and ``TypeGuard`` on ``is_remote()`` for
+  semantically accurate local/remote dispatch.
+- Wire ``rots.*`` commands into the sidecar dispatcher so the full CLI surface
+  is reachable over RabbitMQ.
+- Add ``provision-socks`` command for SOCKS proxy SSH key exchange.
+- Add shell completion support via cyclopts (``#0410``).
+- Add ``rots env init`` command for writing the environment marker, along with
+  environment scaffold helpers in ``ots-shared`` (``#0411``).
+- Re-introduce ``.otsinfra.yaml`` and improve environment discovery walk-up.
+- Add command history logging and serialization.
+- Add onboarding doc and cloud-init reference.
+- Add tests for ``create_marker`` hosts param, default environment fallback,
+  and ``common.py`` re-exports.
+
+Changed
+-------
+
+- Refactor cloud-init templates to a Composition/Builder pattern.
+- Harden sidecar dispatcher and singleton service handling.
+- Include config-file discovery in ``list_instances --json`` output;
+  deduplicate ``config_dir`` resolution and add structured logging (``#11``).
+- Strip the ``--image`` flag from relevant commands and use
+  ``_strip_registry_prefix`` in ``push`` and ``list-remote`` (``#44``).
+- Extract a shared ``init`` sub-app and remove duplicate re-exports in
+  ``common.py``.
+- Update file headers across Python modules to use repo-relative paths.
+
+Fixed
+-----
+
+- Fix cloud-init provisioning for Debian 13 (``#11``).
+- Fix RabbitMQ ``bind_config_key`` collision.
+- Fix misleading ``discover`` docstring to reference the fanout exchange.
+- Fix N+1 lookup, unsafe string operations, and unsorted remote listing
+  surfaced in PR #47 review.
+- Fix SQL escaping, YAML quoting, fallback parser, and type hints surfaced in
+  PR #49 review (``#0411``).
+- Remove ``type: ignore`` comments now that ``ots-shared`` 0.2.1 ships a real
+  ``TypeGuard``.
+
+.. _changelog-0.6.3:
+
+0.6.3 — 2026-04-05
+==================
+
+Added
+-----
+
+- Add ``workflow`` command for fleet deployment orchestration, including a
+  ``workflow trigger`` subcommand for CI/automation (``#STEP4``).
+- Add ``generate`` command for standalone Quadlet file export (``#34``).
+- Add ``--backend dbus|cli`` flag for explicit systemd backend selection.
+- Add ``--socket`` and ``--rabbitmq`` transport flags to ``sidecar send``.
+- Add ``sidecar publish`` command with per-host queue binding for fleet
+  targeting.
+- Add git source support for ``self upgrade`` and repeated-args parsing.
+- Add sidecar documentation and ``.otsinfra.env`` walk-up discovery for
+  ``RABBITMQ_URL``.
+- Add ``pika`` dependency and health/status sidecar handlers.
+- Auto-detect the ``rots`` binary path for sidecar install.
+- Add remote-executor auto-detect test and clarify ``unit_file_exists``
+  docstring.
+
+Changed
+-------
+
+- Replace ``systemctl`` CLI parsing with the systemd D-Bus API; defer
+  ``pystemd`` imports to call time to keep ``pyright`` happy.
+- Extract streaming execution loop to a shared
+  ``run_plan_with_progress()`` and shared deployment reporting utilities
+  (``#STEP4``).
+- Modernize lifecycle handlers with a ``@register_handler`` pattern
+  (``#STEP4``).
+- Optimize CLI startup and test collection with lazy imports; parallelize
+  pre-push hooks and optimize the pytest pre-commit hook (``#STEP4``).
+- Mark additional command tests ``@pytest.mark.quick``.
+- Extract ``_parse_key_value_args`` helper and tighten README consistency
+  (``#STEP3``).
+
+Fixed
+-----
+
+- Normalize unit names, gate root-only operations, and address related review
+  feedback.
+- Disable ``ProtectHome`` for pipx compatibility, with an inline doc explaining
+  the rationale and git-branch install docs.
+- Address PR review feedback for security, docs, and tests (``#STEP3``).
+- Fix a type hint and add file validation in ``ots-shared`` (``#STEP3``).
+
+.. _changelog-0.6.2:
+
+0.6.2 — 2026-03-21
+==================
+
+Changed
+-------
+
+- Version metadata bump. No functional changes over 0.6.0; the 0.6.0 and 0.6.1
+  tags were cut from the same commit and 0.6.2 re-tagged after version-bump
+  housekeeping.
+
+.. _changelog-0.6.1:
+
+0.6.1 — 2026-03-21
+==================
+
+Changed
+-------
+
+- Re-tag of 0.6.0 with no code changes.
+
+.. _changelog-0.6.0:
+
+0.6.0 — 2026-03-21
+==================
+
+Added
+-----
+
+- Add sidecar daemon for remote OTS instance control, including generic
+  ``rots`` CLI invocation, dispatch integration tests, and a sidecar overview
+  doc.
+- Add ``rots self upgrade`` command for pipx-based self-management.
+- Add scriv-managed changelog.
+
+Changed
+-------
+
+- Switch sidecar config to a denylist approach.
+- Address PR #35 review feedback and transport-layer issues.
+- Tidy docs, rename an outdated variable, and ignore the schemathesis scratch
+  directory.
+
+Fixed
+-----
+
+- Fix ruff ``UP042`` by switching to ``StrEnum`` instead of ``str, Enum``.
+- Fix the ``ots-shared`` repo URL and a type hint surfaced in PR review.
+
 .. _changelog-0.5.6:
 
 0.5.6 — 2026-03-12
