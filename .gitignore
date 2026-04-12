@@ -29,3 +29,4 @@ Thumbs.db
 .serena
 .coverage*
 .hypothesis
+uv.lock
