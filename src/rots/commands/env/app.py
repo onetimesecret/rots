@@ -25,6 +25,7 @@ from rots.environment_file import (
 from rots.quadlet import DEFAULT_ENV_FILE
 
 from ..common import DryRun, JsonOutput
+from .server_init import app as _server_init_app
 
 if TYPE_CHECKING:
     from ots_shared.ssh import Executor
@@ -36,6 +37,9 @@ app = cyclopts.App(
     help="Manage environment files and secrets.",
 )
 
+# Server-side initialization (was top-level `rots init`, now `rots env init`)
+app.command(_server_init_app)
+
 
 def _file_exists(path: Path, executor: Executor) -> bool:
     """Check if a file exists, locally or remotely via executor."""
@@ -45,50 +49,6 @@ def _file_exists(path: Path, executor: Executor) -> bool:
         result = executor.run(["test", "-f", str(path)])
         return result.ok
     return path.exists()
-
-
-@app.command(name="init")
-def init_env(
-    environment: Annotated[
-        str,
-        cyclopts.Parameter(help="Environment name (e.g. eu2, us-prod)"),
-    ],
-    *,
-    directory: Annotated[
-        Path | None,
-        cyclopts.Parameter(
-            name=["--directory", "-C"],
-            help="Target directory (default: current directory)",
-        ),
-    ] = None,
-    force: Annotated[
-        bool,
-        cyclopts.Parameter(help="Overwrite existing marker file"),
-    ] = False,
-) -> None:
-    """Create .otsinfra.yaml environment marker.
-
-    The marker signals to lots, pots, and rots that the directory is
-    an OTS environment. Direnv handles env vars; this file carries
-    structured metadata (environment name, creation date).
-
-    Examples:
-        rots env init eu2
-        rots env init us-prod -C ~/ops/environments/prod/us
-    """
-    from ots_shared.ssh.env import create_marker
-
-    target = (directory or Path(".")).resolve()
-    if not target.is_dir():
-        logger.error(f"{target} is not a directory")
-        raise SystemExit(1)
-
-    try:
-        path = create_marker(target, environment, force=force)
-        logger.info(f"Created {path}")
-    except FileExistsError as e:
-        logger.error(str(e))
-        raise SystemExit(1)
 
 
 @app.command
