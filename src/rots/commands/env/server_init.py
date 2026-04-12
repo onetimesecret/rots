@@ -1,4 +1,4 @@
-# src/rots/commands/init.py
+# src/rots/commands/env/server_init.py
 
 """Init command for idempotent setup of rots.
 
@@ -44,7 +44,7 @@ def _get_owner_group() -> tuple[int, int]:
     return (os.getuid(), os.getgid())
 
 
-def _path_exists(path: Path, executor) -> bool:
+def _path_exists(path: Path, executor: Executor | None = None) -> bool:
     """Check whether *path* exists (local or remote)."""
     from ots_shared.ssh import is_remote
 
@@ -54,7 +54,7 @@ def _path_exists(path: Path, executor) -> bool:
     return path.exists()
 
 
-def _is_dir(path: Path, executor) -> bool:
+def _is_dir(path: Path, executor: Executor | None = None) -> bool:
     """Check whether *path* is a directory (local or remote)."""
     from ots_shared.ssh import is_remote
 
@@ -182,7 +182,7 @@ def _write_file(
     return True
 
 
-def _glob_env_files(var_dir: Path, executor) -> list[str]:
+def _glob_env_files(var_dir: Path, executor: Executor | None = None) -> list[str]:
     """List .env-* files in var_dir (local or remote)."""
     from ots_shared.ssh import is_remote
 
@@ -194,7 +194,7 @@ def _glob_env_files(var_dir: Path, executor) -> list[str]:
     return sorted(str(p) for p in var_dir.glob(".env-*"))
 
 
-def _init_db(db_path: Path, *, executor=None) -> bool:
+def _init_db(db_path: Path, *, executor: Executor | None = None) -> bool:
     """Initialize the deployment database (local or remote).
 
     Returns True on success, False on failure.

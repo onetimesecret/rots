@@ -1,4 +1,4 @@
-A# Welcome to OTS Ops
+# Welcome to OTS Ops
 
 ## How We Use Claude
 
