@@ -1,105 +1,37 @@
 # src/rots/commands/common.py
 
-"""Shared CLI annotations and constants for consistency across commands.
+"""Shared CLI annotations and constants for consistency across rots commands.
 
-All common flags use long+short forms for consistency:
-  --quiet, -q
-  --dry-run, -n
-  --yes, -y
-  --follow, -f
-  --lines, -l
-  --json, -j
-
-Exit code convention
---------------------
-All commands use this scheme so that CI pipelines and shell scripts can
-distinguish between different failure modes:
-
-  EXIT_SUCCESS  (0)  Command completed successfully; all operations applied.
-  EXIT_FAILURE  (1)  General command failure (unexpected error, bad arguments).
-  EXIT_PARTIAL  (2)  Partial success: at least one operation succeeded and at
-                     least one failed.  Check the output for details.
-  EXIT_PRECOND  (3)  Precondition not met: required configuration is absent
-                     (e.g. missing env file, missing Podman secrets, image not
-                     pulled).  No destructive action was attempted.
+Common flags and exit codes are defined in ots_shared and re-exported here
+so that rots commands import from a single location. Rots-specific type
+aliases (ImageRef, TagFlag) are defined locally below.
 """
 
 from typing import Annotated
 
 import cyclopts
 
-# ------------------------------------------------------------------
-# Exit code constants
-# ------------------------------------------------------------------
+# Re-export shared CLI type aliases
+from ots_shared.cli import DryRun, Follow, JsonOutput, Lines, Quiet, Yes
 
-EXIT_SUCCESS: int = 0
-"""Command completed successfully; all operations applied."""
+# Re-export shared exit codes
+from ots_shared.exit_codes import EXIT_FAILURE, EXIT_PARTIAL, EXIT_PRECOND, EXIT_SUCCESS
 
-EXIT_FAILURE: int = 1
-"""General command failure (unexpected error, bad arguments, etc.)."""
-
-EXIT_PARTIAL: int = 2
-"""Partial success: at least one operation succeeded and at least one failed."""
-
-EXIT_PRECOND: int = 3
-"""Precondition not met: required configuration is absent."""
-
-# Output control
-Quiet = Annotated[
-    bool,
-    cyclopts.Parameter(
-        name=["--quiet", "-q"],
-        help="Suppress output",
-    ),
+# Silence F401 for re-exports
+__all__ = [
+    "DryRun",
+    "Follow",
+    "JsonOutput",
+    "Lines",
+    "Quiet",
+    "Yes",
+    "EXIT_FAILURE",
+    "EXIT_PARTIAL",
+    "EXIT_PRECOND",
+    "EXIT_SUCCESS",
+    "ImageRef",
+    "TagFlag",
 ]
-
-DryRun = Annotated[
-    bool,
-    cyclopts.Parameter(
-        name=["--dry-run", "-n"],
-        help="Show what would be done without doing it",
-        negative=[],  # Disable --no-dry-run generation
-    ),
-]
-
-
-# Confirmation
-Yes = Annotated[
-    bool,
-    cyclopts.Parameter(
-        name=["--yes", "-y"],
-        help="Skip confirmation prompts",
-    ),
-]
-
-
-# Log viewing
-Follow = Annotated[
-    bool,
-    cyclopts.Parameter(
-        name=["--follow", "-f"],
-        help="Follow log output",
-    ),
-]
-
-Lines = Annotated[
-    int,
-    cyclopts.Parameter(
-        name=["--lines", "-l"],
-        help="Number of lines to show",
-    ),
-]
-
-
-# JSON output
-JsonOutput = Annotated[
-    bool,
-    cyclopts.Parameter(
-        name=["--json", "-j"],
-        help="Output as JSON",
-    ),
-]
-
 
 # Image reference annotations
 ImageRef = Annotated[
