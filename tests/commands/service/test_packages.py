@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/service/test_packages.py
+# tests/commands/service/test_packages.py
 
 """Tests for service package registry."""
 

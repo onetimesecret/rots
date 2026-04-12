@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/init.py
+# src/rots/commands/init.py
 
 """Reminder that environment initialization lives in lots/pots.
 

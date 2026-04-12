@@ -1,4 +1,4 @@
-# packages/rots/src/rots/environment_file.py
+# src/rots/environment_file.py
 
 """
 Environment file parsing and secret management.

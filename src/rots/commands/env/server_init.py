@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/env/server_init.py
+# src/rots/commands/env/server_init.py
 
 """Init command for idempotent setup of rots.
 

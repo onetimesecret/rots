@@ -1,4 +1,4 @@
-# packages/rots/src/rots/sidecar/handlers_provision.py
+# src/rots/sidecar/handlers_provision.py
 
 """SOCKS proxy SSH key provisioning between DB and web instances.
 

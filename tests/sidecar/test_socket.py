@@ -1,4 +1,4 @@
-# packages/rots/tests/sidecar/test_socket.py
+# tests/sidecar/test_socket.py
 
 """Tests for src/rots/sidecar/socket.py
 

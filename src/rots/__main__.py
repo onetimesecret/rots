@@ -1,4 +1,4 @@
-# packages/rots/src/rots/__main__.py
+# src/rots/__main__.py
 
 """Entry point for python -m rots."""
 

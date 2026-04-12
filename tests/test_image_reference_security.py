@@ -1,4 +1,4 @@
-# packages/rots/tests/test_image_reference_security.py
+# tests/test_image_reference_security.py
 
 """Security tests for image reference handling.
 

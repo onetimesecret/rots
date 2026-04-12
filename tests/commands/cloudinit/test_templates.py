@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/cloudinit/test_templates.py
+# tests/commands/cloudinit/test_templates.py
 
 """Tests for cloud-init template generation."""
 

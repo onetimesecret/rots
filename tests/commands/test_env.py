@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/test_env.py
+# tests/commands/test_env.py
 
 """Tests for env command subcommands.
 

@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/service/_helpers.py
+# src/rots/commands/service/_helpers.py
 
 """Helper functions for service command operations."""
 

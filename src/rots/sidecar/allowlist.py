@@ -1,4 +1,4 @@
-# packages/rots/src/rots/sidecar/allowlist.py
+# src/rots/sidecar/allowlist.py
 
 """Config key denylist for staged configuration updates.
 

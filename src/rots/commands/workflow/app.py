@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/workflow/app.py
+# src/rots/commands/workflow/app.py
 
 """Fleet orchestration workflow CLI commands.
 

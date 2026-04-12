@@ -1,4 +1,4 @@
-# packages/rots/tests/test_config.py
+# tests/test_config.py
 
 """Tests for config module - Config dataclass."""
 

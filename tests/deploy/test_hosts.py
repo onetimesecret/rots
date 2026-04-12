@@ -1,4 +1,4 @@
-# packages/rots/tests/deploy/test_hosts.py
+# tests/deploy/test_hosts.py
 
 """Tests for src/rots/deploy/hosts.py
 

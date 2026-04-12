@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/host/test_app.py
+# tests/commands/host/test_app.py
 
 """Tests for host command .otsinfra.env integration and executor routing."""
 

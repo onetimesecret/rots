@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/host/test_rsync.py
+# tests/commands/host/test_rsync.py
 
 """Tests for rsync detection and command building."""
 

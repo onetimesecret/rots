@@ -1,4 +1,4 @@
-# packages/rots/tests/conftest.py
+# tests/conftest.py
 
 """Shared fixtures for test isolation from host environment.
 

@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/host/__init__.py
+# src/rots/commands/host/__init__.py
 
 """Host configuration management — push, diff, pull config files via rsync/SSH."""
 

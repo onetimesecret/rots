@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/workflow/test_trigger.py
+# tests/commands/workflow/test_trigger.py
 
 """Tests for rots workflow trigger command.
 

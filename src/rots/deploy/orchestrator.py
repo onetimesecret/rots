@@ -1,4 +1,4 @@
-# packages/rots/src/rots/deploy/orchestrator.py
+# src/rots/deploy/orchestrator.py
 
 """Fleet deployment orchestration.
 

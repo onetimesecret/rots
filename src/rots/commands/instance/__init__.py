@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/instance/__init__.py
+# src/rots/commands/instance/__init__.py
 
 """Instance management commands for OTS containers."""
 

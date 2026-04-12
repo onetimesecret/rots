@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/generate/test_app.py
+# tests/commands/generate/test_app.py
 
 """Tests for the generate command - standalone unit file export."""
 

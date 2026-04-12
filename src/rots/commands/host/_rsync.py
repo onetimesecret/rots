@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/host/_rsync.py
+# src/rots/commands/host/_rsync.py
 
 """Rsync wrapper with version detection and macOS compatibility.
 

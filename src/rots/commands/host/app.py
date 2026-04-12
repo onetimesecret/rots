@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/host/app.py
+# src/rots/commands/host/app.py
 
 """Host configuration management commands.
 

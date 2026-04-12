@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/instance/test_config_transform.py
+# tests/commands/instance/test_config_transform.py
 
 """Tests for the config-transform command.
 

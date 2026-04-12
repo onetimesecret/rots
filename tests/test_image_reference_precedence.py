@@ -1,4 +1,4 @@
-# packages/rots/tests/test_image_reference_precedence.py
+# tests/test_image_reference_precedence.py
 
 """Tests for image reference precedence chain.
 

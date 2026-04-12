@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/instance/annotations.py
+# src/rots/commands/instance/annotations.py
 
 """Type annotations for instance commands.
 

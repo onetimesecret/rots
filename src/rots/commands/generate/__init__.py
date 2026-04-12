@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/generate/__init__.py
+# src/rots/commands/generate/__init__.py
 
 """Export/generate standalone unit files for review and manual installation."""
 

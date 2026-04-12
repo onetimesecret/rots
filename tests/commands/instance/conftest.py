@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/instance/conftest.py
+# tests/commands/instance/conftest.py
 
 """Shared fixtures for instance command tests."""
 

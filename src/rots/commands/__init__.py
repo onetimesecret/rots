@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/__init__.py
+# src/rots/commands/__init__.py
 
 """Command topic modules for rots CLI."""
 

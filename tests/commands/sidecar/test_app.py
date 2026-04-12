@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/sidecar/test_app.py
+# tests/commands/sidecar/test_app.py
 
 """Tests for sidecar CLI subcommand registration.
 

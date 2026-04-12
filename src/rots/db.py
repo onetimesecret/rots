@@ -1,4 +1,4 @@
-# packages/rots/src/rots/db.py
+# src/rots/db.py
 
 """SQLite database for deployment timeline and image alias tracking.
 

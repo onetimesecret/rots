@@ -1,4 +1,4 @@
-# packages/rots/src/rots/cli.py
+# src/rots/cli.py
 
 """
 Manage OTS Podman containers via Quadlets.

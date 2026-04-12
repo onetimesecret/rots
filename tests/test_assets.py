@@ -1,4 +1,4 @@
-# packages/rots/tests/test_assets.py
+# tests/test_assets.py
 
 """Tests for assets module."""
 

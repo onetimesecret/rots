@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/instance/test_deploy_image_ref.py
+# tests/commands/instance/test_deploy_image_ref.py
 
 """Integration tests for deploy/redeploy image reference handling.
 

@@ -1,4 +1,4 @@
-# packages/rots/tests/integration/test_ssh_remote.py
+# tests/integration/test_ssh_remote.py
 
 """Integration tests exercising remote code paths through FakeSSHServer.
 

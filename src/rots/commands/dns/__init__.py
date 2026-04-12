@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/dns/__init__.py
+# src/rots/commands/dns/__init__.py
 
 """DNS management commands."""
 

@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/proxy/test_helpers.py
+# tests/commands/proxy/test_helpers.py
 
 """Tests for proxy command helpers."""
 

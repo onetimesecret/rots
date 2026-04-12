@@ -1,4 +1,4 @@
-# packages/rots/src/rots/sidecar/handlers_rolling.py
+# src/rots/sidecar/handlers_rolling.py
 
 """Rolling restart handler for bulk instance operations.
 

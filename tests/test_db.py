@@ -1,4 +1,4 @@
-# packages/rots/tests/test_db.py
+# tests/test_db.py
 
 """Tests for deployment timeline database."""
 

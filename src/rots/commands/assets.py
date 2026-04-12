@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/assets.py
+# src/rots/commands/assets.py
 
 """Asset management commands for OTS containers."""
 

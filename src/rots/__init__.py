@@ -1,4 +1,4 @@
-# packages/rots/src/rots/__init__.py
+# src/rots/__init__.py
 
 from importlib.metadata import PackageNotFoundError, version
 

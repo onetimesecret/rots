@@ -1,4 +1,4 @@
-# packages/rots/src/rots/deploy/hosts.py
+# src/rots/deploy/hosts.py
 
 """Host discovery and resolution for fleet deployments.
 

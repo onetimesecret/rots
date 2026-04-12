@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/cloudinit/__init__.py
+# src/rots/commands/cloudinit/__init__.py
 
 """Cloud-init configuration generation for OTS infrastructure."""
 

@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/test_db_commands.py
+# tests/commands/test_db_commands.py
 
 """Tests for db CLI commands (backup, restore, info, deployments)."""
 

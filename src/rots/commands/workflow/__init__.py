@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/workflow/__init__.py
+# src/rots/commands/workflow/__init__.py
 
 """Fleet orchestration workflow commands."""
 

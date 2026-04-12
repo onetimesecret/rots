@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/env/app.py
+# src/rots/commands/env/app.py
 
 """Environment file management commands.
 

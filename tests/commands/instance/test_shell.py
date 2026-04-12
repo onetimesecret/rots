@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/instance/test_shell.py
+# tests/commands/instance/test_shell.py
 
 """Tests for the shell command.
 

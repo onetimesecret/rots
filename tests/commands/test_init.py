@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/test_init.py
+# tests/commands/test_init.py
 
 """Tests for init command with permission handling."""
 

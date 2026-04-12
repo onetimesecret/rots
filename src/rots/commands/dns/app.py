@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/dns/app.py
+# src/rots/commands/dns/app.py
 
 """DNS record management commands via dns-lexicon.
 

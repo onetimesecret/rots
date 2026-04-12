@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/dns/_helpers.py
+# src/rots/commands/dns/_helpers.py
 
 """Helper functions for DNS record management via dns-lexicon."""
 

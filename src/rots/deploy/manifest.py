@@ -1,4 +1,4 @@
-# packages/rots/src/rots/deploy/manifest.py
+# src/rots/deploy/manifest.py
 
 """Deployment manifest schema and discovery.
 

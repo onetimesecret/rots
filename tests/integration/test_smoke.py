@@ -1,4 +1,4 @@
-# packages/rots/tests/integration/test_smoke.py
+# tests/integration/test_smoke.py
 
 """Smoke tests for rots CLI against a real systemd environment.
 

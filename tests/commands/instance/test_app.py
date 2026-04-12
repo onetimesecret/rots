@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/instance/test_app.py
+# tests/commands/instance/test_app.py
 
 """Tests for instance management commands.
 

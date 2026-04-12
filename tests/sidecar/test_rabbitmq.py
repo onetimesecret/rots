@@ -1,4 +1,4 @@
-# packages/rots/tests/sidecar/test_rabbitmq.py
+# tests/sidecar/test_rabbitmq.py
 
 """Tests for src/rots/sidecar/rabbitmq.py
 

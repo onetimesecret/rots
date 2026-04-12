@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/image/test_build.py
+# tests/commands/image/test_build.py
 
 """Tests for image build command.
 

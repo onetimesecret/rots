@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/sidecar/app.py
+# src/rots/commands/sidecar/app.py
 
 """Sidecar daemon management commands.
 

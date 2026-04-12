@@ -1,4 +1,4 @@
-# packages/rots/tests/test_systemd.py
+# tests/test_systemd.py
 
 """Tests for systemd module — D-Bus backend (primary) and CLI fallback."""
 

@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/instance/test_run_image_ref.py
+# tests/commands/instance/test_run_image_ref.py
 
 """Integration tests for the run command's image reference handling.
 

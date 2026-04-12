@@ -1,4 +1,4 @@
-# packages/rots/src/rots/context.py
+# src/rots/context.py
 
 """Context variables for threading global state through the call stack.
 

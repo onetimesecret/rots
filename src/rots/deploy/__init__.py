@@ -1,4 +1,4 @@
-# packages/rots/src/rots/deploy/__init__.py
+# src/rots/deploy/__init__.py
 
 """Fleet deployment orchestration library.
 

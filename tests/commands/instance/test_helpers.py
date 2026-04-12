@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/instance/test_helpers.py
+# tests/commands/instance/test_helpers.py
 
 """Tests for instance command helpers."""
 

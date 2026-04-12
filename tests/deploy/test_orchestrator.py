@@ -1,4 +1,4 @@
-# packages/rots/tests/deploy/test_orchestrator.py
+# tests/deploy/test_orchestrator.py
 
 """Tests for src/rots/deploy/orchestrator.py
 

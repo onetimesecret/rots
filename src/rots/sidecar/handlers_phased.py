@@ -1,4 +1,4 @@
-# packages/rots/src/rots/sidecar/handlers_phased.py
+# src/rots/sidecar/handlers_phased.py
 
 """Phased restart handlers for graceful service restarts.
 

@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/sidecar/__init__.py
+# src/rots/commands/sidecar/__init__.py
 
 """Sidecar command sub-app."""
 

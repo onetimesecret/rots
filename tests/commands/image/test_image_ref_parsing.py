@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/image/test_image_ref_parsing.py
+# tests/commands/image/test_image_ref_parsing.py
 
 """Integration tests for pull command's image reference parsing.
 

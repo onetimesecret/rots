@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/instance/test_health_and_ps.py
+# tests/commands/instance/test_health_and_ps.py
 
 """Tests for container health display and instances ps subcommand."""
 

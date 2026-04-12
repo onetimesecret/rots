@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/self.py
+# src/rots/commands/self.py
 
 """Self-management commands for rots.
 

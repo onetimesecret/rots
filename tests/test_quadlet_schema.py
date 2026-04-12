@@ -1,4 +1,4 @@
-# packages/rots/tests/test_quadlet_schema.py
+# tests/test_quadlet_schema.py
 
 """Validate rendered Podman Quadlet files against the quadlet schema.
 

@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/workflow/test_deploy.py
+# tests/commands/workflow/test_deploy.py
 
 """Tests for rots workflow deploy command.
 

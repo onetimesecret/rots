@@ -1,4 +1,4 @@
-# packages/rots/tests/test_podman.py
+# tests/test_podman.py
 
 """Tests for the Podman CLI wrapper."""
 

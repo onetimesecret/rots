@@ -1,4 +1,4 @@
-# packages/rots/tests/integration/conftest.py
+# tests/integration/conftest.py
 
 """Fixtures for SSH integration tests.
 

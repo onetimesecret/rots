@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/proxy/__init__.py
+# src/rots/commands/proxy/__init__.py
 
 """Proxy management commands for OTS containers."""
 

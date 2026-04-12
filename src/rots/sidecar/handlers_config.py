@@ -1,4 +1,4 @@
-# packages/rots/src/rots/sidecar/handlers_config.py
+# src/rots/sidecar/handlers_config.py
 
 """Staged configuration handlers for safe config updates.
 

@@ -1,4 +1,4 @@
-# packages/rots/tests/test_main.py
+# tests/test_main.py
 
 """Tests for __main__.py entry point (python -m rots)."""
 

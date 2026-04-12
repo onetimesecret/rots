@@ -1,4 +1,4 @@
-# packages/rots/tests/test_quadlet.py
+# tests/test_quadlet.py
 
 """Tests for quadlet module - Podman quadlet file generation."""
 

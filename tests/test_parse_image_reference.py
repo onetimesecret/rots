@@ -1,4 +1,4 @@
-# packages/rots/tests/test_parse_image_reference.py
+# tests/test_parse_image_reference.py
 
 """Tests for parse_image_reference().
 

@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/cloudinit/test_app.py
+# tests/commands/cloudinit/test_app.py
 
 """Tests for cloud-init command app."""
 

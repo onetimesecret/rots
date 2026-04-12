@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/image/__init__.py
+# src/rots/commands/image/__init__.py
 
 """Image management commands."""
 

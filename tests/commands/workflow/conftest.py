@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/workflow/conftest.py
+# tests/commands/workflow/conftest.py
 
 """Fixtures for workflow command tests."""
 

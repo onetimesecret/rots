@@ -1,4 +1,4 @@
-# packages/rots/tests/commands/service/test_app.py
+# tests/commands/service/test_app.py
 
 """Tests for service command app."""
 

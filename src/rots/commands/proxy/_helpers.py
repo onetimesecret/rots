@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/proxy/_helpers.py
+# src/rots/commands/proxy/_helpers.py
 
 """Helper functions for proxy commands.
 

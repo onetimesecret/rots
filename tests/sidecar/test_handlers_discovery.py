@@ -1,4 +1,4 @@
-# packages/rots/tests/sidecar/test_handlers_discovery.py
+# tests/sidecar/test_handlers_discovery.py
 
 """Tests for the discover.ping handler.
 

@@ -1,4 +1,4 @@
-# packages/rots/src/rots/commands/generate/app.py
+# src/rots/commands/generate/app.py
 
 """Generate standalone quadlet/unit files for review and manual installation.
 

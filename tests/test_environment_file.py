@@ -1,4 +1,4 @@
-# packages/rots/tests/test_environment_file.py
+# tests/test_environment_file.py
 
 """Tests for environment_file module - env file parsing and secret management."""
 

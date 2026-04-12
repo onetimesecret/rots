@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# packages/rots/scripts/deploy-custom-image.py
+# scripts/deploy-custom-image.py
 
 """Standalone deployment script for custom OTS images.
 
