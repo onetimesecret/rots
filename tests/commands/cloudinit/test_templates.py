@@ -7,9 +7,57 @@ import yaml
 from rots.commands.cloudinit.templates import (
     DEFAULT_CADDY_PLUGINS,
     DEFAULT_CADDY_VERSION,
-    generate_cloudinit_config,
+    CloudInitBuilder,
+    configure_base_ots,
+    configure_postgresql,
+    configure_rabbitmq,
+    configure_valkey,
+    configure_xcaddy,
     get_debian13_sources_list,
 )
+
+
+def generate_cloudinit_config(
+    *,
+    include_postgresql: bool = False,
+    include_postgresql_server: bool = False,
+    include_valkey: bool = False,
+    include_rabbitmq: bool = False,
+    include_xcaddy: bool = False,
+    postgresql_gpg_key: str | None = None,
+    valkey_gpg_key: str | None = None,
+    rabbitmq_gpg_key: str | None = None,
+    caddy_version: str = DEFAULT_CADDY_VERSION,
+    caddy_plugins: list[str] | None = None,
+    ssh_authorized_keys: list[str] | None = None,
+    timezone: str = "UTC",
+    hostname: str | None = None,
+) -> str:
+    """Helper to maintain existing test coverage using the new Builder pattern."""
+    builder = CloudInitBuilder(hostname=hostname, timezone=timezone)
+    if ssh_authorized_keys:
+        builder.ssh_authorized_keys = ssh_authorized_keys
+
+    configure_base_ots(builder)
+
+    if include_postgresql or include_postgresql_server:
+        configure_postgresql(
+            builder,
+            server=include_postgresql_server,
+            gpg_key=postgresql_gpg_key,
+        )
+
+    if include_valkey:
+        configure_valkey(builder, gpg_key=valkey_gpg_key)
+
+    if include_rabbitmq:
+        configure_rabbitmq(builder, gpg_key=rabbitmq_gpg_key)
+
+    if include_xcaddy:
+        configure_xcaddy(builder, version=caddy_version, plugins=caddy_plugins)
+
+    return builder.build()
+
 
 pytestmark = pytest.mark.quick
 

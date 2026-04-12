@@ -25,6 +25,7 @@ from rots.environment_file import (
 from rots.quadlet import DEFAULT_ENV_FILE
 
 from ..common import DryRun, JsonOutput
+from .server_init import app as _server_init_app
 
 if TYPE_CHECKING:
     from ots_shared.ssh import Executor
@@ -35,6 +36,9 @@ app = cyclopts.App(
     name="env",
     help="Manage environment files and secrets.",
 )
+
+# Server-side initialization (was top-level `rots init`, now `rots env init`)
+app.command(_server_init_app)
 
 
 def _file_exists(path: Path, executor: Executor) -> bool:

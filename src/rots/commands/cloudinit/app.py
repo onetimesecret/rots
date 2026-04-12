@@ -12,7 +12,15 @@ from typing import Annotated
 
 import cyclopts
 
-from .templates import DEFAULT_CADDY_VERSION, generate_cloudinit_config
+from .templates import (
+    DEFAULT_CADDY_VERSION,
+    CloudInitBuilder,
+    configure_base_ots,
+    configure_postgresql,
+    configure_rabbitmq,
+    configure_valkey,
+    configure_xcaddy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +47,13 @@ def generate(
         cyclopts.Parameter(help="Output file path (default: stdout)"),
     ] = None,
     *,
+    include_rabbitmq: Annotated[
+        bool,
+        cyclopts.Parameter(help="Include RabbitMQ 4.2+ apt repository (server)"),
+    ] = False,
     include_postgresql: Annotated[
-        bool, cyclopts.Parameter(help="Include PostgreSQL apt repository (client only)")
+        bool,
+        cyclopts.Parameter(help="Include PostgreSQL apt repository (client only)"),
     ] = False,
     include_postgresql_server: Annotated[
         bool,
@@ -68,6 +81,10 @@ def generate(
     valkey_key: Annotated[
         str | None,
         cyclopts.Parameter(help="Path to Valkey GPG key file"),
+    ] = None,
+    rabbitmq_key: Annotated[
+        str | None,
+        cyclopts.Parameter(help="Path to RabbitMQ GPG key file"),
     ] = None,
     ssh_authorized_key: Annotated[
         list[str] | None,
@@ -109,6 +126,7 @@ def generate(
     # Read GPG keys if provided
     postgresql_gpg = None
     valkey_gpg = None
+    rabbitmq_gpg = None
 
     if include_postgresql and postgresql_key:
         postgresql_gpg = Path(postgresql_key).read_text()
@@ -116,21 +134,34 @@ def generate(
     if include_valkey and valkey_key:
         valkey_gpg = Path(valkey_key).read_text()
 
+    if include_rabbitmq and rabbitmq_key:
+        rabbitmq_gpg = Path(rabbitmq_key).read_text()
+
     # Generate configuration
     try:
-        config = generate_cloudinit_config(
-            include_postgresql=include_postgresql,
-            include_postgresql_server=include_postgresql_server,
-            include_valkey=include_valkey,
-            include_xcaddy=include_xcaddy,
-            postgresql_gpg_key=postgresql_gpg,
-            valkey_gpg_key=valkey_gpg,
-            caddy_version=caddy_version,
-            caddy_plugins=caddy_plugins,
-            ssh_authorized_keys=ssh_authorized_key or None,
-            timezone=timezone,
-            hostname=hostname,
-        )
+        builder = CloudInitBuilder(hostname=hostname, timezone=timezone)
+        if ssh_authorized_key:
+            builder.ssh_authorized_keys = ssh_authorized_key
+
+        configure_base_ots(builder)
+
+        if include_postgresql or include_postgresql_server:
+            configure_postgresql(
+                builder,
+                server=include_postgresql_server,
+                gpg_key=postgresql_gpg,
+            )
+
+        if include_valkey:
+            configure_valkey(builder, gpg_key=valkey_gpg)
+
+        if include_rabbitmq:
+            configure_rabbitmq(builder, gpg_key=rabbitmq_gpg)
+
+        if include_xcaddy:
+            configure_xcaddy(builder, version=caddy_version, plugins=caddy_plugins)
+
+        config = builder.build()
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

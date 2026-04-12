@@ -63,6 +63,10 @@ class Command(StrEnum):
     # Discovery
     DISCOVER_PING = "discover.ping"
 
+    # Provisioning
+    PROVISION_SOCKS_KEY_READ = "provision.socks_key_read"
+    PROVISION_SOCKS_KEY_WRITE = "provision.socks_key_write"
+
 
 @dataclass
 class CommandResult:
@@ -194,6 +198,7 @@ def _import_handlers() -> None:
         handlers_discovery,  # noqa: F401
         handlers_lifecycle,  # noqa: F401
         handlers_phased,  # noqa: F401
+        handlers_provision,  # noqa: F401
         handlers_rolling,  # noqa: F401
         handlers_rots,  # noqa: F401
         handlers_status,  # noqa: F401
