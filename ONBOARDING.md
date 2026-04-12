@@ -25,10 +25,10 @@ Top MCP Servers:
 
 ### Codebases
 - [ ] monorepo — git@github.com:onetime/tools-monorepo.git (parent repo for all ops tooling)
-  - [ ] rots (`deployments/containers/`) — Podman Quadlet/systemd container orchestration (public, submodule: git@github.com:onetimesecret/rots.git)
-  - [ ] lots (`hosts/management/`) — Hetzner Cloud + cloud-init host management (public)
-  - [ ] pots (`hosts/inventory/`) — Host inventory and SSH config generation (private)
-  - [ ] ots-shared (`deployments/containers/packages/ots-shared/`) — Shared library used by rots, lots, and pots (public)
+  - [ ] rots (`packages/rots/`) — Podman Quadlet/systemd container orchestration (public, submodule: git@github.com:onetimesecret/rots.git)
+  - [ ] lots (`packages/lots/`) — Hetzner Cloud + cloud-init host management (public)
+  - [ ] pots (`packages/pots/`) — Host inventory and SSH config generation (private)
+  - [ ] ots-shared (`packages/rots/packages/ots-shared/`) — Shared library used by rots, lots, and pots (public)
 
 ### MCP Servers to Activate
   (none required at this time)

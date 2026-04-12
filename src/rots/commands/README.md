@@ -22,17 +22,17 @@ Three container types, each with explicit naming:
 
 ```bash
 # Positional identifiers with type flag
-ots instances restart --web 7043 7044
-ots instances restart --worker billing emails
-ots instances restart --scheduler main
+rots instances restart --web 7043 7044
+rots instances restart --worker billing emails
+rots instances restart --scheduler main
 
 # Auto-discover all types when no args
-ots instances stop                  # stops ALL running instances
-ots instances status                # shows ALL configured instances
+rots instances stop                  # stops ALL running instances
+rots instances status                # shows ALL configured instances
 
 # Type-specific discovery
-ots instances status --web          # only web instances
-ots instances logs --scheduler -f   # only scheduler logs
+rots instances status --web          # only web instances
+rots instances logs --scheduler -f   # only scheduler logs
 ```
 
 ## Topics
@@ -112,10 +112,10 @@ def redeploy(...):
     Use --force to fully teardown and recreate.
 
     Examples:
-        ots instances redeploy                      # Redeploy all running
-        ots instances redeploy --web                # Redeploy web instances
-        ots instances redeploy --web 7043 7044      # Redeploy specific web
-        ots instances redeploy --scheduler main     # Redeploy specific scheduler
+        rots instances redeploy                      # Redeploy all running
+        rots instances redeploy --web                # Redeploy web instances
+        rots instances redeploy --web 7043 7044      # Redeploy specific web
+        rots instances redeploy --scheduler main     # Redeploy specific scheduler
     """
 ```
 

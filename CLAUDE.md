@@ -26,7 +26,7 @@ pytest tests/commands/cloudinit/
 # Run tests with coverage (CI threshold: 70%)
 pytest tests/ --cov=rots --cov-report=term-missing --cov-fail-under=70
 
-# IMPORTANT: See docs/TESTING.md for testing patterns
+# IMPORTANT: See docs/testing.md for testing patterns
 # Key rule: mock responses must use tmp_path, not real system paths
 
 # Lint and format
