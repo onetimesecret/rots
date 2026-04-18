@@ -32,7 +32,7 @@ from .commands import Command, CommandResult, register_handler
 logger = logging.getLogger(__name__)
 
 # Default paths
-DEFAULT_ENV_PATH = Path("/etc/onetimesecret/.env")
+DEFAULT_ENV_PATH = Path("/etc/default/onetimesecret")
 STAGED_SUFFIX = ".staged"
 BACKUP_SUFFIX = ".backup"
 
@@ -70,7 +70,7 @@ def handle_config_stage(params: dict[str, Any]) -> CommandResult:
 
     Params:
         updates (required): Dict of key=value pairs to stage
-        env_path (optional): Path to env file (default: /etc/onetimesecret/.env)
+        env_path (optional): Path to env file (default: /etc/default/onetimesecret)
 
     Returns:
         CommandResult with staged keys and any rejected keys
@@ -132,7 +132,7 @@ def handle_config_apply(params: dict[str, Any]) -> CommandResult:
     5. Monitors health after restart
 
     Params:
-        env_path (optional): Path to env file (default: /etc/onetimesecret/.env)
+        env_path (optional): Path to env file (default: /etc/default/onetimesecret)
         skip_restart (optional): If True, don't restart instances (default: False)
         restart_delay (optional): Seconds between instance restarts (default: 5)
         health_timeout (optional): Seconds to wait for health (default: 60)
@@ -250,7 +250,7 @@ def handle_config_discard(params: dict[str, Any]) -> CommandResult:
     Removes the .staged file without applying any changes.
 
     Params:
-        env_path (optional): Path to env file (default: /etc/onetimesecret/.env)
+        env_path (optional): Path to env file (default: /etc/default/onetimesecret)
 
     Returns:
         CommandResult indicating whether staged file was removed
@@ -296,7 +296,7 @@ def handle_config_get(params: dict[str, Any]) -> CommandResult:
 
     Params:
         keys (optional): List of keys to read. If empty, returns all non-secret keys.
-        env_path (optional): Path to env file (default: /etc/onetimesecret/.env)
+        env_path (optional): Path to env file (default: /etc/default/onetimesecret)
         include_staged (optional): If True, also show staged changes (default: False)
 
     Returns:
