@@ -26,7 +26,7 @@ pytest tests/commands/cloudinit/
 # Run tests with coverage (CI threshold: 70%)
 pytest tests/ --cov=rots --cov-report=term-missing --cov-fail-under=70
 
-# IMPORTANT: See docs/TESTING.md for testing patterns
+# IMPORTANT: See docs/testing.md for testing patterns
 # Key rule: mock responses must use tmp_path, not real system paths
 
 # Lint and format
@@ -86,7 +86,7 @@ This is a dual-purpose service orchestration tool:
 - Uses **cyclopts** for CLI framework (decorators like `@app.command()`)
 - **Port-based instance identification**: Each instance runs on a specific port (e.g., 7043 for containers, 6379 for services)
 - **Container auto-discovery**: `systemd.discover_instances()` finds running `onetime@*` services
-- **Container env templating**: `/etc/onetimesecret/.env` → `/var/lib/onetimesecret/.env-{port}` (FHS-compliant)
+- **Container env templating**: `/etc/default/onetimesecret` → `/var/lib/onetimesecret/.env-{port}` (FHS-compliant)
 - **Service config copy-on-write**: Package defaults (`/etc/valkey/valkey.conf`) → instance configs (`/etc/valkey/instances/6379.conf`)
 - **Service secrets separation**: Sensitive data in separate files with restricted permissions (mode 0640, owned by service user)
 - **Package-provided templates**: Uses existing systemd templates (`valkey-server@.service`) rather than creating custom units

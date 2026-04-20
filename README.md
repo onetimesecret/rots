@@ -22,7 +22,7 @@ pipx ensurepath
 pipx install rots
 
 # Or from git
-pipx install git+https://github.com/onetimesecret/ots-containers.git
+pipx install git+https://github.com/onetimesecret/rots.git
 ```
 
 ### Migrating from pip to pipx
@@ -45,8 +45,8 @@ pip install rots
 ### From source
 
 ```bash
-git clone https://github.com/onetimesecret/ots-containers.git
-cd ots-containers
+git clone https://github.com/onetimesecret/rots.git
+cd rots
 pipx install .
 ```
 
@@ -357,15 +357,15 @@ deactivate
 
 ```bash
 # Editable install
-git clone https://github.com/onetimesecret/ots-containers.git
-cd ots-containers
+git clone https://github.com/onetimesecret/rots.git
+cd rots
 pip install -e ".[dev,test]"
 
 # Run tests
 pytest tests/
 
 # Run with coverage (CI threshold: 70%)
-pytest tests/ --cov=ots_containers --cov-fail-under=70
+pytest tests/ --cov=rots --cov-fail-under=70
 
 # Pre-commit hooks
 pre-commit install

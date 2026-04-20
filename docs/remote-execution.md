@@ -1,6 +1,6 @@
 # Remote Execution
 
-ots-containers supports executing commands on remote hosts via SSH, allowing a single operator workstation to manage containers across multiple servers.
+rots supports executing commands on remote hosts via SSH, allowing a single operator workstation to manage containers across multiple servers.
 
 ## How It Works
 
@@ -30,7 +30,7 @@ ops-jurisdictions/
   us/.otsinfra.env     # US servers
 ```
 
-When you `cd` into a jurisdiction directory and run `ots instances ...`, the walk-up resolver finds the appropriate `.otsinfra.env` and connects to the right host automatically.
+When you `cd` into a jurisdiction directory and run `rots instances ...`, the walk-up resolver finds the appropriate `.otsinfra.env` and connects to the right host automatically.
 
 ### Format
 
@@ -84,9 +84,9 @@ Connections use `RejectPolicy` -- the remote host must already be in `~/.ssh/kno
 ssh-keyscan -H eu-prod-1.onetimesecret.com >> ~/.ssh/known_hosts
 ```
 
-### otsinfra Integration
+### pots Integration
 
-The `otsinfra` tool (in `hosts/inventory/`) generates both SSH config entries and dnsmasq configuration at setup time. When you provision a new host through otsinfra:
+The `pots` tool (sibling package in the monorepo) generates both SSH config entries and dnsmasq configuration at setup time. When you provision a new host through pots:
 
 1. SSH config entries are added for each host's FQDN
 2. dnsmasq configuration maps FQDNs to IP addresses for local DNS resolution
