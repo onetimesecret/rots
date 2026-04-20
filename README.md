@@ -109,22 +109,6 @@ ots-containers service disable redis 6380
 ots-containers service
 ```
 
-### Generating Cloud-Init Configurations
-
-```bash
-# Generate basic cloud-init config
-ots-containers cloudinit generate > user-data.yaml
-
-# Include PostgreSQL repository
-ots-containers cloudinit generate --include-postgresql --postgresql-key /path/to/pgdg.asc
-
-# Include Valkey repository
-ots-containers cloudinit generate --include-valkey --valkey-key /path/to/valkey.gpg
-
-# Validate configuration
-ots-containers cloudinit validate user-data.yaml
-```
-
 ## Environment Variables
 
 ```bash

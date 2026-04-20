@@ -2,7 +2,6 @@
 """Command topic modules for rots CLI."""
 
 from . import assets as assets
-from . import cloudinit as cloudinit
 from . import db as db
 from . import dns as dns
 from . import env as env
