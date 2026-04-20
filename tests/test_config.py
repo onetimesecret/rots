@@ -705,6 +705,80 @@ class TestConfigPrivateImage:
         assert cfg.private_image == "myreg.example.com/team/webapp"
 
 
+class TestStripRegistryPrefix:
+    """Test _strip_registry_prefix() helper function."""
+
+    def test_strips_registry_with_dot(self):
+        """Should strip registry hostname containing a dot."""
+        from rots.config import _strip_registry_prefix
+
+        assert _strip_registry_prefix("ghcr.io/org/image") == "org/image"
+
+    def test_strips_registry_with_port(self):
+        """Should strip registry hostname containing a port."""
+        from rots.config import _strip_registry_prefix
+
+        assert _strip_registry_prefix("registry:5000/org/image") == "org/image"
+
+    def test_strips_localhost(self):
+        """Should strip localhost as a registry hostname per OCI convention."""
+        from rots.config import _strip_registry_prefix
+
+        assert _strip_registry_prefix("localhost/image") == "image"
+
+    def test_preserves_path_without_registry(self):
+        """Should preserve full path when first component has no dot or colon."""
+        from rots.config import _strip_registry_prefix
+
+        assert _strip_registry_prefix("onetimesecret/onetimesecret") == "onetimesecret/onetimesecret"
+
+    def test_bare_image_name(self):
+        """Should return bare image name unchanged."""
+        from rots.config import _strip_registry_prefix
+
+        assert _strip_registry_prefix("nginx") == "nginx"
+
+    def test_multi_component_path(self):
+        """Should preserve multi-component path after stripping registry."""
+        from rots.config import _strip_registry_prefix
+
+        assert (
+            _strip_registry_prefix("ghcr.io/onetimesecret/onetimesecret")
+            == "onetimesecret/onetimesecret"
+        )
+
+
+class TestEffectiveImage:
+    """Test Config.effective_image property."""
+
+    def test_no_registry_returns_image(self, monkeypatch):
+        """effective_image should return self.image when no OTS_REGISTRY is set."""
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        from rots.config import Config
+
+        cfg = Config()
+        assert cfg.effective_image == cfg.image
+
+    def test_with_registry_replaces_hostname(self, monkeypatch):
+        """effective_image should replace registry hostname, preserving full path."""
+        monkeypatch.setenv("OTS_REGISTRY", "private.registry.co")
+        monkeypatch.delenv("IMAGE", raising=False)
+        from rots.config import Config
+
+        cfg = Config()
+        # Default IMAGE is ghcr.io/onetimesecret/onetimesecret
+        assert cfg.effective_image == "private.registry.co/onetimesecret/onetimesecret"
+
+    def test_with_registry_and_custom_image(self, monkeypatch):
+        """IMAGE without registry prefix + OTS_REGISTRY should prepend registry."""
+        monkeypatch.setenv("OTS_REGISTRY", "private.registry.co")
+        monkeypatch.setenv("IMAGE", "onetimesecret/onetimesecret")
+        from rots.config import Config
+
+        cfg = Config()
+        assert cfg.effective_image == "private.registry.co/onetimesecret/onetimesecret"
+
+
 class TestConfigResolveImageTag:
     """Test Config.resolve_image_tag() with a real SQLite database."""
 
@@ -777,6 +851,34 @@ class TestConfigResolveImageTag:
         image, tag = cfg.resolve_image_tag()
         assert image == "myregistry/myimage"
         assert tag == "v3.0.0"
+
+    def test_resolve_applies_registry(self, monkeypatch, tmp_path):
+        """OTS_REGISTRY should be applied to the image in non-alias resolution."""
+        from rots.config import Config
+
+        monkeypatch.setenv("TAG", "v1.0.0")
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.setenv("OTS_REGISTRY", "private.registry.co")
+        cfg = Config(var_dir=tmp_path)
+        image, tag = cfg.resolve_image_tag()
+        assert image == "private.registry.co/onetimesecret/onetimesecret"
+        assert tag == "v1.0.0"
+
+    def test_resolve_alias_applies_registry(self, monkeypatch, tmp_path):
+        """OTS_REGISTRY should be applied to alias-resolved images."""
+        from rots import db
+        from rots.config import Config
+
+        db_path = tmp_path / "deployments.db"
+        db.init_db(db_path)
+        db.set_current(db_path, "ghcr.io/onetimesecret/onetimesecret", "v1.5.0")
+
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.setenv("OTS_REGISTRY", "private.registry.co")
+        cfg = Config(var_dir=tmp_path)
+        image, tag = cfg.resolve_image_tag()
+        assert image == "private.registry.co/onetimesecret/onetimesecret"
+        assert tag == "v1.5.0"
 
 
 class TestConfigValkeyService:
