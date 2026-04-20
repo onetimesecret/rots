@@ -1,4 +1,5 @@
 # tests/integration/conftest.py
+
 """Fixtures for SSH integration tests.
 
 Provides a fake SSH server (paramiko server mode) that accepts key-based

@@ -1,10 +1,12 @@
+# packages/ots-shared/src/ots_shared/ssh/executor.py
+
 """Command execution abstraction for local and remote (SSH) targets.
 
 Provides a Protocol-based executor pattern so callers can run shell commands
 without knowing whether they execute locally or over SSH.  Also supports
 individual file transfers via ``put_file`` / ``get_file`` (SFTP for SSH,
 local filesystem for local).  For bulk file operations, use rsync
-(see ``ots_containers.commands.host._rsync``).
+(see ``rots.commands.host._rsync``).
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeGuard, runtime_checkable
 
 # Default timeout (in seconds) for SSH command execution.
 # Prevents hung remote processes from running indefinitely.
@@ -141,6 +143,17 @@ class Executor(Protocol):
     def close(self) -> None: ...
 
 
+@runtime_checkable
+class RemoteExecutor(Executor, Protocol):
+    """Protocol for executors that dispatch commands to a remote host.
+
+    This is a marker protocol — it has no additional methods beyond Executor.
+    Used with TypeGuard to enable proper type narrowing after is_remote() checks.
+    """
+
+    pass
+
+
 def _require_list(cmd: object, method: str) -> None:
     """Raise TypeError if *cmd* is a str instead of list[str].
 
@@ -154,10 +167,13 @@ def _require_list(cmd: object, method: str) -> None:
         )
 
 
-def is_remote(executor: Executor | None) -> bool:
+def is_remote(executor: Executor | None) -> TypeGuard[RemoteExecutor]:
     """Return True if *executor* dispatches commands to a remote host.
 
     Returns False for ``None`` (no executor) or a :class:`LocalExecutor`.
+
+    The TypeGuard return type tells the type checker that when this
+    returns True, *executor* is narrowed to :class:`RemoteExecutor`.
     """
     if executor is None:
         return False

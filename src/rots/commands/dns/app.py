@@ -197,7 +197,7 @@ def add(
     # Check if record already exists
     existing = get_dns_current(db, hostname, executor=ex)
     if existing:
-        print(
+        logger.error(
             f"Record already exists for {hostname}. Use 'rots dns update {hostname}' to modify it."
         )
         raise SystemExit(EXIT_PRECOND)
@@ -205,29 +205,28 @@ def add(
     # Resolve IP
     resolved_ip = _resolve_ip(ip)
     if not resolved_ip:
-        print("Could not detect public IP. Specify with --ip")
+        logger.error("Could not detect public IP. Specify with --ip")
         raise SystemExit(EXIT_PRECOND)
 
     # Resolve provider
     resolved_provider = _resolve_provider(provider)
     if not resolved_provider:
-        print("No DNS provider detected.")
-        print()
-        print(_provider_hint_message())
+        logger.error("No DNS provider detected.")
+        logger.info(_provider_hint_message())
         raise SystemExit(EXIT_PRECOND)
 
     base_domain, name = parse_hostname(hostname)
 
     if dry_run:
-        print(f"[dry-run] Would create {type} record:")
-        print(f"  Hostname: {hostname}")
-        print(f"  Type:     {type}")
-        print(f"  Value:    {resolved_ip}")
-        print(f"  TTL:      {ttl}")
-        print(f"  Provider: {resolved_provider}")
-        print(f"  Domain:   {base_domain}")
+        logger.info(f"[dry-run] Would create {type} record:")
+        logger.info(f"  Hostname: {hostname}")
+        logger.info(f"  Type:     {type}")
+        logger.info(f"  Value:    {resolved_ip}")
+        logger.info(f"  TTL:      {ttl}")
+        logger.info(f"  Provider: {resolved_provider}")
+        logger.info(f"  Domain:   {base_domain}")
         if name:
-            print(f"  Name:     {name}")
+            logger.info(f"  Name:     {name}")
         return
 
     # Create via lexicon
@@ -235,7 +234,7 @@ def add(
     success = client.add_record(type, name or hostname, resolved_ip)
 
     if not success:
-        print(f"Failed to create DNS record for {hostname}")
+        logger.error(f"Failed to create DNS record for {hostname}")
         record_dns_action(
             db,
             hostname,
@@ -278,9 +277,9 @@ def add(
             )
         )
     else:
-        print(f"Created {type} record: {hostname} -> {resolved_ip}")
-        print(f"  TTL:      {ttl}s")
-        print(f"  Provider: {resolved_provider}")
+        logger.info(f"Created {type} record: {hostname} -> {resolved_ip}")
+        logger.info(f"  TTL:      {ttl}s")
+        logger.info(f"  Provider: {resolved_provider}")
 
 
 @app.command
@@ -387,15 +386,14 @@ def update(
     # Resolve IP
     resolved_ip = _resolve_ip(ip)
     if not resolved_ip:
-        print("Could not detect public IP. Specify with --ip")
+        logger.error("Could not detect public IP. Specify with --ip")
         raise SystemExit(EXIT_PRECOND)
 
     # Resolve provider
     resolved_provider = _resolve_provider(provider)
     if not resolved_provider:
-        print("No DNS provider detected.")
-        print()
-        print(_provider_hint_message())
+        logger.error("No DNS provider detected.")
+        logger.info(_provider_hint_message())
         raise SystemExit(EXIT_PRECOND)
 
     existing = get_dns_current(db, hostname, executor=ex)
@@ -403,17 +401,16 @@ def update(
 
     if dry_run:
         action = "update" if existing else "create"
-        print(f"[dry-run] Would {action} {type} record:")
-        print(f"  Hostname: {hostname}")
-        print(f"  Type:     {type}")
-        print(f"  Value:    {resolved_ip}")
-        print(f"  TTL:      {ttl}")
-        print(f"  Provider: {resolved_provider}")
+        logger.info(f"[dry-run] Would {action} {type} record:")
+        logger.info(f"  Hostname: {hostname}")
+        logger.info(f"  Type:     {type}")
+        logger.info(f"  Value:    {resolved_ip}")
+        logger.info(f"  TTL:      {ttl}")
+        logger.info(f"  Provider: {resolved_provider}")
         if existing:
-            print()
-            print("Current values:")
-            print(f"  Value:    {existing.value}")
-            print(f"  TTL:      {existing.ttl}")
+            logger.info("Current values:")
+            logger.info(f"  Value:    {existing.value}")
+            logger.info(f"  TTL:      {existing.ttl}")
         return
 
     # Update or create via lexicon
@@ -426,7 +423,7 @@ def update(
     action = "update" if existing else "add"
 
     if not success:
-        print(f"Failed to {action} DNS record for {hostname}")
+        logger.error(f"Failed to {action} DNS record for {hostname}")
         record_dns_action(
             db,
             hostname,
@@ -473,17 +470,17 @@ def update(
         print(json.dumps(data, indent=2))
     else:
         if existing:
-            print(f"Updated {type} record: {hostname}")
+            logger.info(f"Updated {type} record: {hostname}")
             if existing.value != resolved_ip:
-                print(f"  Value: {existing.value} -> {resolved_ip}")
+                logger.info(f"  Value: {existing.value} -> {resolved_ip}")
             if existing.ttl != ttl:
-                print(f"  TTL:   {existing.ttl} -> {ttl}")
+                logger.info(f"  TTL:   {existing.ttl} -> {ttl}")
             if existing.provider != resolved_provider:
-                print(f"  Provider: {existing.provider} -> {resolved_provider}")
+                logger.info(f"  Provider: {existing.provider} -> {resolved_provider}")
         else:
-            print(f"Created {type} record: {hostname} -> {resolved_ip}")
-            print(f"  TTL:      {ttl}s")
-            print(f"  Provider: {resolved_provider}")
+            logger.info(f"Created {type} record: {hostname} -> {resolved_ip}")
+            logger.info(f"  TTL:      {ttl}s")
+            logger.info(f"  Provider: {resolved_provider}")
 
 
 @app.command
@@ -515,14 +512,14 @@ def remove(
 
     existing = get_dns_current(db, hostname, executor=ex)
     if not existing:
-        print(f"No DNS record found for {hostname}.")
+        logger.error(f"No DNS record found for {hostname}.")
         raise SystemExit(EXIT_PRECOND)
 
     if dry_run:
-        print(f"[dry-run] Would remove {existing.record_type} record:")
-        print(f"  Hostname: {hostname}")
-        print(f"  Value:    {existing.value}")
-        print(f"  Provider: {existing.provider}")
+        logger.info(f"[dry-run] Would remove {existing.record_type} record:")
+        logger.info(f"  Hostname: {hostname}")
+        logger.info(f"  Value:    {existing.value}")
+        logger.info(f"  Provider: {existing.provider}")
         return
 
     if not yes:
@@ -538,7 +535,7 @@ def remove(
     success = client.delete_record(existing.record_type, name or hostname, existing.value)
 
     if not success:
-        print(f"Failed to delete DNS record for {hostname}")
+        logger.error(f"Failed to delete DNS record for {hostname}")
         record_dns_action(
             db,
             hostname,
@@ -566,4 +563,4 @@ def remove(
         executor=ex,
     )
 
-    print(f"Removed {existing.record_type} record: {hostname} ({existing.value})")
+    logger.info(f"Removed {existing.record_type} record: {hostname} ({existing.value})")

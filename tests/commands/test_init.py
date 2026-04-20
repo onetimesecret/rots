@@ -1,10 +1,14 @@
 # tests/commands/test_init.py
+
 """Tests for init command with permission handling."""
 
+import logging
 from pathlib import Path
 
 import pytest
 from ots_shared.ssh import LocalExecutor
+
+pytestmark = pytest.mark.quick
 
 
 def _mock_config(mocker, tmp_path, **overrides):
@@ -24,7 +28,7 @@ def _mock_config(mocker, tmp_path, **overrides):
     mock.db_path = mock.var_dir / "deployments.db"
     mock.get_executor.return_value = LocalExecutor()
 
-    mocker.patch("rots.commands.init.Config", return_value=mock)
+    mocker.patch("rots.commands.env.server_init.Config", return_value=mock)
     return mock
 
 
@@ -48,90 +52,92 @@ class TestInitCommandImports:
 class TestCreateDirectory:
     """Test _create_directory helper function."""
 
-    def test_creates_directory_when_not_exists(self, tmp_path, mocker, capsys):
+    def test_creates_directory_when_not_exists(self, tmp_path, mocker, caplog):
         """Should create directory and return True."""
-        from rots.commands.init import _create_directory
+        from rots.commands.env.server_init import _create_directory
 
         mocker.patch("os.chown")
 
         new_dir = tmp_path / "new_dir"
-        result = _create_directory(new_dir, mode=0o755, quiet=False)
+        with caplog.at_level(logging.INFO):
+            result = _create_directory(new_dir, mode=0o755, quiet=False)
 
         assert result is True
         assert new_dir.exists()
-        captured = capsys.readouterr()
-        assert "[created]" in captured.out
+        assert "[created]" in caplog.text
 
-    def test_returns_false_when_exists(self, tmp_path, capsys):
+    def test_returns_false_when_exists(self, tmp_path, caplog):
         """Should return False and not recreate existing directory."""
-        from rots.commands.init import _create_directory
+        from rots.commands.env.server_init import _create_directory
 
         existing_dir = tmp_path / "existing"
         existing_dir.mkdir()
 
-        result = _create_directory(existing_dir, mode=0o755, quiet=False)
+        with caplog.at_level(logging.INFO):
+            result = _create_directory(existing_dir, mode=0o755, quiet=False)
 
         assert result is False
-        captured = capsys.readouterr()
-        assert "[ok]" in captured.out
+        assert "[ok]" in caplog.text
 
-    def test_returns_none_on_permission_error(self, tmp_path, mocker, capsys):
+    def test_returns_none_on_permission_error(self, tmp_path, mocker, caplog):
         """Should return None and print denied message on PermissionError."""
-        from rots.commands.init import _create_directory
+        from rots.commands.env.server_init import _create_directory
 
         mocker.patch.object(Path, "mkdir", side_effect=PermissionError("denied"))
 
         new_dir = tmp_path / "denied_dir"
-        result = _create_directory(new_dir, mode=0o755, quiet=False)
+        with caplog.at_level(logging.ERROR):
+            result = _create_directory(new_dir, mode=0o755, quiet=False)
 
         assert result is None
-        captured = capsys.readouterr()
-        assert "[denied]" in captured.out
-        assert "permission denied" in captured.out
+        assert "[denied]" in caplog.text
+        assert "permission denied" in caplog.text
 
-    def test_quiet_mode_suppresses_exists_output(self, tmp_path, capsys):
+    def test_quiet_mode_suppresses_exists_output(self, tmp_path, caplog):
         """Should suppress output when quiet=True and dir exists."""
-        from rots.commands.init import _create_directory
+        from rots.commands.env.server_init import _create_directory
 
         existing_dir = tmp_path / "existing"
         existing_dir.mkdir()
 
-        _create_directory(existing_dir, mode=0o755, quiet=True)
+        with caplog.at_level(logging.INFO):
+            _create_directory(existing_dir, mode=0o755, quiet=True)
 
-        captured = capsys.readouterr()
-        assert captured.out == ""
+        # quiet=True suppresses logger.info calls (via if-guard)
+        assert "[ok]" not in caplog.text
 
-    def test_quiet_mode_suppresses_created_output(self, tmp_path, mocker, capsys):
+    def test_quiet_mode_suppresses_created_output(self, tmp_path, mocker, caplog):
         """Should suppress output when quiet=True and dir created."""
-        from rots.commands.init import _create_directory
+        from rots.commands.env.server_init import _create_directory
 
         mocker.patch("os.chown")
 
         new_dir = tmp_path / "new_dir"
-        _create_directory(new_dir, mode=0o755, quiet=True)
+        with caplog.at_level(logging.INFO):
+            _create_directory(new_dir, mode=0o755, quiet=True)
 
-        captured = capsys.readouterr()
-        assert captured.out == ""
+        # quiet=True suppresses logger.info calls (via if-guard)
+        assert "[created]" not in caplog.text
 
-    def test_permission_error_always_prints(self, tmp_path, mocker, capsys):
+    def test_permission_error_always_prints(self, tmp_path, mocker, caplog):
         """Permission errors should always print, even in quiet mode."""
-        from rots.commands.init import _create_directory
+        from rots.commands.env.server_init import _create_directory
 
         mocker.patch.object(Path, "mkdir", side_effect=PermissionError("denied"))
 
         new_dir = tmp_path / "denied_dir"
-        _create_directory(new_dir, mode=0o755, quiet=True)
+        with caplog.at_level(logging.ERROR):
+            _create_directory(new_dir, mode=0o755, quiet=True)
 
-        captured = capsys.readouterr()
-        assert "[denied]" in captured.out
+        assert "[denied]" in caplog.text
 
 
 class TestCopyTemplate:
     """Test _copy_template helper function."""
 
-    def test_copies_file_when_dest_not_exists(self, tmp_path, mocker, capsys):
+    def test_copies_file_when_dest_not_exists(self, tmp_path, mocker, caplog):
         """Should copy file and return True."""
-        from rots.commands.init import _copy_template
+        from rots.commands.env.server_init import _copy_template
 
         mocker.patch("os.chown")
 
@@ -139,48 +145,48 @@ class TestCopyTemplate:
         src.write_text("content")
         dest = tmp_path / "dest.txt"
 
-        result = _copy_template(src, dest, quiet=False)
+        with caplog.at_level(logging.INFO):
+            result = _copy_template(src, dest, quiet=False)
 
         assert result is True
         assert dest.exists()
         assert dest.read_text() == "content"
-        captured = capsys.readouterr()
-        assert "[copied]" in captured.out
+        assert "[copied]" in caplog.text
 
-    def test_returns_false_when_dest_exists(self, tmp_path, capsys):
+    def test_returns_false_when_dest_exists(self, tmp_path, caplog):
         """Should return False when destination exists."""
-        from rots.commands.init import _copy_template
+        from rots.commands.env.server_init import _copy_template
 
         src = tmp_path / "source.txt"
         src.write_text("new content")
         dest = tmp_path / "dest.txt"
         dest.write_text("old content")
 
-        result = _copy_template(src, dest, quiet=False)
+        with caplog.at_level(logging.INFO):
+            result = _copy_template(src, dest, quiet=False)
 
         assert result is False
         assert dest.read_text() == "old content"  # unchanged
-        captured = capsys.readouterr()
-        assert "[ok]" in captured.out
+        assert "[ok]" in caplog.text
 
-    def test_returns_false_when_source_missing(self, tmp_path, capsys):
+    def test_returns_false_when_source_missing(self, tmp_path, caplog):
         """Should return False when source doesn't exist."""
-        from rots.commands.init import _copy_template
+        from rots.commands.env.server_init import _copy_template
 
         src = tmp_path / "nonexistent.txt"
         dest = tmp_path / "dest.txt"
 
-        result = _copy_template(src, dest, quiet=False)
+        with caplog.at_level(logging.INFO):
+            result = _copy_template(src, dest, quiet=False)
 
         assert result is False
         assert not dest.exists()
-        captured = capsys.readouterr()
-        assert "[skip]" in captured.out
-        assert "not found" in captured.out
+        assert "[skip]" in caplog.text
+        assert "not found" in caplog.text
 
-    def test_returns_none_on_permission_error(self, tmp_path, mocker, capsys):
+    def test_returns_none_on_permission_error(self, tmp_path, mocker, caplog):
         """Should return None on PermissionError."""
-        from rots.commands.init import _copy_template
+        from rots.commands.env.server_init import _copy_template
 
         mocker.patch("shutil.copy2", side_effect=PermissionError("denied"))
 
@@ -188,12 +194,12 @@ class TestCopyTemplate:
         src.write_text("content")
         dest = tmp_path / "dest.txt"
 
-        result = _copy_template(src, dest, quiet=False)
+        with caplog.at_level(logging.ERROR):
+            result = _copy_template(src, dest, quiet=False)
 
         assert result is None
-        captured = capsys.readouterr()
-        assert "[denied]" in captured.out
-        assert "permission denied" in captured.out
+        assert "[denied]" in caplog.text
+        assert "permission denied" in caplog.text
 
 
 class TestCopyTemplateRemote:
@@ -201,7 +207,7 @@ class TestCopyTemplateRemote:
 
     def test_remote_uses_cp_p_not_shutil(self, mocker, capsys):
         """Remote execution should use 'cp -p src dest' via executor.run, not shutil.copy2."""
-        from rots.commands.init import _copy_template
+        from rots.commands.env.server_init import _copy_template
 
         src = Path("/etc/onetimesecret/config.yaml.example")
         dest = Path("/etc/onetimesecret/config.yaml")
@@ -215,7 +221,7 @@ class TestCopyTemplateRemote:
 
         # Mock _path_exists: dest does not exist, src exists
         mocker.patch(
-            "rots.commands.init._path_exists",
+            "rots.commands.env.server_init._path_exists",
             side_effect=[False, True],
         )
         mock_copy2 = mocker.patch("shutil.copy2")
@@ -226,9 +232,9 @@ class TestCopyTemplateRemote:
         mock_executor.run.assert_called_once_with(["cp", "-p", str(src), str(dest)], sudo=True)
         mock_copy2.assert_not_called()
 
-    def test_remote_failure_returns_none(self, mocker, capsys):
+    def test_remote_failure_returns_none(self, mocker, caplog):
         """Remote copy failure (non-zero exit) should return None."""
-        from rots.commands.init import _copy_template
+        from rots.commands.env.server_init import _copy_template
 
         src = Path("/etc/onetimesecret/config.yaml.example")
         dest = Path("/etc/onetimesecret/config.yaml")
@@ -238,19 +244,19 @@ class TestCopyTemplateRemote:
 
         mocker.patch("ots_shared.ssh.is_remote", return_value=True)
         mocker.patch(
-            "rots.commands.init._path_exists",
+            "rots.commands.env.server_init._path_exists",
             side_effect=[False, True],
         )
 
-        result = _copy_template(src, dest, quiet=False, executor=mock_executor)
+        with caplog.at_level(logging.ERROR):
+            result = _copy_template(src, dest, quiet=False, executor=mock_executor)
 
         assert result is None
-        captured = capsys.readouterr()
-        assert "[denied]" in captured.out
+        assert "[denied]" in caplog.text
 
-    def test_remote_prints_copied_on_success(self, mocker, capsys):
+    def test_remote_prints_copied_on_success(self, mocker, caplog):
         """Remote copy should print [copied] message when not quiet."""
-        from rots.commands.init import _copy_template
+        from rots.commands.env.server_init import _copy_template
 
         src = Path("/etc/onetimesecret/config.yaml.example")
         dest = Path("/etc/onetimesecret/config.yaml")
@@ -260,19 +266,19 @@ class TestCopyTemplateRemote:
 
         mocker.patch("ots_shared.ssh.is_remote", return_value=True)
         mocker.patch(
-            "rots.commands.init._path_exists",
+            "rots.commands.env.server_init._path_exists",
             side_effect=[False, True],
         )
 
-        result = _copy_template(src, dest, quiet=False, executor=mock_executor)
+        with caplog.at_level(logging.INFO):
+            result = _copy_template(src, dest, quiet=False, executor=mock_executor)
 
         assert result is True
-        captured = capsys.readouterr()
-        assert "[copied]" in captured.out
+        assert "[copied]" in caplog.text
 
     def test_remote_dest_exists_skips_copy(self, mocker):
         """Remote copy should skip when dest already exists."""
-        from rots.commands.init import _copy_template
+        from rots.commands.env.server_init import _copy_template
 
         src = Path("/etc/onetimesecret/config.yaml.example")
         dest = Path("/etc/onetimesecret/config.yaml")
@@ -280,7 +286,7 @@ class TestCopyTemplateRemote:
         mock_executor = mocker.MagicMock()
 
         mocker.patch(
-            "rots.commands.init._path_exists",
+            "rots.commands.env.server_init._path_exists",
             side_effect=[True],  # dest exists
         )
 
@@ -295,7 +301,7 @@ class TestPathExists:
 
     def test_local_existing_file_returns_true(self, tmp_path):
         """_path_exists should return True for an existing local file."""
-        from rots.commands.init import _path_exists
+        from rots.commands.env.server_init import _path_exists
 
         existing = tmp_path / "exists.txt"
         existing.touch()
@@ -305,7 +311,7 @@ class TestPathExists:
 
     def test_local_missing_file_returns_false(self, tmp_path):
         """_path_exists should return False for a non-existent local file."""
-        from rots.commands.init import _path_exists
+        from rots.commands.env.server_init import _path_exists
 
         missing = tmp_path / "missing.txt"
 
@@ -314,14 +320,14 @@ class TestPathExists:
 
     def test_local_existing_directory_returns_true(self, tmp_path):
         """_path_exists should return True for an existing local directory."""
-        from rots.commands.init import _path_exists
+        from rots.commands.env.server_init import _path_exists
 
         result = _path_exists(tmp_path, executor=LocalExecutor())
         assert result is True
 
     def test_remote_delegates_to_executor(self, mocker):
         """_path_exists should call executor.run(['test', '-e', path]) for remote."""
-        from rots.commands.init import _path_exists
+        from rots.commands.env.server_init import _path_exists
 
         mocker.patch("ots_shared.ssh.is_remote", return_value=True)
 
@@ -336,7 +342,7 @@ class TestPathExists:
 
     def test_remote_returns_false_when_test_fails(self, mocker):
         """_path_exists should return False when remote 'test -e' fails."""
-        from rots.commands.init import _path_exists
+        from rots.commands.env.server_init import _path_exists
 
         mocker.patch("ots_shared.ssh.is_remote", return_value=True)
 
@@ -353,29 +359,29 @@ class TestPathExists:
 class TestInitCommand:
     """Test init command behavior."""
 
-    def test_check_mode_reports_missing_directories(self, tmp_path, mocker, capsys):
+    def test_check_mode_reports_missing_directories(self, tmp_path, mocker, caplog):
         """Check mode should report missing directories without creating."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
 
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
 
         _mock_config(mocker, tmp_path)
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
 
-        result = init(check=True)
+        with caplog.at_level(logging.INFO):
+            result = init(check=True)
 
         assert result == 1  # Missing components (quadlet, var_dir)
-        captured = capsys.readouterr()
-        assert "[missing]" in captured.out
+        assert "[missing]" in caplog.text
         # Config files are now optional, so they show [optional]
-        assert "[optional]" in captured.out
-        assert "Missing components" in captured.out
+        assert "[optional]" in caplog.text
+        assert "Missing components" in caplog.text
         # Directories should NOT be created
         assert not (tmp_path / "etc" / "onetimesecret").exists()
 
-    def test_check_mode_reports_ok_when_all_present(self, tmp_path, mocker, capsys):
+    def test_check_mode_reports_ok_when_all_present(self, tmp_path, mocker, caplog):
         """Check mode should report OK when all components exist."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
 
         # Create directory structure
         config_dir = tmp_path / "etc" / "onetimesecret"
@@ -400,38 +406,38 @@ class TestInitCommand:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
 
-        result = init(check=True)
+        with caplog.at_level(logging.INFO):
+            result = init(check=True)
 
         assert result == 0
-        captured = capsys.readouterr()
-        assert "[ok]" in captured.out
-        assert "All components present" in captured.out
+        assert "[ok]" in caplog.text
+        assert "All components present" in caplog.text
 
-    def test_handles_permission_errors_gracefully(self, tmp_path, mocker, capsys):
+    def test_handles_permission_errors_gracefully(self, tmp_path, mocker, caplog):
         """Init should continue after permission errors and report failure."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
 
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
 
         _mock_config(mocker, tmp_path)
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
 
         # Make mkdir always fail with PermissionError
         mocker.patch.object(Path, "mkdir", side_effect=PermissionError("denied"))
 
-        result = init(quiet=False)
+        with caplog.at_level(logging.WARNING):
+            result = init(quiet=False)
 
         assert result == 1
-        captured = capsys.readouterr()
-        assert "[denied]" in captured.out
-        assert "Initialization incomplete" in captured.out
-        assert "sudo" in captured.out
+        assert "[denied]" in caplog.text
+        assert "Initialization incomplete" in caplog.text
+        assert "sudo" in caplog.text
 
-    def test_creates_directories_successfully(self, tmp_path, mocker, capsys):
+    def test_creates_directories_successfully(self, tmp_path, mocker, caplog):
         """Init should create all directories when permissions allow."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
 
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
@@ -443,22 +449,22 @@ class TestInitCommand:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
-        mocker.patch("rots.commands.init.db.init_db")
+        mocker.patch("rots.commands.env.server_init.db.init_db")
 
-        result = init(quiet=False)
+        with caplog.at_level(logging.INFO):
+            result = init(quiet=False)
 
         assert result == 0
         assert config_dir.exists()
         assert var_dir.exists()
         assert quadlet_dir.exists()
-        captured = capsys.readouterr()
-        assert "Initialization complete" in captured.out
+        assert "Initialization complete" in caplog.text
 
-    def test_copies_templates_from_source(self, tmp_path, mocker, capsys):
+    def test_copies_templates_from_source(self, tmp_path, mocker, caplog):
         """Init should copy all CONFIG_FILES when --source provided."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
 
         # Create source directory with all config file templates
         source_dir = tmp_path / "source"
@@ -477,11 +483,12 @@ class TestInitCommand:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
-        mocker.patch("rots.commands.init.db.init_db")
+        mocker.patch("rots.commands.env.server_init.db.init_db")
 
-        result = init(source_dir=source_dir, quiet=False)
+        with caplog.at_level(logging.INFO):
+            result = init(source_dir=source_dir, quiet=False)
 
         assert result == 0
         # All three CONFIG_FILES should be copied
@@ -491,12 +498,11 @@ class TestInitCommand:
         assert (config_dir / "auth.yaml").read_text() == "auth: basic"
         assert (config_dir / "logging.yaml").exists()
         assert (config_dir / "logging.yaml").read_text() == "level: info"
-        captured = capsys.readouterr()
-        assert "[copied]" in captured.out
+        assert "[copied]" in caplog.text
 
-    def test_check_reports_optional_for_missing_config_files(self, tmp_path, mocker, capsys):
+    def test_check_reports_optional_for_missing_config_files(self, tmp_path, mocker, caplog):
         """Check mode should report [optional] for missing config files."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
 
         # Create all directories and deploy db so only config files are missing
         config_dir = tmp_path / "etc" / "onetimesecret"
@@ -521,23 +527,23 @@ class TestInitCommand:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
 
-        result = init(check=True)
+        with caplog.at_level(logging.INFO):
+            result = init(check=True)
 
         # Should still pass because config files are optional
         assert result == 0
-        captured = capsys.readouterr()
         # Each missing config file should show [optional]
-        assert captured.out.count("[optional]") >= 3
-        assert "config.yaml" in captured.out
-        assert "auth.yaml" in captured.out
-        assert "logging.yaml" in captured.out
-        assert "All components present" in captured.out
+        assert caplog.text.count("[optional]") >= 3
+        assert "config.yaml" in caplog.text
+        assert "auth.yaml" in caplog.text
+        assert "logging.yaml" in caplog.text
+        assert "All components present" in caplog.text
 
-    def test_database_permission_error_handled(self, tmp_path, mocker, capsys):
+    def test_database_permission_error_handled(self, tmp_path, mocker, caplog):
         """Database creation permission errors should be handled gracefully."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
 
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
@@ -554,27 +560,27 @@ class TestInitCommand:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
         mocker.patch(
-            "rots.commands.init.db.init_db",
+            "rots.commands.env.server_init.db.init_db",
             side_effect=PermissionError("cannot create db"),
         )
 
-        result = init(quiet=False)
+        with caplog.at_level(logging.WARNING):
+            result = init(quiet=False)
 
         assert result == 1
-        captured = capsys.readouterr()
-        assert "[denied]" in captured.out
-        assert "Initialization incomplete" in captured.out
+        assert "[denied]" in caplog.text
+        assert "Initialization incomplete" in caplog.text
 
 
 class TestInitEnvFileScaffold:
     """Test step 4: Infrastructure Configuration (env file scaffold)."""
 
-    def test_check_reports_missing_env_file(self, tmp_path, mocker, capsys):
+    def test_check_reports_missing_env_file(self, tmp_path, mocker, caplog):
         """init(check=True) reports [missing] for DEFAULT_ENV_FILE when it does not exist."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
 
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
@@ -594,18 +600,18 @@ class TestInitEnvFileScaffold:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
 
-        result = init(check=True)
+        with caplog.at_level(logging.INFO):
+            result = init(check=True)
 
         assert result == 1  # Missing env file makes all_ok = False
-        captured = capsys.readouterr()
-        assert "[missing]" in captured.out
-        assert str(env_file) in captured.out
+        assert "[missing]" in caplog.text
+        assert str(env_file) in caplog.text
 
-    def test_check_reports_ok_for_existing_env_file(self, tmp_path, mocker, capsys):
+    def test_check_reports_ok_for_existing_env_file(self, tmp_path, mocker, caplog):
         """init(check=True) reports [ok] for DEFAULT_ENV_FILE when it exists."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
 
         quadlet_dir = tmp_path / "etc" / "containers" / "systemd"
         env_file = tmp_path / "etc" / "default" / "onetimesecret"
@@ -626,18 +632,18 @@ class TestInitEnvFileScaffold:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
 
-        result = init(check=True)
+        with caplog.at_level(logging.INFO):
+            result = init(check=True)
 
         assert result == 0
-        captured = capsys.readouterr()
-        assert "[ok]" in captured.out
-        assert str(env_file) in captured.out
+        assert "[ok]" in caplog.text
+        assert str(env_file) in caplog.text
 
-    def test_creates_env_file_with_template_content(self, tmp_path, mocker, capsys):
+    def test_creates_env_file_with_template_content(self, tmp_path, mocker, caplog):
         """init() creates DEFAULT_ENV_FILE with ENV_FILE_TEMPLATE content when it does not exist."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
         from rots.environment_file import ENV_FILE_TEMPLATE
 
         config_dir = tmp_path / "etc" / "onetimesecret"
@@ -649,22 +655,22 @@ class TestInitEnvFileScaffold:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
-        mocker.patch("rots.commands.init.db.init_db")
+        mocker.patch("rots.commands.env.server_init.db.init_db")
 
-        result = init(quiet=False)
+        with caplog.at_level(logging.INFO):
+            result = init(quiet=False)
 
         assert result == 0
         assert env_file.exists()
         assert env_file.read_text() == ENV_FILE_TEMPLATE
-        captured = capsys.readouterr()
-        assert "[created]" in captured.out
-        assert str(env_file) in captured.out
+        assert "[created]" in caplog.text
+        assert str(env_file) in caplog.text
 
-    def test_skips_env_file_creation_when_already_exists(self, tmp_path, mocker, capsys):
+    def test_skips_env_file_creation_when_already_exists(self, tmp_path, mocker, caplog):
         """init() reports [ok] and skips creation when DEFAULT_ENV_FILE already exists."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
 
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
@@ -676,21 +682,21 @@ class TestInitEnvFileScaffold:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
-        mocker.patch("rots.commands.init.db.init_db")
+        mocker.patch("rots.commands.env.server_init.db.init_db")
 
-        init(quiet=False)
+        with caplog.at_level(logging.INFO):
+            init(quiet=False)
 
         # Content must not be overwritten
         assert env_file.read_text() == "EXISTING_CONTENT=unchanged\n"
-        captured = capsys.readouterr()
-        assert "[ok]" in captured.out
-        assert str(env_file) in captured.out
+        assert "[ok]" in caplog.text
+        assert str(env_file) in caplog.text
 
-    def test_env_file_permission_error_sets_failure(self, tmp_path, mocker, capsys):
+    def test_env_file_permission_error_sets_failure(self, tmp_path, mocker, caplog):
         """init() reports [denied] and sets all_ok=False on PermissionError for DEFAULT_ENV_FILE."""
-        from rots.commands.init import init
+        from rots.commands.env.server_init import init
 
         config_dir = tmp_path / "etc" / "onetimesecret"
         var_dir = tmp_path / "var" / "lib" / "onetimesecret"
@@ -701,9 +707,9 @@ class TestInitEnvFileScaffold:
         _mock_config(
             mocker, tmp_path, config_dir=config_dir, var_dir=var_dir, quadlet_dir=quadlet_dir
         )
-        mocker.patch("rots.commands.init.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.commands.env.server_init.DEFAULT_ENV_FILE", env_file)
         mocker.patch("os.chown")
-        mocker.patch("rots.commands.init.db.init_db")
+        mocker.patch("rots.commands.env.server_init.db.init_db")
 
         # Make mkdir for parent of env_file raise PermissionError
         original_mkdir = Path.mkdir
@@ -715,33 +721,42 @@ class TestInitEnvFileScaffold:
 
         mocker.patch.object(Path, "mkdir", selective_mkdir)
 
-        result = init(quiet=False)
+        with caplog.at_level(logging.WARNING):
+            result = init(quiet=False)
 
         assert result == 1
-        captured = capsys.readouterr()
-        assert "[denied]" in captured.out
-        assert "Initialization incomplete" in captured.out
+        assert "[denied]" in caplog.text
+        assert "Initialization incomplete" in caplog.text
 
 
 class TestInitHelp:
-    """Test init help output."""
+    """Test init help output (server init is now at rots env init)."""
 
-    def test_init_help(self, capsys):
-        """init --help should work."""
+    def test_env_init_help(self, capsys):
+        """rots env init --help should work."""
         from rots.cli import app
 
         with pytest.raises(SystemExit) as exc_info:
-            app(["init", "--help"])
+            app(["env", "init", "--help"])
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
         assert "initialize" in captured.out.lower() or "init" in captured.out.lower()
 
-    def test_init_check_help(self, capsys):
-        """init --check flag should be documented."""
+    def test_env_init_check_help(self, capsys):
+        """rots env init --check flag should be documented."""
         from rots.cli import app
 
         with pytest.raises(SystemExit) as exc_info:
-            app(["init", "--help"])
+            app(["env", "init", "--help"])
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
         assert "check" in captured.out.lower()
+
+    def test_init_shows_routing(self, capsys, caplog):
+        """rots init shows routing to lots/pots and rots env init."""
+        from rots.commands.init import init
+
+        with caplog.at_level(logging.INFO):
+            init()
+        assert "lots init" in caplog.text
+        assert "rots env init" in caplog.text

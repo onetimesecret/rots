@@ -1,0 +1,180 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+package_reboot_if_required: true
+hostname: ots-web-test
+timezone: UTC
+users:
+- name: onetimesecret
+  system: true
+  shell: /usr/sbin/nologin
+  no_create_home: true
+  groups: []
+- name: caddy
+  system: true
+  shell: /usr/sbin/nologin
+  home: /var/lib/caddy
+  create_home: true
+  groups: []
+apt:
+  sources_list: |
+    Types: deb
+    URIs: http://deb.debian.org/debian
+    Suites: trixie trixie-updates
+    Components: main contrib non-free non-free-firmware
+    Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+    Types: deb
+    URIs: http://deb.debian.org/debian
+    Suites: trixie-backports
+    Components: main contrib non-free non-free-firmware
+    Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+    Types: deb
+    URIs: http://security.debian.org/debian-security
+    Suites: trixie-security
+    Components: main contrib non-free non-free-firmware
+    Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+  sources:
+    postgresql:
+      source: deb http://apt.postgresql.org/pub/repos/apt trixie-pgdg main
+    valkey:
+      source: deb https://packages.valkey.io/deb/ trixie main
+    rabbitmq:
+      source: 'deb [arch=amd64] https://deb1.rabbitmq.com/rabbitmq-server/debian/trixie
+        trixie main
+
+        deb [arch=amd64] https://deb2.rabbitmq.com/rabbitmq-server/debian/trixie trixie
+        main'
+packages:
+- curl
+- wget
+- git
+- vim
+- podman
+- systemd-container
+- pipx
+- postgresql-client
+- valkey
+- erlang-base
+- erlang-asn1
+- erlang-crypto
+- erlang-eldap
+- erlang-ftp
+- erlang-inets
+- erlang-mnesia
+- erlang-os-mon
+- erlang-parsetools
+- erlang-public-key
+- erlang-runtime-tools
+- erlang-snmp
+- erlang-ssl
+- erlang-syntax-tools
+- erlang-tftp
+- erlang-tools
+- erlang-xmerl
+- rabbitmq-server
+- apt-transport-https
+- gnupg
+- debian-keyring
+- debian-archive-keyring
+write_files:
+- path: /etc/default/onetimesecret
+  owner: root:onetimesecret
+  permissions: '0640'
+  content: |
+    # /etc/default/onetimesecret
+    #
+    # OneTime Secret - Environment Variables
+    #
+    # This file is sourced by the systemd quadlet container.
+    # Secret values listed in SECRET_VARIABLE_NAMES are stored
+    # in podman secrets (not in this file).
+    #
+    # Usage:
+    #   1. Set SECRET_VARIABLE_NAMES with your secret env var names
+    #   2. Add secret values as regular entries (STRIPE_API_KEY=sk_live_xxx)
+    #   3. Run: ots env process
+    #   4. Secret values are moved to podman secrets
+    #   5. This file is updated: _STRIPE_API_KEY=ots_stripe_api_key
+
+    # Secret variable names (comma, space, or colon separated)
+    SECRET_VARIABLE_NAMES=STRIPE_API_KEY,STRIPE_WEBHOOK_SIGNING_SECRET,SECRET,SESSION_SECRET,AUTH_SECRET,SMTP_PASSWORD
+
+    # Connection strings (not secrets - stored here)
+    AUTH_DATABASE_URL=
+    RABBITMQ_URL=
+    REDIS_URL=
+
+    # Mail configuration
+    SMTP_USERNAME=
+    SMTP_HOST=
+    SMTP_PORT=587
+    SMTP_AUTH=login
+    SMTP_TLS=true
+
+    # Core settings
+    HOST=
+    COLONEL=
+
+    # Runtime flags
+    AUTHENTICATION_MODE=full
+    SSL=true
+    RACK_ENV=production
+- path: /etc/caddy/Caddyfile
+  owner: caddy:caddy
+  permissions: '0644'
+  content: |
+    # /etc/caddy/Caddyfile
+    # Basic Caddyfile - replace with your site configuration
+    {
+        # Global options
+        admin off
+    }
+
+    # Example: serve a site (replace with actual domain/config)
+    :80 {
+        respond "OK" 200
+    }
+- path: /etc/systemd/system/caddy.service
+  owner: root:root
+  permissions: '0644'
+  content: |
+    [Unit]
+    Description=Caddy
+    Documentation=https://caddyserver.com/docs/
+    After=network.target network-online.target
+    Requires=network-online.target
+
+    [Service]
+    Type=notify
+    User=caddy
+    Group=caddy
+    ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+    ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+    TimeoutStopSec=5s
+    LimitNOFILE=1048576
+    AmbientCapabilities=CAP_NET_BIND_SERVICE
+    Restart=on-abnormal
+
+    [Install]
+    WantedBy=multi-user.target
+runcmd:
+- mkdir -p /etc/onetimesecret /var/lib/onetimesecret
+- chown onetimesecret:onetimesecret /etc/onetimesecret /var/lib/onetimesecret
+- systemctl enable --now podman.socket
+- pipx install rots
+- pipx ensurepath
+- /root/.local/bin/rots init
+- /root/.local/bin/rots sidecar install
+- curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/gpg.key' | gpg --dearmor
+  -o /usr/share/keyrings/caddy-xcaddy-archive-keyring.gpg
+- curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-xcaddy.list
+- apt-get update
+- apt-get install -y xcaddy
+- CADDY_VERSION=v2.10.2 xcaddy build --with github.com/mholt/caddy-l4 --with github.com/caddy-dns/hetzner
+  --with github.com/caddy-dns/cloudflare --with github.com/digilolnet/caddy-bunny-ip
+- install -m 0755 ./caddy /usr/local/bin/caddy
+- systemctl daemon-reload
+- systemctl enable caddy
+- systemctl start caddy

@@ -24,9 +24,6 @@ from typing import Annotated
 import cyclopts
 
 from . import __version__
-from .commands import assets as assets_cmd
-from .commands import db as db_cmd
-from .commands import dns, env, host, image, init, instance, proxy, service
 
 logger = logging.getLogger(__name__)
 
@@ -36,31 +33,56 @@ app = cyclopts.App(
     version=__version__,
 )
 
-# Register topic sub-apps
-app.command(init.app)
-app.command(instance.app)
-app.command(image.app)
-app.command(assets_cmd.app)
-app.command(proxy.app)
-app.command(host.app)
-app.command(service.app)
-app.command(dns.app)
-app.command(env.app)
-app.command(db_cmd.app)
+# Register topic sub-apps lazily via import path strings.
+# This avoids importing all command modules at CLI startup, significantly
+# speeding up pytest collection and CLI responsiveness.
+# Format: "module.path:attribute_name"
+app.command("rots.commands.init:app", name="init")
+app.command("rots.commands.instance:app", name="instance")
+app.command("rots.commands.image:app", name="image")
+app.command("rots.commands.assets:app", name="assets")
+app.command("rots.commands.proxy:app", name="proxy")
+app.command("rots.commands.host:app", name="host")
+app.command("rots.commands.service:app", name="service")
+app.command("rots.commands.dns:app", name="dns")
+app.command("rots.commands.env:app", name="env")
+app.command("rots.commands.generate:app", name="generate")
+app.command("rots.commands.db:app", name="db")
+app.command("rots.commands.sidecar:app", name="sidecar")
+app.command("rots.commands.workflow:app", name="workflow")
+app.command("rots.commands.self:app", name="self")
+
+app.register_install_completion_command()
+
+
+class _CLIFormatter(logging.Formatter):
+    """Formatter that omits the level/module prefix for INFO messages.
+
+    INFO-level output replaces bare ``print()`` for status messages, so
+    it should look the same as before (no ``INFO rots.commands.foo:``
+    prefix).  WARNING and above keep the prefix for visibility.
+    """
+
+    _default_fmt = "%(levelname)s %(name)s: %(message)s"
+
+    def format(self, record: logging.LogRecord) -> str:
+        if record.levelno == logging.INFO:
+            return record.getMessage()
+        self._style._fmt = self._default_fmt
+        return super().format(record)
 
 
 def _configure_logging(verbose: bool) -> None:
     """Configure root logger based on verbosity flag.
 
-    When --verbose is set, DEBUG-level messages from all rots modules
-    are shown on stderr. Without it, only WARNING and above are shown.
+    Three-tier verbosity:
+    - Default:   INFO    — status messages visible on stderr
+    - --verbose: DEBUG   — executor traces, internal diagnostics
     """
-    level = logging.DEBUG if verbose else logging.WARNING
-    logging.basicConfig(
-        level=level,
-        format="%(levelname)s %(name)s: %(message)s",
-        handlers=[logging.StreamHandler()],
-    )
+    level = logging.DEBUG if verbose else logging.INFO
+    handler = logging.StreamHandler()
+    handler.setFormatter(_CLIFormatter())
+    logging.basicConfig(level=level, handlers=[handler])
     # Suppress overly chatty third-party loggers even in verbose mode
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
@@ -82,13 +104,27 @@ def _meta(
             help="Target host for remote execution (overrides OTS_HOST and .otsinfra.env)",
         ),
     ] = None,
+    backend: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name=["--backend"],
+            help="Systemd backend: 'dbus' (default when available) or 'cli' (legacy systemctl)",
+        ),
+    ] = None,
 ):
     """Global options processed before any subcommand."""
+    import sys
+
     from . import context
 
     _configure_logging(verbose)
     if host is not None:
         context.host_var.set(host)
+    if backend is not None:
+        if backend not in ("dbus", "cli"):
+            print(f"Error: --backend must be 'dbus' or 'cli', got '{backend}'", file=sys.stderr)
+            raise SystemExit(1)
+        context.backend_var.set(backend)
     app(tokens)
 
 
@@ -143,8 +179,8 @@ def doctor():
     """Validate the full stack before deploying.
 
     Checks systemd, podman, images, secrets, env file, quadlets, caddy,
-    and required directories.  Prints a pass/fail line for each check so
-    operators can quickly identify what needs to be fixed.
+    RabbitMQ, and required directories.  Prints a pass/fail line for each
+    check so operators can quickly identify what needs to be fixed.
 
     When ``--host`` is set, runs checks on the remote host via the executor.
 
@@ -302,6 +338,20 @@ def doctor():
         else:
             caddy_detail = "systemctl query failed; run: systemctl status caddy"
     _check("caddy running", caddy_ok, caddy_detail)
+
+    # 11. RabbitMQ running (best-effort — only relevant on hosts running sidecar)
+    rabbitmq_ok = False
+    rabbitmq_detail = "not applicable (no systemctl)"
+    if _has_command("systemctl"):
+        rabbitmq_detail = "sidecar needs this for remote commands"
+        result = ex.run(["systemctl", "is-active", "rabbitmq-server"], timeout=10)
+        if result.ok:
+            rabbitmq_ok = result.stdout.strip() == "active"
+            if not rabbitmq_ok:
+                rabbitmq_detail = "run: sudo systemctl start rabbitmq-server"
+        else:
+            rabbitmq_detail = "systemctl query failed; run: systemctl status rabbitmq-server"
+    _check("rabbitmq-server running", rabbitmq_ok, rabbitmq_detail)
 
     # --- Report ---
     width = max(len(label) for label, _, _ in checks)

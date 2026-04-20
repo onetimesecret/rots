@@ -2,6 +2,7 @@
 
 """Tests for rsync detection and command building."""
 
+import logging
 from pathlib import Path
 from unittest.mock import patch
 
@@ -81,7 +82,7 @@ class TestDetectRsync:
 
 
 class TestWarnIfMacosRsync:
-    def test_warns_for_openrsync(self, capsys):
+    def test_warns_for_openrsync(self, caplog):
         info = RsyncInfo(
             path="/usr/bin/rsync",
             version="2.6.9",
@@ -89,12 +90,12 @@ class TestWarnIfMacosRsync:
             minor=6,
             is_openrsync=True,
         )
-        warn_if_macos_rsync(info)
-        captured = capsys.readouterr()
-        assert "unreliable" in captured.err
-        assert "RSYNC_PATH" in captured.err
+        with caplog.at_level(logging.WARNING):
+            warn_if_macos_rsync(info)
+        assert "unreliable" in caplog.text
+        assert "RSYNC_PATH" in caplog.text
 
-    def test_no_warn_for_v3(self, capsys):
+    def test_no_warn_for_v3(self, caplog):
         info = RsyncInfo(
             path="/opt/homebrew/bin/rsync",
             version="3.2.7",
@@ -102,9 +103,9 @@ class TestWarnIfMacosRsync:
             minor=2,
             is_openrsync=False,
         )
-        warn_if_macos_rsync(info)
-        captured = capsys.readouterr()
-        assert captured.err == ""
+        with caplog.at_level(logging.WARNING):
+            warn_if_macos_rsync(info)
+        assert caplog.text == ""
 
 
 class TestBuildRsyncFileCmd:

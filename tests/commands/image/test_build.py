@@ -1,4 +1,5 @@
 # tests/commands/image/test_build.py
+
 """Tests for image build command.
 
 These tests verify the build command functionality for building
@@ -196,8 +197,10 @@ class TestBuildPodmanInvocation:
         assert "buildx" in call_args
         assert "build" in call_args
 
-    def test_build_with_push_requires_registry(self, mocker, tmp_path, capsys):
+    def test_build_with_push_requires_registry(self, mocker, tmp_path, caplog):
         """build --push without registry should error."""
+        import logging
+
         project_dir = tmp_path / "onetimesecret"
         project_dir.mkdir()
 
@@ -230,10 +233,10 @@ class TestBuildPodmanInvocation:
         mocker.patch("rots.commands.image.app.db.record_deployment")
 
         with pytest.raises(SystemExit) as exc:
-            build(project_dir=project_dir, push=True)
+            with caplog.at_level(logging.ERROR):
+                build(project_dir=project_dir, push=True)
         assert exc.value.code == 1
-        captured = capsys.readouterr()
-        assert "--push requires --registry" in captured.out
+        assert "--push requires --registry" in caplog.text
 
     def test_build_with_push_and_registry(self, mocker, tmp_path):
         """build --push with registry should tag and push the image."""
@@ -496,8 +499,10 @@ class TestBuildDefaultBehavior:
 class TestBuildErrorHandling:
     """Test error handling during build process."""
 
-    def test_build_handles_podman_failure(self, mocker, tmp_path, capsys):
+    def test_build_handles_podman_failure(self, mocker, tmp_path, caplog):
         """build should handle podman build failures gracefully."""
+        import logging
+
         project_dir = tmp_path / "onetimesecret"
         project_dir.mkdir()
 
@@ -526,10 +531,10 @@ class TestBuildErrorHandling:
         mocker.patch("rots.commands.image.app.db.record_deployment")
 
         with pytest.raises(SystemExit) as exc:
-            build(project_dir=project_dir)
+            with caplog.at_level(logging.ERROR):
+                build(project_dir=project_dir)
         assert exc.value.code == 1
-        captured = capsys.readouterr()
-        assert "Build failed" in captured.out
+        assert "Build failed" in caplog.text
 
     def test_build_handles_invalid_package_json(self, mocker, tmp_path):
         """build should handle malformed package.json gracefully."""

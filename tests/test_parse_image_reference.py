@@ -1,4 +1,5 @@
 # tests/test_parse_image_reference.py
+
 """Tests for parse_image_reference().
 
 Verifies the last-colon-after-last-slash rule handles registry ports,
@@ -8,6 +9,8 @@ digest references, and edge cases correctly.
 import pytest
 
 from rots.config import parse_image_reference
+
+pytestmark = pytest.mark.quick
 
 
 class TestBasicImageTag:

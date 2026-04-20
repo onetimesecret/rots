@@ -1,4 +1,5 @@
 # tests/commands/instance/test_config_transform.py
+
 """Tests for the config-transform command.
 
 These tests verify the config-transform command handles config file
@@ -33,6 +34,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -117,6 +122,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -157,6 +166,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -201,6 +214,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -250,6 +267,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: old_value\n")
@@ -274,14 +295,13 @@ class TestConfigTransformCommand:
         mocker.patch("subprocess.run", side_effect=mock_run_side_effect)
 
         # Call config_transform (dry-run is default)
-        instance.config_transform(command="transform", quiet=True)
+        instance.config_transform(command="transform")
 
-        # Verify diff was shown
+        # Verify diff was shown (stdout) and dry-run message logged (stderr)
         captured = capsys.readouterr()
         assert "old_value" in captured.out
         assert "new_value" in captured.out
-        # Should indicate dry-run
-        assert "dry run" in captured.out.lower() or "no changes made" in captured.out.lower()
+        assert "dry run" in captured.err.lower() or "no changes made" in captured.err.lower()
 
         # File should not be modified
         assert (mock_config.config_dir / "config.yaml").read_text() == "key: old_value\n"
@@ -297,6 +317,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         config_file = mock_config.config_dir / "config.yaml"
@@ -340,6 +364,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         config_file = mock_config.config_dir / "config.yaml"
@@ -381,6 +409,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         config_file = mock_config.config_dir / "config.yaml"
@@ -406,12 +438,12 @@ class TestConfigTransformCommand:
 
         mocker.patch("subprocess.run", side_effect=mock_run_side_effect)
 
-        # Call config_transform
-        instance.config_transform(command="transform", quiet=True)
+        # Call config_transform (quiet=False to see status messages)
+        instance.config_transform(command="transform", quiet=False)
 
         # Verify "no changes" message
         captured = capsys.readouterr()
-        assert "no changes" in captured.out.lower()
+        assert "no changes" in captured.err.lower()
 
     def test_config_transform_fails_when_command_fails(self, mocker, tmp_path, capsys):
         """config_transform should fail when migration command fails."""
@@ -424,6 +456,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -453,7 +489,7 @@ class TestConfigTransformCommand:
         assert exc_info.value.code == 1
 
         captured = capsys.readouterr()
-        assert "failed" in captured.out.lower()
+        assert "failed" in captured.err.lower()
 
     def test_config_transform_fails_when_no_output_file(self, mocker, tmp_path, capsys):
         """config_transform should fail when no .new file is produced."""
@@ -466,6 +502,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -497,7 +537,7 @@ class TestConfigTransformCommand:
         assert exc_info.value.code == 1
 
         captured = capsys.readouterr()
-        assert "no transformed file" in captured.out.lower()
+        assert "no transformed file" in captured.err.lower()
 
     def test_config_transform_uses_custom_file(self, mocker, tmp_path):
         """config_transform -f should use specified file."""
@@ -510,6 +550,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "auth.yaml").write_text("auth: config\n")
@@ -555,6 +599,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -562,7 +610,7 @@ class TestConfigTransformCommand:
 
         # Create env file with secrets
         env_file = tmp_path / "onetimesecret"
-        env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET\n")
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")
         mocker.patch(
             "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             env_file,
@@ -570,7 +618,7 @@ class TestConfigTransformCommand:
 
         # Mock get_secrets_from_env_file
         mock_secrets = [
-            SecretSpec(env_var_name="HMAC_SECRET", secret_name="ots_hmac_secret"),
+            SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
         ]
         mocker.patch(
             "rots.commands.instance._helpers.get_secrets_from_env_file",
@@ -612,6 +660,10 @@ class TestConfigTransformCommand:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         config_file = mock_config.config_dir / "config.yaml"
@@ -700,6 +752,10 @@ class TestConfigTransformRemote:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
@@ -729,6 +785,8 @@ class TestConfigTransformRemote:
         mock_config.tag = "current"
         mock_config.image = "ghcr.io/test/img"
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/img", "current")
+        mock_config.resolved_image_with_tag.return_value = "ghcr.io/test/img:current"
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
@@ -795,6 +853,8 @@ class TestConfigTransformRemote:
         mock_config.tag = "current"
         mock_config.image = "ghcr.io/test/img"
         mock_config.resolve_image_tag.return_value = ("ghcr.io/test/img", "current")
+        mock_config.resolved_image_with_tag.return_value = "ghcr.io/test/img:current"
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
@@ -847,6 +907,8 @@ class TestConfigTransformPositionalReference:
         mock_config.tag = "current"
         mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
         mock_config.resolve_image_tag.return_value = ("custom/image", "v2.0")
+        mock_config.resolved_image_with_tag.return_value = "custom/image:v2.0"
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -866,6 +928,8 @@ class TestConfigTransformPositionalReference:
             new_image = kwargs.get("image", obj.image)
             new_tag = kwargs.get("tag", obj.tag)
             obj.resolve_image_tag.return_value = (new_image, new_tag)
+            obj.resolved_image_with_tag.return_value = f"{new_image}:{new_tag}"
+            obj.podman_auth_args.return_value = []
             return obj
 
         mocker.patch(
@@ -898,6 +962,8 @@ class TestConfigTransformPositionalReference:
         mock_config.tag = "current"
         mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
         mock_config.resolve_image_tag.return_value = ("img", "ref-tag")
+        mock_config.resolved_image_with_tag.return_value = "img:ref-tag"
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
@@ -916,6 +982,8 @@ class TestConfigTransformPositionalReference:
             new_image = kwargs.get("image", obj.image)
             new_tag = kwargs.get("tag", obj.tag)
             obj.resolve_image_tag.return_value = (new_image, new_tag)
+            obj.resolved_image_with_tag.return_value = f"{new_image}:{new_tag}"
+            obj.podman_auth_args.return_value = []
             return obj
 
         mocker.patch(
@@ -953,6 +1021,10 @@ class TestConfigTransformPositionalReference:
             "ghcr.io/onetimesecret/onetimesecret",
             "current",
         )
+        mock_config.resolved_image_with_tag.return_value = (
+            "ghcr.io/onetimesecret/onetimesecret:current"
+        )
+        mock_config.podman_auth_args.return_value = []
         mock_config.config_dir = tmp_path / "etc"
         mock_config.config_dir.mkdir()
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")

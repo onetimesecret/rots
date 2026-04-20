@@ -1,8 +1,13 @@
 # tests/test_main.py
+
 """Tests for __main__.py entry point (python -m rots)."""
 
 import subprocess
 import sys
+
+import pytest
+
+pytestmark = pytest.mark.quick
 
 
 class TestMainEntryPoint:

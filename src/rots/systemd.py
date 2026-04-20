@@ -1,8 +1,17 @@
 # src/rots/systemd.py
 
+"""Systemd interaction layer.
+
+Prefers D-Bus (via pystemd) for local operations.  Falls back to the
+``systemctl`` CLI when pystemd is not installed or the system bus is
+unreachable.  Remote executors always use the CLI path over SSH.
+"""
+
 from __future__ import annotations
 
+import functools
 import logging
+import os
 import re
 import shutil
 import sys
@@ -12,6 +21,74 @@ if TYPE_CHECKING:
     from ots_shared.ssh.executor import Executor
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# D-Bus availability detection (cached, lazy)
+# ---------------------------------------------------------------------------
+
+
+@functools.cache
+def _dbus_is_available() -> bool:
+    """Return True when the pystemd D-Bus backend can talk to PID 1.
+
+    D-Bus calls to the system bus bypass the executor's ``sudo=True``
+    mechanism, so we only enable the D-Bus path when the process is
+    already running as root (``euid == 0``).  Non-root processes fall
+    back to the CLI path which uses ``sudo``.
+
+    The result is cached for the lifetime of the process.  In tests,
+    call ``_dbus_is_available.cache_clear()`` or mock this function.
+    """
+    if os.geteuid() != 0:
+        logger.debug("Not running as root (euid=%d), using systemctl CLI backend", os.geteuid())
+        return False
+    try:
+        from rots._dbus import available
+    except ImportError:
+        logger.debug("pystemd not installed, using systemctl CLI backend")
+        return False
+
+    try:
+        ok = available()
+    except Exception:
+        logger.debug(
+            "D-Bus probing via pystemd failed unexpectedly, falling back to systemctl CLI",
+            exc_info=True,
+        )
+        return False
+
+    if ok:
+        logger.debug("Using D-Bus backend for systemd operations")
+    else:
+        logger.debug("D-Bus not reachable, falling back to systemctl CLI")
+    return ok
+
+
+def _use_dbus(executor: Executor | None) -> bool:
+    """True when the operation should go through D-Bus rather than CLI."""
+    from rots import context
+
+    override = context.backend_var.get(None)
+    if override == "cli":
+        return False
+    if override == "dbus":
+        if not _is_local(_get_executor(executor)):
+            return False  # D-Bus is never valid for remote executors
+        if not _dbus_is_available():
+            logger.warning(
+                "--backend=dbus requested but D-Bus is not available, falling back to CLI"
+            )
+            return False
+        return True
+
+    # Default: auto-detect
+    return _is_local(_get_executor(executor)) and _dbus_is_available()
+
+
+# ---------------------------------------------------------------------------
+# Executor helpers (unchanged)
+# ---------------------------------------------------------------------------
 
 
 def _get_executor(executor: Executor | None = None) -> Executor:
@@ -30,6 +107,11 @@ def _is_local(executor: Executor) -> bool:
     return isinstance(executor, LocalExecutor)
 
 
+# ---------------------------------------------------------------------------
+# Exception types
+# ---------------------------------------------------------------------------
+
+
 class SystemdNotAvailableError(Exception):
     """Raised when systemd/systemctl is not available on the system."""
 
@@ -44,6 +126,11 @@ class SystemctlError(Exception):
         self.action = action
         self.journal = journal
         super().__init__(f"{unit} failed to {action}")
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 
 def _fetch_journal(
@@ -74,11 +161,32 @@ def _run_systemctl(
     """Run a systemctl command with diagnostic output on failure."""
     ex = _get_executor(executor)
     cmd = ["systemctl", action, unit]
-    logger.debug("  $ sudo -- %s", " ".join(cmd))
+    logger.debug(f"  $ sudo -- {' '.join(cmd)}")
     result = ex.run(cmd, sudo=True, timeout=90)
     if not result.ok:
         journal = _fetch_journal(unit, executor=executor)
         raise SystemctlError(unit, action, journal)
+
+
+def _dbus_action(action: str, unit: str, *, executor: Executor | None = None) -> None:
+    """Execute a unit action via D-Bus, raising SystemctlError on failure."""
+    from rots import _dbus
+
+    dispatch = {
+        "start": _dbus.start_unit,
+        "stop": _dbus.stop_unit,
+        "restart": _dbus.restart_unit,
+    }
+    try:
+        dispatch[action](unit)
+    except Exception as exc:
+        journal = _fetch_journal(unit, executor=executor)
+        raise SystemctlError(unit, action, journal) from exc
+
+
+# ---------------------------------------------------------------------------
+# Prerequisite checks
+# ---------------------------------------------------------------------------
 
 
 def require_systemctl(*, executor: Executor | None = None) -> None:
@@ -153,6 +261,11 @@ def require_podman(*, executor: Executor | None = None) -> None:
         raise SystemExit(1)
 
 
+# ---------------------------------------------------------------------------
+# Pure helpers (no I/O)
+# ---------------------------------------------------------------------------
+
+
 def unit_name(instance_type: str, identifier: str) -> str:
     """Build a systemd unit name for an OTS instance.
 
@@ -164,6 +277,24 @@ def unit_name(instance_type: str, identifier: str) -> str:
         Unit name like "onetime-web@7043" or "onetime-worker@billing"
     """
     return f"onetime-{instance_type}@{identifier}"
+
+
+def unit_to_container_name(unit: str) -> str:
+    """Convert systemd unit name to the explicit ``ContainerName=`` we set.
+
+    Quadlet ``ContainerName=`` uses ``-`` instead of ``@`` because
+    podman container names don't allow ``@``::
+
+        onetime-web@7043.service  ->  onetime-web-7043
+        onetime-worker@1          ->  onetime-worker-1
+        onetime-scheduler@main    ->  onetime-scheduler-main
+    """
+    return unit.removesuffix(".service").replace("@", "-")
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+# ---------------------------------------------------------------------------
 
 
 def _discover_instances(
@@ -187,6 +318,24 @@ def _discover_instances(
     Returns:
         Sorted list of instance identifier strings.
     """
+    pattern = re.compile(rf"onetime-{re.escape(unit_type)}@([^.]+)\.service")
+
+    if _use_dbus(executor):
+        from rots import _dbus
+
+        units = _dbus.list_units_by_pattern(f"onetime-{unit_type}@*")
+        instances = []
+        for u in units:
+            if u.load_state != "loaded":
+                continue
+            if running_only and (u.active_state != "active" or u.sub_state != "running"):
+                continue
+            match = pattern.match(u.name)
+            if match:
+                instances.append(match.group(1))
+        return sorted(instances)
+
+    # CLI fallback (remote executor or no D-Bus)
     ex = _get_executor(executor)
     if _is_local(ex):
         require_systemctl()
@@ -202,18 +351,13 @@ def _discover_instances(
         timeout=10,
     )
     instances = []
-    pattern = re.compile(rf"onetime-{re.escape(unit_type)}@([^.]+)\.service")
     for line in result.stdout.strip().splitlines():
-        # Format: onetime-{type}@<id>.service loaded active running Description...
-        # Columns: UNIT LOAD ACTIVE SUB DESCRIPTION
         parts = line.split()
         if len(parts) < 4:
             continue
         unit, load, active, sub = parts[:4]
-        # Skip units that aren't loaded
         if load != "loaded":
             continue
-        # If running_only, filter to active+running
         if running_only and (active != "active" or sub != "running"):
             continue
         match = pattern.match(unit)
@@ -235,7 +379,6 @@ def discover_web_instances(
         executor: Executor for command dispatch. None uses LocalExecutor.
     """
     ids = _discover_instances("web", running_only=running_only, executor=executor)
-    # Web instances use numeric port identifiers; non-numeric entries are silently skipped.
     ports = [int(i) for i in ids if i.isdigit()]
     return sorted(ports)
 
@@ -274,8 +417,18 @@ def discover_scheduler_instances(
     return _discover_instances("scheduler", running_only=running_only, executor=executor)
 
 
+# ---------------------------------------------------------------------------
+# Unit state queries
+# ---------------------------------------------------------------------------
+
+
 def is_active(unit: str, *, executor: Executor | None = None) -> str:
     """Return the active state string for a unit (e.g. 'active', 'inactive', 'failed')."""
+    if _use_dbus(executor):
+        from rots import _dbus
+
+        return _dbus.get_active_state(unit)
+
     ex = _get_executor(executor)
     if _is_local(ex):
         require_systemctl()
@@ -283,26 +436,32 @@ def is_active(unit: str, *, executor: Executor | None = None) -> str:
     return result.stdout.strip()
 
 
-def enable(unit: str, *, executor: Executor | None = None) -> None:
-    """Enable a unit to auto-start on reboot."""
+def unit_exists(unit: str, *, executor: Executor | None = None) -> bool:
+    """Check if a systemd unit exists (loaded or not)."""
+    if _use_dbus(executor):
+        from rots import _dbus
+
+        return _dbus.unit_file_exists(unit)
+
     ex = _get_executor(executor)
     if _is_local(ex):
         require_systemctl()
-    _run_systemctl("enable", unit, executor=executor)
+    result = ex.run(
+        ["systemctl", "list-unit-files", unit, "--plain", "--no-legend"],
+        timeout=10,
+    )
+    return bool(result.stdout.strip())
 
 
-def daemon_reload(*, executor: Executor | None = None) -> None:
-    ex = _get_executor(executor)
-    if _is_local(ex):
-        require_systemctl()
-    cmd = ["systemctl", "daemon-reload"]
-    logger.debug("  $ sudo -- %s", " ".join(cmd))
-    result = ex.run(cmd, sudo=True, timeout=30)
-    if not result.ok:
-        raise SystemctlError("(all units)", "daemon-reload", result.stderr.strip())
+# ---------------------------------------------------------------------------
+# Unit lifecycle (start / stop / restart / enable / disable / reload)
+# ---------------------------------------------------------------------------
 
 
 def start(unit: str, *, executor: Executor | None = None) -> None:
+    if _use_dbus(executor):
+        _dbus_action("start", unit, executor=executor)
+        return
     ex = _get_executor(executor)
     if _is_local(ex):
         require_systemctl()
@@ -310,28 +469,40 @@ def start(unit: str, *, executor: Executor | None = None) -> None:
 
 
 def stop(unit: str, *, executor: Executor | None = None) -> None:
+    if _use_dbus(executor):
+        _dbus_action("stop", unit, executor=executor)
+        return
     ex = _get_executor(executor)
     if _is_local(ex):
         require_systemctl()
     _run_systemctl("stop", unit, executor=executor)
 
 
-def reset_failed(unit: str, *, executor: Executor | None = None) -> None:
-    """Clear failed state for a unit so it doesn't appear in discovery."""
-    ex = _get_executor(executor)
-    if _is_local(ex):
-        require_systemctl()
-    cmd = ["systemctl", "reset-failed", unit]
-    logger.debug("  $ sudo -- %s", " ".join(cmd))
-    # Suppress stderr - it's fine if the unit wasn't in failed state
-    ex.run(cmd, sudo=True, timeout=10)
-
-
 def restart(unit: str, *, executor: Executor | None = None) -> None:
+    if _use_dbus(executor):
+        _dbus_action("restart", unit, executor=executor)
+        return
     ex = _get_executor(executor)
     if _is_local(ex):
         require_systemctl()
     _run_systemctl("restart", unit, executor=executor)
+
+
+def enable(unit: str, *, executor: Executor | None = None) -> None:
+    """Enable a unit to auto-start on reboot."""
+    if _use_dbus(executor):
+        from rots import _dbus
+
+        try:
+            _dbus.enable_unit_files([unit])
+            return
+        except Exception as exc:
+            journal = _fetch_journal(unit, executor=executor)
+            raise SystemctlError(unit, "enable", journal) from exc
+    ex = _get_executor(executor)
+    if _is_local(ex):
+        require_systemctl()
+    _run_systemctl("enable", unit, executor=executor)
 
 
 def disable(unit: str, *, executor: Executor | None = None) -> None:
@@ -340,13 +511,100 @@ def disable(unit: str, *, executor: Executor | None = None) -> None:
     Non-fatal if the unit is not currently enabled — systemctl disable is
     idempotent and exits 0 even when the unit was never enabled.
     """
+    if _use_dbus(executor):
+        from rots import _dbus
+
+        try:
+            _dbus.disable_unit_files([unit])
+        except Exception:
+            pass  # Match CLI behavior: suppress errors
+        return
     ex = _get_executor(executor)
     if _is_local(ex):
         require_systemctl()
     cmd = ["systemctl", "disable", unit]
-    logger.debug("  $ sudo -- %s", " ".join(cmd))
-    # Suppress stderr — 'not enabled' is not an error worth surfacing
+    logger.debug(f"  $ sudo -- {' '.join(cmd)}")
     ex.run(cmd, sudo=True, timeout=10)
+
+
+def daemon_reload(*, executor: Executor | None = None) -> None:
+    if _use_dbus(executor):
+        from rots import _dbus
+
+        try:
+            _dbus.reload_manager()
+            return
+        except Exception as exc:
+            raise SystemctlError("(all units)", "daemon-reload", str(exc)) from exc
+    ex = _get_executor(executor)
+    if _is_local(ex):
+        require_systemctl()
+    cmd = ["systemctl", "daemon-reload"]
+    logger.debug(f"  $ sudo -- {' '.join(cmd)}")
+    result = ex.run(cmd, sudo=True, timeout=30)
+    if not result.ok:
+        raise SystemctlError("(all units)", "daemon-reload", result.stderr.strip())
+
+
+def reset_failed(unit: str, *, executor: Executor | None = None) -> None:
+    """Clear failed state for a unit so it doesn't appear in discovery."""
+    if _use_dbus(executor):
+        from rots import _dbus
+
+        try:
+            _dbus.reset_failed_unit(unit)
+        except Exception:
+            pass  # Match CLI behavior: suppress errors
+        return
+    ex = _get_executor(executor)
+    if _is_local(ex):
+        require_systemctl()
+    cmd = ["systemctl", "reset-failed", unit]
+    logger.debug(f"  $ sudo -- {' '.join(cmd)}")
+    ex.run(cmd, sudo=True, timeout=10)
+
+
+# ---------------------------------------------------------------------------
+# Container operations (always CLI — podman has no D-Bus interface)
+# ---------------------------------------------------------------------------
+
+
+def recreate(unit: str, *, executor: Executor | None = None) -> None:
+    """Stop, remove, and start a Quadlet service to force container recreation.
+
+    Use this instead of restart() when the Quadlet .container file has
+    been modified and you need to ensure the container is recreated
+    with the new configuration (e.g., new volume mounts, environment, etc.).
+
+    The container must be removed between stop and start because podman
+    preserves stopped containers. Without removal, start just restarts
+    the existing container with its old configuration.
+    """
+    # Stop and start go through D-Bus when available; podman rm always uses CLI
+    stop(unit, executor=executor)
+
+    ex = _get_executor(executor)
+    container_name = unit_to_container_name(unit)
+    rm_cmd = ["podman", "rm", "--ignore", container_name]
+    logger.debug(f"  $ sudo -- {' '.join(rm_cmd)}")
+    ex.run(rm_cmd, sudo=True, timeout=30, check=True)
+
+    start(unit, executor=executor)
+
+
+def container_exists(unit: str, *, executor: Executor | None = None) -> bool:
+    """Check if the Quadlet container for a unit exists (running or stopped).
+
+    This is more reliable than unit_exists for template instances like
+    onetime@7044, since list-unit-files only shows the template, not instances.
+    """
+    ex = _get_executor(executor)
+    container_name = unit_to_container_name(unit)
+    result = ex.run(
+        ["podman", "container", "exists", container_name],
+        timeout=10,
+    )
+    return result.ok
 
 
 def get_container_health_map(
@@ -372,7 +630,7 @@ def get_container_health_map(
             "--format",
             "json",
             "--filter",
-            "name=systemd-onetime",
+            "name=onetime-",
         ],
         timeout=15,
     )
@@ -387,11 +645,9 @@ def get_container_health_map(
         return {}
 
     health_map: dict[tuple[str, str], dict[str, str]] = {}
-    # Match container names like systemd-onetime-web_7043 or systemd-onetime-worker--1
-    name_pattern = re.compile(r"systemd-onetime-(web|worker|scheduler)[_-]+(.+)")
+    name_pattern = re.compile(r"onetime-(web|worker|scheduler)-(.+)")
 
     for container in containers:
-        # podman JSON uses "Names" (list) or "Name" (string) depending on version
         names = container.get("Names") or [container.get("Name", "")]
         if isinstance(names, str):
             names = [names]
@@ -404,10 +660,8 @@ def get_container_health_map(
             inst_id = m.group(2)
 
             status_str = container.get("Status", "")
-            # Extract health: "Up 3 days (healthy)" → "healthy"
             health_match = re.search(r"\((healthy|unhealthy|starting)\)", status_str)
             health = health_match.group(1) if health_match else ""
-            # Extract uptime: everything before the parenthetical
             uptime = re.sub(r"\s*\(.*?\)\s*$", "", status_str).strip()
 
             health_map[(inst_type, inst_id)] = {
@@ -418,51 +672,9 @@ def get_container_health_map(
     return health_map
 
 
-def unit_to_container_name(unit: str) -> str:
-    """Convert systemd unit name to Quadlet container name.
-
-    Quadlet names containers as: systemd-{unit_with_separator}
-    Example: onetime-web@7044 -> systemd-onetime-web--7044
-
-    Uses ``--`` (double dash) as the separator between the template base name
-    and the instance identifier.  A single ``_`` was previously used but is
-    ambiguous because ``_`` can also appear in unit names, making it impossible
-    to distinguish ``onetime-web@7043`` from a hypothetical ``onetime-web_7043``.
-    Double dashes are the conventional systemd escaping character and will not
-    collide with naturally occurring underscores in unit names.
-    """
-    # Remove .service suffix if present
-    name = unit.removesuffix(".service")
-    # Replace @ with -- (distinctive separator that won't collide with underscores)
-    name = name.replace("@", "--")
-    return f"systemd-{name}"
-
-
-def recreate(unit: str, *, executor: Executor | None = None) -> None:
-    """Stop, remove, and start a Quadlet service to force container recreation.
-
-    Use this instead of restart() when the Quadlet .container file has
-    been modified and you need to ensure the container is recreated
-    with the new configuration (e.g., new volume mounts, environment, etc.).
-
-    The container must be removed between stop and start because podman
-    preserves stopped containers. Without removal, start just restarts
-    the existing container with its old configuration.
-    """
-    ex = _get_executor(executor)
-    if _is_local(ex):
-        require_systemctl()
-    # Stop the systemd unit
-    _run_systemctl("stop", unit, executor=executor)
-
-    # Remove the container (Quadlet uses systemd-{name} format with @ -> --)
-    container_name = unit_to_container_name(unit)
-    rm_cmd = ["podman", "rm", "--ignore", container_name]
-    logger.debug("  $ sudo -- %s", " ".join(rm_cmd))
-    ex.run(rm_cmd, sudo=True, timeout=30, check=True)
-
-    # Start creates a fresh container from the updated quadlet
-    _run_systemctl("start", unit, executor=executor)
+# ---------------------------------------------------------------------------
+# Display / human-readable output (always CLI for rich formatting)
+# ---------------------------------------------------------------------------
 
 
 def status(
@@ -475,40 +687,17 @@ def status(
     if _is_local(ex):
         require_systemctl()
     cmd = ["systemctl", "--no-pager", f"-n{lines}", "status", unit]
-    logger.debug("  $ sudo -- %s", " ".join(cmd))
+    logger.debug(f"  $ sudo -- {' '.join(cmd)}")
     result = ex.run(cmd, sudo=True, timeout=30)
-    # Print output directly (status is for human consumption)
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
 
 
-def unit_exists(unit: str, *, executor: Executor | None = None) -> bool:
-    """Check if a systemd unit exists (loaded or not)."""
-    ex = _get_executor(executor)
-    if _is_local(ex):
-        require_systemctl()
-    result = ex.run(
-        ["systemctl", "list-unit-files", unit, "--plain", "--no-legend"],
-        timeout=10,
-    )
-    return bool(result.stdout.strip())
-
-
-def container_exists(unit: str, *, executor: Executor | None = None) -> bool:
-    """Check if the Quadlet container for a unit exists (running or stopped).
-
-    This is more reliable than unit_exists for template instances like
-    onetime@7044, since list-unit-files only shows the template, not instances.
-    """
-    ex = _get_executor(executor)
-    container_name = unit_to_container_name(unit)
-    result = ex.run(
-        ["podman", "container", "exists", container_name],
-        timeout=10,
-    )
-    return result.ok
+# ---------------------------------------------------------------------------
+# Health-check polling
+# ---------------------------------------------------------------------------
 
 
 class HealthCheckTimeoutError(Exception):
@@ -531,7 +720,9 @@ def wait_for_healthy(
     *,
     executor: Executor | None = None,
 ) -> None:
-    """Poll systemctl until the unit is active or timeout is reached.
+    """Poll until the unit is active or timeout is reached.
+
+    Uses D-Bus for local polling when available, otherwise ``systemctl is-active``.
 
     Args:
         unit: Systemd unit name (e.g., "onetime-web@7043")
@@ -549,37 +740,47 @@ def wait_for_healthy(
     """
     import time
 
-    ex = _get_executor(executor)
-    if _is_local(ex):
-        require_systemctl()
+    use_dbus = _use_dbus(executor)
+
+    if not use_dbus:
+        ex = _get_executor(executor)
+        if _is_local(ex):
+            require_systemctl()
+
     deadline = time.monotonic() + timeout
     last_state = "unknown"
     consecutive_failures = 0
 
     while time.monotonic() < deadline:
-        result = ex.run(
-            ["systemctl", "is-active", unit],
-            timeout=10,
-        )
-        last_state = result.stdout.strip()
-        if result.ok and last_state == "active":
-            logger.debug("%s is active", unit)
+        if use_dbus:
+            from rots import _dbus
+
+            try:
+                last_state = _dbus.get_active_state(unit)
+            except Exception:
+                last_state = "unknown"
+        else:
+            result = _get_executor(executor).run(
+                ["systemctl", "is-active", unit],
+                timeout=10,
+            )
+            last_state = result.stdout.strip()
+
+        if last_state == "active":
+            logger.debug(f"{unit} is active")
             return
         if last_state == "failed":
             consecutive_failures += 1
             logger.debug(
-                "%s is failed (consecutive: %d/%d), waiting...",
-                unit,
-                consecutive_failures,
-                consecutive_failures_threshold,
+                f"{unit} is failed"
+                f" (consecutive: {consecutive_failures}/{consecutive_failures_threshold}),"
+                " waiting..."
             )
-            # Only exit early once the failure has persisted across multiple
-            # consecutive polls — a transient "failed" during restart is normal.
             if consecutive_failures >= consecutive_failures_threshold:
                 break
         else:
             consecutive_failures = 0
-            logger.debug("%s is %s, waiting...", unit, last_state)
+            logger.debug(f"{unit} is {last_state}, waiting...")
         time.sleep(poll_interval)
 
     raise HealthCheckTimeoutError(unit, timeout, last_state)
@@ -634,7 +835,6 @@ def wait_for_http_healthy(
     last_error = "not started"
 
     if _is_local(ex):
-        # Local: use urllib directly (no subprocess overhead)
         import urllib.error
         import urllib.request
 
@@ -642,25 +842,24 @@ def wait_for_http_healthy(
             try:
                 with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310
                     if response.status == 200:
-                        logger.debug("HTTP health check passed: %s", url)
+                        logger.debug(f"HTTP health check passed: {url}")
                         return
                     last_error = f"HTTP {response.status}"
             except urllib.error.HTTPError as e:
                 last_error = f"HTTP {e.code}"
             except (urllib.error.URLError, OSError) as e:
                 last_error = str(e)
-            logger.debug("HTTP health check pending (%s): %s", last_error, url)
+            logger.debug(f"HTTP health check pending ({last_error}): {url}")
             time.sleep(poll_interval)
     else:
-        # Remote: run curl on the target host so localhost is correct
         curl_cmd = ["curl", "-sf", url]
         while time.monotonic() < deadline:
             result = ex.run(curl_cmd, timeout=10)
             if result.ok:
-                logger.debug("HTTP health check passed (remote): %s", url)
+                logger.debug(f"HTTP health check passed (remote): {url}")
                 return
             last_error = f"curl exit {result.returncode}"
-            logger.debug("HTTP health check pending (%s): %s", last_error, url)
+            logger.debug(f"HTTP health check pending ({last_error}): {url}")
             time.sleep(poll_interval)
 
     raise HttpHealthCheckTimeoutError(port, timeout, last_error)

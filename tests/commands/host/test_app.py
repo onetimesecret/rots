@@ -2,6 +2,7 @@
 
 """Tests for host command .otsinfra.env integration and executor routing."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -231,7 +232,7 @@ class TestDiffCommand:
 
     @patch("rots.commands.host.app._get_executor")
     @patch("rots.commands.host.app._resolve_ssh_host")
-    def test_diff_shows_identical_when_same(self, mock_host, mock_get_ex, tmp_path, capsys):
+    def test_diff_shows_identical_when_same(self, mock_host, mock_get_ex, tmp_path, caplog):
         """diff should show [identical] when local and remote match."""
         mock_host.return_value = "test-host"
         mock_executor = MagicMock()
@@ -244,10 +245,10 @@ class TestDiffCommand:
         mock_get_ex.return_value = mock_executor
 
         config_dir = self._setup_manifest(tmp_path)
-        diff(config_dir=config_dir)
+        with caplog.at_level(logging.INFO):
+            diff(config_dir=config_dir)
 
-        captured = capsys.readouterr()
-        assert "identical" in captured.out
+        assert "identical" in caplog.text
 
 
 class TestPullCommand:
@@ -314,7 +315,7 @@ class TestPullCommand:
 
     @patch("rots.commands.host.app._get_executor")
     @patch("rots.commands.host.app._resolve_ssh_host")
-    def test_pull_skips_missing_remote_file(self, mock_host, mock_get_ex, tmp_path, capsys):
+    def test_pull_skips_missing_remote_file(self, mock_host, mock_get_ex, tmp_path, caplog):
         """pull should skip files that don't exist on remote."""
         mock_host.return_value = "test-host"
         mock_executor = MagicMock()
@@ -327,10 +328,10 @@ class TestPullCommand:
         mock_get_ex.return_value = mock_executor
 
         config_dir = self._setup_manifest(tmp_path)
-        pull(config_dir=config_dir, apply=True)
+        with caplog.at_level(logging.INFO):
+            pull(config_dir=config_dir, apply=True)
 
-        captured = capsys.readouterr()
-        assert "skip" in captured.out
+        assert "skip" in caplog.text
         assert not (config_dir / "config.yaml").exists()
 
 

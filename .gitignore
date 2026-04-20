@@ -28,3 +28,5 @@ Thumbs.db
 .claude
 .serena
 .coverage*
+.hypothesis
+uv.lock

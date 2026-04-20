@@ -1,7 +1,10 @@
 # tests/commands/test_assets.py
+
 """Tests for assets command."""
 
 import pytest
+
+pytestmark = pytest.mark.quick
 
 
 class TestAssetsCommandImports:

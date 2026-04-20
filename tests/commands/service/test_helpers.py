@@ -1,4 +1,5 @@
 # tests/commands/service/test_helpers.py
+
 """Tests for service command helpers."""
 
 import subprocess
@@ -19,6 +20,8 @@ from rots.commands.service._helpers import (
     update_config_value,
 )
 from rots.commands.service.packages import ServicePackage
+
+pytestmark = pytest.mark.quick
 
 
 class TestEnsureInstancesDir:

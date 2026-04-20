@@ -1,4 +1,5 @@
 # tests/commands/proxy/test_helpers.py
+
 """Tests for proxy command helpers."""
 
 import json
@@ -8,6 +9,8 @@ import urllib.request
 from datetime import UTC
 
 import pytest
+
+pytestmark = pytest.mark.quick
 
 
 class TestRenderTemplate:

@@ -1,4 +1,5 @@
 # tests/test_podman.py
+
 """Tests for the Podman CLI wrapper."""
 
 import subprocess
@@ -7,6 +8,8 @@ import pytest
 from ots_shared.ssh.executor import CommandError, Result
 
 from rots.podman import Podman, podman
+
+pytestmark = pytest.mark.quick
 
 
 class TestPodmanWrapper:

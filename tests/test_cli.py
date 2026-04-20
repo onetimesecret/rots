@@ -1,9 +1,12 @@
 # tests/test_cli.py
+
 """Tests for CLI structure and invocation following Cyclopts conventions."""
 
 import pytest
 
 from rots.cli import app
+
+pytestmark = pytest.mark.quick
 
 
 class TestPackageVersion:
@@ -288,11 +291,11 @@ class TestDoctorCommand:
         mocker.patch("rots.config.Config", return_value=cfg_mock)
 
         env_file = tmp_path / "onetimesecret_env"
-        env_file.write_text("SECRET_VARIABLE_NAMES=HMAC_SECRET\nHMAC_SECRET=abc\n")
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=abc\n")
         mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
 
         parsed_mock = mocker.MagicMock()
-        parsed_mock.secret_variable_names = ["HMAC_SECRET"]
+        parsed_mock.secret_variable_names = ["AUTH_SECRET"]
         mocker.patch("rots.environment_file.EnvFile.parse", return_value=parsed_mock)
         mocker.patch("rots.environment_file.secret_exists", return_value=True)
 
@@ -304,7 +307,14 @@ class TestDoctorCommand:
         caddy_result.returncode = 0
         caddy_result.stdout = "active\n"
         caddy_result.stderr = ""
-        mocker.patch("subprocess.run", side_effect=[running_result, caddy_result])
+        rabbitmq_result = mocker.MagicMock()
+        rabbitmq_result.returncode = 0
+        rabbitmq_result.stdout = "active\n"
+        rabbitmq_result.stderr = ""
+        mocker.patch(
+            "subprocess.run",
+            side_effect=[running_result, caddy_result, rabbitmq_result],
+        )
 
         from rots.cli import doctor
 
@@ -352,7 +362,12 @@ class TestDoctorCommand:
         running_result.stdout = ""
         caddy_result = mocker.MagicMock()
         caddy_result.stdout = "inactive\n"
-        mocker.patch("subprocess.run", side_effect=[running_result, caddy_result])
+        rabbitmq_result = mocker.MagicMock()
+        rabbitmq_result.stdout = "inactive\n"
+        mocker.patch(
+            "subprocess.run",
+            side_effect=[running_result, caddy_result, rabbitmq_result],
+        )
 
         from rots.cli import doctor
 
@@ -382,7 +397,12 @@ class TestDoctorCommand:
         running_result.stdout = "onetime-web@7043.service active\n"
         caddy_result = mocker.MagicMock()
         caddy_result.stdout = "active\n"
-        mocker.patch("subprocess.run", side_effect=[running_result, caddy_result])
+        rabbitmq_result = mocker.MagicMock()
+        rabbitmq_result.stdout = "active\n"
+        mocker.patch(
+            "subprocess.run",
+            side_effect=[running_result, caddy_result, rabbitmq_result],
+        )
 
         from rots.cli import doctor
 
@@ -412,7 +432,12 @@ class TestDoctorCommand:
         running_result.stdout = ""
         caddy_result = mocker.MagicMock()
         caddy_result.stdout = "inactive\n"
-        mocker.patch("subprocess.run", side_effect=[running_result, caddy_result])
+        rabbitmq_result = mocker.MagicMock()
+        rabbitmq_result.stdout = "inactive\n"
+        mocker.patch(
+            "subprocess.run",
+            side_effect=[running_result, caddy_result, rabbitmq_result],
+        )
 
         from rots.cli import doctor
 
@@ -466,6 +491,90 @@ class TestDoctorCommand:
         captured = capsys.readouterr()
         assert "systemctl query failed" in captured.out
 
+    def test_doctor_rabbitmq_running(self, mocker, tmp_path, capsys):
+        """Doctor should report rabbitmq-server as running."""
+        mocker.patch("shutil.which", return_value="/usr/bin/systemctl")
+        mocker.patch("os.access", return_value=True)
+
+        cfg_mock = self._make_cfg_mock(mocker, tmp_path)
+        mocker.patch("rots.config.Config", return_value=cfg_mock)
+
+        env_file = tmp_path / "onetimesecret_env"
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=abc\n")
+        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
+
+        parsed_mock = mocker.MagicMock()
+        parsed_mock.secret_variable_names = ["AUTH_SECRET"]
+        mocker.patch("rots.environment_file.EnvFile.parse", return_value=parsed_mock)
+        mocker.patch("rots.environment_file.secret_exists", return_value=True)
+
+        running_result = mocker.MagicMock()
+        running_result.returncode = 0
+        running_result.stdout = "onetime-web@7043.service loaded active running\n"
+        running_result.stderr = ""
+        caddy_result = mocker.MagicMock()
+        caddy_result.returncode = 0
+        caddy_result.stdout = "active\n"
+        caddy_result.stderr = ""
+        rabbitmq_result = mocker.MagicMock()
+        rabbitmq_result.returncode = 0
+        rabbitmq_result.stdout = "active\n"
+        rabbitmq_result.stderr = ""
+        mocker.patch(
+            "subprocess.run",
+            side_effect=[running_result, caddy_result, rabbitmq_result],
+        )
+
+        from rots.cli import doctor
+
+        doctor()
+        captured = capsys.readouterr()
+        assert "rabbitmq-server running" in captured.out
+        assert "All checks passed" in captured.out
+
+    def test_doctor_rabbitmq_not_running(self, mocker, tmp_path, capsys):
+        """Doctor should warn (not fail) when rabbitmq-server is not running."""
+        mocker.patch("shutil.which", return_value="/usr/bin/systemctl")
+        mocker.patch("os.access", return_value=True)
+
+        cfg_mock = self._make_cfg_mock(mocker, tmp_path)
+        mocker.patch("rots.config.Config", return_value=cfg_mock)
+
+        env_file = tmp_path / "onetimesecret_env"
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=abc\n")
+        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
+
+        parsed_mock = mocker.MagicMock()
+        parsed_mock.secret_variable_names = ["AUTH_SECRET"]
+        mocker.patch("rots.environment_file.EnvFile.parse", return_value=parsed_mock)
+        mocker.patch("rots.environment_file.secret_exists", return_value=True)
+
+        running_result = mocker.MagicMock()
+        running_result.returncode = 0
+        running_result.stdout = "onetime-web@7043.service loaded active running\n"
+        running_result.stderr = ""
+        caddy_result = mocker.MagicMock()
+        caddy_result.returncode = 0
+        caddy_result.stdout = "active\n"
+        caddy_result.stderr = ""
+        rabbitmq_result = mocker.MagicMock()
+        rabbitmq_result.returncode = 0
+        rabbitmq_result.stdout = "inactive\n"
+        rabbitmq_result.stderr = ""
+        mocker.patch(
+            "subprocess.run",
+            side_effect=[running_result, caddy_result, rabbitmq_result],
+        )
+
+        from rots.cli import doctor
+
+        with pytest.raises(SystemExit) as exc_info:
+            doctor()
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "rabbitmq-server running" in captured.out
+        assert "FAIL" in captured.out
+
 
 class TestConfigureLoggingLevels:
     """Test _configure_logging() sets log levels correctly.
@@ -487,8 +596,8 @@ class TestConfigureLoggingLevels:
         call_kwargs = mock_basic.call_args[1]
         assert call_kwargs["level"] == logging.DEBUG
 
-    def test_verbose_false_passes_warning_level_to_basicconfig(self, mocker):
-        """_configure_logging(False) should call basicConfig with level=WARNING."""
+    def test_verbose_false_passes_info_level_to_basicconfig(self, mocker):
+        """_configure_logging(False) should call basicConfig with level=INFO."""
         import logging
 
         from rots.cli import _configure_logging
@@ -497,7 +606,7 @@ class TestConfigureLoggingLevels:
         _configure_logging(False)
         mock_basic.assert_called_once()
         call_kwargs = mock_basic.call_args[1]
-        assert call_kwargs["level"] == logging.WARNING
+        assert call_kwargs["level"] == logging.INFO
 
     def test_verbose_true_suppresses_urllib3_logger(self):
         """_configure_logging(True) should keep urllib3 at WARNING even in verbose mode."""

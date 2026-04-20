@@ -81,6 +81,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --extra test
 
+      - name: Install Podman
+        run: sudo apt-get update && sudo apt-get install -y podman
+
+      - name: Run quadlet generator validation
+        run: |
+          uv run pytest tests/test_quadlet_schema.py -m integration -v \
+            --tb=short --no-header
+
       - name: Run integration smoke tests
         run: |
           uv run pytest tests/integration/ -v \

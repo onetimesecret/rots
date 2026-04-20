@@ -1,4 +1,5 @@
 # src/rots/db.py
+
 """SQLite database for deployment timeline and image alias tracking.
 
 The deployment timeline is an append-only audit trail that records all
@@ -168,7 +169,7 @@ def _remote_query(
         timeout=15,
     )
     if not result.ok:
-        logger.warning("Remote sqlite3 query failed: %s", result.stderr.strip())
+        logger.warning(f"Remote sqlite3 query failed: {result.stderr.strip()}")
         return []
     stdout = result.stdout.strip()
     if not stdout:
@@ -190,7 +191,7 @@ def _remote_execute(
         timeout=15,
     )
     if not result.ok:
-        logger.warning("Remote sqlite3 execute failed: %s", result.stderr.strip())
+        logger.warning(f"Remote sqlite3 execute failed: {result.stderr.strip()}")
 
 
 def _interpolate_params(sql: str, params: tuple) -> str:
@@ -225,13 +226,13 @@ def _remote_init_db(db_path: Path, *, executor: Executor) -> None:
         timeout=15,
     )
     if not result.ok:
-        logger.warning("Remote init_db failed: %s", result.stderr.strip())
+        logger.warning(f"Remote init_db failed: {result.stderr.strip()}")
 
 
 def init_db(db_path: Path, *, executor: Executor | None = None) -> None:
     """Initialize the database with schema. Idempotent."""
     if _is_remote(executor):
-        _remote_init_db(db_path, executor=executor)  # type: ignore[arg-type]
+        _remote_init_db(db_path, executor=executor)
         return
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
@@ -286,7 +287,7 @@ def record_deployment(
     """
     params = (port, image, tag, action, 1 if success else 0, notes)
     if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        _remote_execute(db_path, sql, params, executor=executor)
         return 0  # Remote doesn't return lastrowid
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)
@@ -338,7 +339,7 @@ def get_deployments(
     params.append(limit)
 
     if _is_remote(executor):
-        rows = _remote_query(db_path, query, tuple(params), executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, query, tuple(params), executor=executor)
         return [
             Deployment(
                 id=row["id"],
@@ -389,7 +390,7 @@ def set_alias(
     """
     params = (alias.upper(), image, tag)
     if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        _remote_execute(db_path, sql, params, executor=executor)
         return
     with get_connection(db_path) as conn:
         conn.execute(sql, params)
@@ -406,7 +407,7 @@ def get_alias(
     sql = "SELECT alias, image, tag, set_at FROM image_aliases WHERE alias = ?"
     params = (alias.upper(),)
     if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, sql, params, executor=executor)
         if rows:
             row = rows[0]
             return ImageAlias(
@@ -436,7 +437,7 @@ def get_all_aliases(
     """Get all image aliases."""
     sql = "SELECT alias, image, tag, set_at FROM image_aliases ORDER BY alias"
     if _is_remote(executor):
-        rows = _remote_query(db_path, sql, executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, sql, executor=executor)
         return [
             ImageAlias(
                 alias=row["alias"],
@@ -544,7 +545,7 @@ def rollback(
     """
 
     if _is_remote(executor):
-        rows = _remote_query(db_path, sql, executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, sql, executor=executor)
     else:
         with get_connection(db_path) as conn:
             rows = [dict(r) for r in conn.execute(sql).fetchall()]
@@ -601,7 +602,7 @@ def get_previous_tags(
     params = (limit,)
 
     if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, sql, params, executor=executor)
         return [(row["image"], row["tag"], row["last_used"]) for row in rows]
 
     with get_connection(db_path) as conn:
@@ -667,7 +668,7 @@ def record_service_instance(
     """
     params = (package, instance, config_file, data_dir, port, notes)
     if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        _remote_execute(db_path, sql, params, executor=executor)
         return 0  # Remote doesn't return lastrowid
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)
@@ -690,7 +691,7 @@ def get_service_instance(
     """
     params = (package, instance)
     if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, sql, params, executor=executor)
         if rows:
             row = rows[0]
             return ServiceInstance(
@@ -748,7 +749,7 @@ def get_service_instances(
         params = ()
 
     if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, sql, params, executor=executor)
         return [
             ServiceInstance(
                 id=row["id"],
@@ -797,10 +798,10 @@ def delete_service_instance(
         check_sql = (
             "SELECT COUNT(*) as cnt FROM service_instances WHERE package = ? AND instance = ?"
         )
-        rows = _remote_query(db_path, check_sql, params, executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, check_sql, params, executor=executor)
         if not rows or rows[0].get("cnt", 0) == 0:
             return False
-        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        _remote_execute(db_path, sql, params, executor=executor)
         return True
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)
@@ -825,7 +826,7 @@ def record_service_action(
     """
     params = (package, instance, action, 1 if success else 0, notes)
     if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        _remote_execute(db_path, sql, params, executor=executor)
         return 0  # Remote doesn't return lastrowid
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)
@@ -863,7 +864,7 @@ def get_service_actions(
     params.append(limit)
 
     if _is_remote(executor):
-        rows = _remote_query(db_path, sql, tuple(params), executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, sql, tuple(params), executor=executor)
         return [
             ServiceAction(
                 id=row["id"],
@@ -947,7 +948,7 @@ def record_dns_action(
     """
     params = (hostname, record_type, value, ttl, provider, action, 1 if success else 0, notes)
     if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        _remote_execute(db_path, sql, params, executor=executor)
         return 0  # Remote doesn't return lastrowid
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)
@@ -978,7 +979,7 @@ def upsert_dns_current(
     """
     params = (hostname, record_type, value, ttl, provider)
     if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        _remote_execute(db_path, sql, params, executor=executor)
         return
     with get_connection(db_path) as conn:
         conn.execute(sql, params)
@@ -999,7 +1000,7 @@ def get_dns_current(
     """
     params = (hostname,)
     if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, sql, params, executor=executor)
         if rows:
             row = rows[0]
             return DnsCurrent(
@@ -1037,7 +1038,7 @@ def get_all_dns_current(
         ORDER BY hostname
     """
     if _is_remote(executor):
-        rows = _remote_query(db_path, sql, executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, sql, executor=executor)
         return [
             DnsCurrent(
                 hostname=row["hostname"],
@@ -1081,7 +1082,7 @@ def get_dns_history(
     """
     params = (hostname, limit)
     if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        rows = _remote_query(db_path, sql, params, executor=executor)
         return [
             DnsRecord(
                 id=row["id"],
@@ -1126,7 +1127,7 @@ def delete_dns_current(
     sql = "DELETE FROM dns_current WHERE hostname = ?"
     params = (hostname,)
     if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)  # type: ignore[arg-type]
+        _remote_execute(db_path, sql, params, executor=executor)
         return True
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)

@@ -4,7 +4,6 @@
 
 from .annotations import (
     Delay,
-    Identifiers,
     InstanceType,
     SchedulerFlag,
     TypeSelector,
@@ -38,7 +37,6 @@ from .app import (
 
 __all__ = [
     "Delay",
-    "Identifiers",
     "InstanceType",
     "SchedulerFlag",
     "TypeSelector",

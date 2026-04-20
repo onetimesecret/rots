@@ -46,7 +46,7 @@ from ._helpers import (
     validate_caddy_config,
 )
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 app = cyclopts.App(
     name="proxy",
@@ -118,7 +118,7 @@ def render(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(rendered)
 
-        print(f"[ok] Rendered {tpl} -> {out}")
+        logger.info(f"[ok] Rendered {tpl} -> {out}")
 
     except ProxyError as e:
         raise SystemExit(str(e)) from e
@@ -217,9 +217,9 @@ def _push_file(
     content = source.read_text()
 
     if dry_run:
-        print(f"Would push: {source} -> {tpl_dest}")
-        print(f"Would render: {tpl_dest} -> {out}")
-        print("Would reload Caddy")
+        logger.info(f"Would push: {source} -> {tpl_dest}")
+        logger.info(f"Would render: {tpl_dest} -> {out}")
+        logger.info("Would reload Caddy")
         return
 
     # Step 1: Push template to remote
@@ -227,7 +227,7 @@ def _push_file(
     result = executor.run(["tee", str(tpl_dest)], input=content, timeout=15)
     if not result.ok:
         raise ProxyError(f"Failed to write {tpl_dest}: {result.stderr}")
-    print(f"[ok] Pushed {source} -> {tpl_dest}")
+    logger.info(f"[ok] Pushed {source} -> {tpl_dest}")
 
     # Step 2: Render template on remote
     rendered = render_template(tpl_dest, executor=executor)
@@ -236,11 +236,11 @@ def _push_file(
     result = executor.run(["tee", str(out)], input=rendered, timeout=15)
     if not result.ok:
         raise ProxyError(f"Failed to write {out}: {result.stderr}")
-    print(f"[ok] Rendered {tpl_dest} -> {out}")
+    logger.info(f"[ok] Rendered {tpl_dest} -> {out}")
 
     # Step 3: Reload Caddy
     reload_caddy(executor=executor)
-    print("[ok] Caddy reloaded")
+    logger.info("[ok] Caddy reloaded")
 
 
 def _push_directory(
@@ -273,23 +273,23 @@ def _push_directory(
                 tpl_name = found.name
 
     if dry_run:
-        print(f"Would push {len(files)} file(s) to {dest}:")
+        logger.info(f"Would push {len(files)} file(s) to {dest}:")
         push_files_to_remote(source, dest, executor=executor, dry_run=True)
         if tpl_name:
-            print(f"Would render: {dest / tpl_name} -> {out}")
-            print("Would reload Caddy")
+            logger.info(f"Would render: {dest / tpl_name} -> {out}")
+            logger.info("Would reload Caddy")
         elif not no_render:
-            print("No template found; skipping render/reload")
+            logger.info("No template found; skipping render/reload")
         return
 
     # Push all files
-    print(f"Pushing {len(files)} file(s) to {dest}:")
+    logger.info(f"Pushing {len(files)} file(s) to {dest}:")
     push_files_to_remote(source, dest, executor=executor)
-    print(f"[ok] Pushed {len(files)} file(s)")
+    logger.info(f"[ok] Pushed {len(files)} file(s)")
 
     if not tpl_name:
         if not no_render:
-            print("No template found; skipping render/reload")
+            logger.info("No template found; skipping render/reload")
         return
 
     tpl_path = dest / tpl_name
@@ -301,10 +301,10 @@ def _push_directory(
     result = executor.run(["tee", str(out)], input=rendered, timeout=15)
     if not result.ok:
         raise ProxyError(f"Failed to write {out}: {result.stderr}")
-    print(f"[ok] Rendered {tpl_path} -> {out}")
+    logger.info(f"[ok] Rendered {tpl_path} -> {out}")
 
     reload_caddy(executor=executor)
-    print("[ok] Caddy reloaded")
+    logger.info("[ok] Caddy reloaded")
 
 
 @app.command
@@ -321,7 +321,7 @@ def reload() -> None:
     ex = cfg.get_executor(host=context.host_var.get(None))
     try:
         reload_caddy(executor=ex)
-        print("[ok] Caddy reloaded")
+        logger.info("[ok] Caddy reloaded")
     except ProxyError as e:
         raise SystemExit(str(e)) from e
 
@@ -396,10 +396,10 @@ def validate(
             source_dir = file_path.parent
 
         validate_caddy_config(content, executor=ex, source_dir=source_dir)
-        print(f"[ok] {file_path} is valid")
+        logger.info(f"[ok] {file_path} is valid")
 
     except ProxyError as e:
-        print(f"Validation failed for {file_path}")
+        logger.error(f"Validation failed for {file_path}")
         raise SystemExit(str(e)) from e
     except FileNotFoundError as e:
         raise SystemExit("caddy not found in PATH") from e
@@ -443,7 +443,7 @@ def diff(
         raise SystemExit(str(e)) from e
 
     if old_json == new_json:
-        print("[ok] Configs are equivalent")
+        logger.info("[ok] Configs are equivalent")
         return
 
     result = difflib.unified_diff(
@@ -650,7 +650,7 @@ def trace(
                     print(f"\nblocked: {status_code} (no body)")
 
             # Show the echo body that round-tripped through Caddy
-            if received and resp_body and log.isEnabledFor(logging.DEBUG):
+            if received and resp_body and logger.isEnabledFor(logging.DEBUG):
                 try:
                     echo_data = json.loads(resp_body)
                     print(f"\necho: {json.dumps(echo_data, indent=2)}")

@@ -1,7 +1,12 @@
 # tests/test_environment_file.py
+
 """Tests for environment_file module - env file parsing and secret management."""
 
 from unittest.mock import MagicMock
+
+import pytest
+
+pytestmark = pytest.mark.quick
 
 
 class TestEnvVarToSecretName:
@@ -508,11 +513,18 @@ class TestEnvFileParseRemote:
             _make_remote_result(stdout="HOST=example.com\nPORT=7043\n"),  # cat
         ]
 
-        env_file = EnvFile.parse("/etc/onetimesecret/.env", executor=mock_ex)
+        env_file = EnvFile.parse("/etc/default/onetimesecret", executor=mock_ex)
 
         assert mock_ex.run.call_count == 2
-        assert mock_ex.run.call_args_list[0][0][0] == ["test", "-f", "/etc/onetimesecret/.env"]
-        assert mock_ex.run.call_args_list[1][0][0] == ["cat", "/etc/onetimesecret/.env"]
+        assert mock_ex.run.call_args_list[0][0][0] == [
+            "test",
+            "-f",
+            "/etc/default/onetimesecret",
+        ]
+        assert mock_ex.run.call_args_list[1][0][0] == [
+            "cat",
+            "/etc/default/onetimesecret",
+        ]
         assert env_file.get("HOST") == "example.com"
         assert env_file.get("PORT") == "7043"
 
@@ -538,7 +550,7 @@ class TestEnvFileWriteRemote:
         mock_ex.run.return_value = _make_remote_result()
 
         env_file = EnvFile(
-            path="/etc/onetimesecret/.env",
+            path="/etc/default/onetimesecret",
             entries=[
                 EnvEntry(key="HOST", value="example.com", raw_line="HOST=example.com"),
             ],
@@ -548,7 +560,7 @@ class TestEnvFileWriteRemote:
 
         mock_ex.run.assert_called_once()
         call_args = mock_ex.run.call_args
-        assert call_args[0][0] == ["tee", "/etc/onetimesecret/.env"]
+        assert call_args[0][0] == ["tee", "/etc/default/onetimesecret"]
         assert call_args[1]["input"] == "HOST=example.com\n"
 
 
@@ -597,7 +609,13 @@ class TestEnsurePodmanSecretRemote:
         assert exists_call[1]["timeout"] == 15, "secret exists should have timeout=15"
         # Second call is the create (timeout=30)
         create_call = mock_ex.run.call_args_list[1]
-        assert create_call[0][0] == ["podman", "secret", "create", "ots_key", "-"]
+        assert create_call[0][0] == [
+            "podman",
+            "secret",
+            "create",
+            "ots_key",
+            "-",
+        ]
         assert create_call[1]["input"] == "secret_val"
         assert create_call[1]["check"] is True
         assert create_call[1]["timeout"] == 30, "secret create should have timeout=30"
@@ -676,7 +694,11 @@ class TestProcessEnvFileRemote:
                 value="API_KEY",
                 raw_line="SECRET_VARIABLE_NAMES=API_KEY",
             ),
-            EnvEntry(key="API_KEY", value="secret_value", raw_line="API_KEY=secret_value"),
+            EnvEntry(
+                key="API_KEY",
+                value="secret_value",
+                raw_line="API_KEY=secret_value",
+            ),
         ]
 
         process_env_file(env_file, executor=mock_ex)

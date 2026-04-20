@@ -1,12 +1,20 @@
+# packages/ots-shared/tests/ssh/test_env.py
+
 """Tests for ots_shared.ssh.env module."""
 
 from ots_shared.ssh.env import (
+    MARKER_FILENAME,
     _tag_to_version,
+    create_marker,
     find_env_file,
+    find_marker,
     generate_env_template,
+    generate_marker,
     load_env_file,
+    load_marker,
     resolve_config_dir,
     resolve_host,
+    validate_env_file,
 )
 
 
@@ -321,6 +329,185 @@ class TestResolveConfigDir:
         assert result == tmp_path / "config"
 
 
+class TestFindMarker:
+    """Tests for .otsinfra.yaml / .otsinfra.env walk-up discovery."""
+
+    def test_finds_yaml_marker(self, tmp_path):
+        marker = tmp_path / ".otsinfra.yaml"
+        marker.write_text("environment: eu2\n")
+        result = find_marker(start=tmp_path)
+        assert result == marker
+
+    def test_prefers_yaml_over_env(self, tmp_path):
+        yaml_marker = tmp_path / ".otsinfra.yaml"
+        yaml_marker.write_text("environment: eu2\n")
+        env_file = tmp_path / ".otsinfra.env"
+        env_file.write_text("OTS_HOST=example.com\n")
+
+        result = find_marker(start=tmp_path)
+        assert result == yaml_marker
+
+    def test_falls_back_to_env(self, tmp_path):
+        env_file = tmp_path / ".otsinfra.env"
+        env_file.write_text("OTS_HOST=example.com\n")
+        result = find_marker(start=tmp_path)
+        assert result == env_file
+
+    def test_returns_none_when_neither(self, tmp_path):
+        result = find_marker(start=tmp_path)
+        assert result is None
+
+    def test_walks_up_to_find_yaml(self, tmp_path):
+        marker = tmp_path / ".otsinfra.yaml"
+        marker.write_text("environment: eu2\n")
+        subdir = tmp_path / "deep" / "nested"
+        subdir.mkdir(parents=True)
+
+        result = find_marker(start=subdir)
+        assert result == marker
+
+
+class TestLoadMarker:
+    """Tests for .otsinfra.yaml parsing."""
+
+    def test_loads_simple_yaml(self, tmp_path):
+        marker = tmp_path / ".otsinfra.yaml"
+        marker.write_text("environment: eu2\ncreated: '2026-04-10'\n")
+        data = load_marker(marker)
+        assert data["environment"] == "eu2"
+        assert data["created"] == "2026-04-10"
+
+    def test_empty_file(self, tmp_path):
+        marker = tmp_path / ".otsinfra.yaml"
+        marker.write_text("")
+        data = load_marker(marker)
+        assert data == {}
+
+    def test_nonexistent_file(self, tmp_path):
+        data = load_marker(tmp_path / "nope.yaml")
+        assert data == {}
+
+    def test_comments_ignored(self, tmp_path):
+        marker = tmp_path / ".otsinfra.yaml"
+        marker.write_text("# marker file\nenvironment: eu2\n")
+        data = load_marker(marker)
+        assert data["environment"] == "eu2"
+        assert len(data) == 1
+
+
+class TestResolveConfigDirWithMarker:
+    """resolve_config_dir anchors off .otsinfra.yaml."""
+
+    def test_yaml_marker_with_config_sibling(self, tmp_path):
+        marker = tmp_path / ".otsinfra.yaml"
+        marker.write_text("environment: eu2\n")
+        (tmp_path / "config").mkdir()
+
+        result = resolve_config_dir(start=tmp_path)
+        assert result == tmp_path / "config"
+
+    def test_yaml_marker_without_config_returns_none(self, tmp_path):
+        marker = tmp_path / ".otsinfra.yaml"
+        marker.write_text("environment: eu2\n")
+        # No config/ directory
+
+        result = resolve_config_dir(start=tmp_path)
+        assert result is None
+
+    def test_yaml_marker_walks_up(self, tmp_path):
+        marker = tmp_path / ".otsinfra.yaml"
+        marker.write_text("environment: eu2\n")
+        (tmp_path / "config").mkdir()
+        subdir = tmp_path / "deep"
+        subdir.mkdir()
+
+        result = resolve_config_dir(start=subdir)
+        assert result == tmp_path / "config"
+
+    def test_random_config_dir_without_marker_not_found(self, tmp_path):
+        """A config/ directory without a marker file is NOT returned."""
+        (tmp_path / "config").mkdir()
+        # No .otsinfra.yaml or .otsinfra.env
+
+        result = resolve_config_dir(start=tmp_path)
+        assert result is None
+
+
+class TestGenerateMarker:
+    """Tests for .otsinfra.yaml content generation."""
+
+    def test_basic_content(self):
+        content = generate_marker("eu2")
+        assert "environment: eu2" in content
+        assert "created:" in content
+
+    def test_extra_metadata(self):
+        content = generate_marker("eu2", tier="prod", region="eu-central")
+        assert "tier: prod" in content
+        assert "region: eu-central" in content
+
+    def test_special_chars_quoted(self):
+        content = generate_marker("eu2", note="has:colon")
+        assert "note: 'has:colon'" in content
+
+    def test_trailing_newline(self):
+        content = generate_marker("eu2")
+        assert content.endswith("\n")
+
+
+class TestCreateMarker:
+    """Tests for .otsinfra.yaml file creation."""
+
+    def test_creates_file(self, tmp_path):
+        path = create_marker(tmp_path, "eu2")
+        assert path == tmp_path / MARKER_FILENAME
+        assert path.exists()
+        content = path.read_text()
+        assert "environment: eu2" in content
+
+    def test_refuses_overwrite_without_force(self, tmp_path):
+        marker = tmp_path / MARKER_FILENAME
+        marker.write_text("existing\n")
+        import pytest
+
+        with pytest.raises(FileExistsError):
+            create_marker(tmp_path, "eu2")
+
+    def test_force_overwrites(self, tmp_path):
+        marker = tmp_path / MARKER_FILENAME
+        marker.write_text("old\n")
+        path = create_marker(tmp_path, "eu2", force=True)
+        assert "environment: eu2" in path.read_text()
+
+    def test_roundtrip_with_load_marker(self, tmp_path):
+        create_marker(tmp_path, "us-prod")
+        data = load_marker(tmp_path / MARKER_FILENAME)
+        assert data["environment"] == "us-prod"
+        assert "created" in data
+
+    def test_hosts_written_to_yaml(self, tmp_path):
+        hosts = {"db": {"private_ip_address": "10.0.0.11"}}
+        path = create_marker(tmp_path, "eu2", hosts=hosts)
+        data = load_marker(path)
+        assert data["hosts"] == {"db": {"private_ip_address": "10.0.0.11"}}
+
+    def test_hosts_multiple_roles(self, tmp_path):
+        hosts = {
+            "db": {"private_ip_address": "10.0.0.11"},
+            "web": {"private_ip_address": "10.0.0.12", "public_ip": "203.0.113.5"},
+        }
+        path = create_marker(tmp_path, "eu2", hosts=hosts)
+        data = load_marker(path)
+        assert data["hosts"]["db"]["private_ip_address"] == "10.0.0.11"
+        assert data["hosts"]["web"]["private_ip_address"] == "10.0.0.12"
+        assert data["hosts"]["web"]["public_ip"] == "203.0.113.5"
+
+    def test_hosts_none_omits_block(self, tmp_path):
+        path = create_marker(tmp_path, "eu2", hosts=None)
+        content = path.read_text()
+        assert "hosts:" not in content
+
+
 class TestGenerateEnvTemplate:
     """Tests for .otsinfra.env template generation."""
 
@@ -347,3 +534,56 @@ class TestGenerateEnvTemplate:
         parsed = load_env_file(env_file)
         assert parsed["OTS_HOST"] == "prod-eu1"
         assert parsed["OTS_TAG"] == "v0.24"
+
+
+class TestValidateEnvFile:
+    """Tests for .otsinfra.env validation."""
+
+    def test_file_not_found(self, tmp_path):
+        nonexistent = tmp_path / ".otsinfra.env"
+
+        warnings, errors = validate_env_file(nonexistent)
+
+        assert warnings == []
+        assert len(errors) == 1
+        assert f"Environment file not found: {nonexistent}" in errors[0]
+
+    def test_missing_ots_host(self, tmp_path):
+        env_file = tmp_path / ".otsinfra.env"
+        env_file.write_text("OTS_TAG=v0.24\nRABBITMQ_URL=amqp://localhost\n")
+
+        warnings, errors = validate_env_file(env_file)
+
+        assert errors == ["OTS_HOST is required for remote operations"]
+        assert warnings == []
+
+    def test_missing_ots_tag(self, tmp_path):
+        env_file = tmp_path / ".otsinfra.env"
+        env_file.write_text("OTS_HOST=example.com\nRABBITMQ_URL=amqp://localhost\n")
+
+        warnings, errors = validate_env_file(env_file)
+
+        assert errors == []
+        assert "OTS_TAG not set — container operations may use defaults" in warnings
+
+    def test_missing_rabbitmq_url(self, tmp_path):
+        env_file = tmp_path / ".otsinfra.env"
+        env_file.write_text("OTS_HOST=example.com\nOTS_TAG=v0.24\n")
+
+        warnings, errors = validate_env_file(env_file)
+
+        assert errors == []
+        assert "RABBITMQ_URL not set — sidecar will use server defaults" in warnings
+
+    def test_fully_populated_file(self, tmp_path):
+        env_file = tmp_path / ".otsinfra.env"
+        env_file.write_text(
+            "OTS_HOST=example.com\n"
+            "OTS_TAG=v0.24\n"
+            "RABBITMQ_URL=amqp://user:pass@localhost:5672/vhost\n"
+        )
+
+        warnings, errors = validate_env_file(env_file)
+
+        assert warnings == []
+        assert errors == []

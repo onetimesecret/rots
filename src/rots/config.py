@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -11,6 +12,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ots_shared.ssh.executor import Executor
+
+logger = logging.getLogger(__name__)
 
 # Default image registry (public)
 DEFAULT_IMAGE = "ghcr.io/onetimesecret/onetimesecret"
@@ -66,6 +69,50 @@ SYSTEMD_UNIT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._@:-]{0,255}$")
 REGISTRY_RE = re.compile(r"^(?!.*\.\.)[a-zA-Z0-9][a-zA-Z0-9._/:-]{0,254}$")
 
 
+def join_image_tag(image: str, tag: str) -> str:
+    """Join image and tag using OCI reference syntax.
+
+    Digest tags (starting with '@') use '@' separator;
+    named tags use ':' separator.
+    """
+    if tag.startswith("@"):
+        return f"{image}{tag}"
+    return f"{image}:{tag}"
+
+
+def _strip_registry_prefix(image: str) -> str:
+    """Strip the registry hostname from an OCI image reference, keeping the path.
+
+    OCI convention: the first ``/``-delimited component is a registry hostname
+    when it contains a ``.`` or ``:``, or is ``localhost``.  Otherwise the
+    entire string is an image path (e.g. ``library/nginx``).
+
+    Examples::
+
+        _strip_registry_prefix("ghcr.io/onetimesecret/onetimesecret")
+        # -> "onetimesecret/onetimesecret"
+
+        _strip_registry_prefix("registry:5000/org/app")
+        # -> "org/app"
+
+        _strip_registry_prefix("localhost/image")
+        # -> "image"
+
+        _strip_registry_prefix("onetimesecret/onetimesecret")
+        # -> "onetimesecret/onetimesecret"  (no registry to strip)
+
+        _strip_registry_prefix("myapp")
+        # -> "myapp"
+    """
+    slash = image.find("/")
+    if slash == -1:
+        return image
+    first_component = image[:slash]
+    if "." in first_component or ":" in first_component or first_component == "localhost":
+        return image[slash + 1 :]
+    return image
+
+
 # Session-scoped SSH connection cache: hostname -> paramiko.SSHClient.
 # Avoids creating a new connection per get_executor() call within one CLI
 # invocation.  Connections are closed automatically at interpreter exit.
@@ -83,27 +130,6 @@ def _close_ssh_cache() -> None:
 
 
 atexit.register(_close_ssh_cache)
-
-
-def _extract_image_path(image: str) -> str:
-    """Extract the path portion of an OCI image reference (strip registry hostname).
-
-    The first component is treated as a registry hostname if it contains
-    '.' or ':' (standard OCI convention).
-
-    Examples:
-        ghcr.io/onetimesecret/onetimesecret -> onetimesecret/onetimesecret
-        onetimesecret/onetimesecret          -> onetimesecret/onetimesecret
-        registry:5000/org/image              -> org/image
-        nginx                                -> nginx
-    """
-    parts = image.split("/", 1)
-    if len(parts) == 1:
-        return image
-    first, rest = parts
-    if "." in first or ":" in first:
-        return rest
-    return image
 
 
 def parse_image_reference(ref: str) -> tuple[str, str | None]:
@@ -174,7 +200,7 @@ class Config:
         /opt/onetimesecret/config/Caddyfile.template -> /etc/onetimesecret/Caddyfile.template
 
     Secrets (via podman secret):
-        ots_hmac_secret              - HMAC_SECRET env var
+        ots_hmac_secret              - AUTH_SECRET env var
         ots_secret                   - SECRET env var
         ots_session_secret           - SESSION_SECRET env var
     """
@@ -183,9 +209,11 @@ class Config:
     var_dir: Path = Path("/var/lib/onetimesecret")
     image: str = field(default_factory=lambda: os.environ.get("IMAGE") or DEFAULT_IMAGE)
     tag: str = field(default_factory=lambda: os.environ.get("TAG") or DEFAULT_TAG)
+    _image_explicit: bool = field(default=False, repr=False)
     web_template_path: Path = Path("/etc/containers/systemd/onetime-web@.container")
     worker_template_path: Path = Path("/etc/containers/systemd/onetime-worker@.container")
     scheduler_template_path: Path = Path("/etc/containers/systemd/onetime-scheduler@.container")
+    image_template_path: Path = Path("/etc/containers/systemd/onetime.image")
 
     # Private registry configuration (optional, set via OTS_REGISTRY env var)
     registry: str | None = field(default_factory=lambda: os.environ.get("OTS_REGISTRY"))
@@ -212,11 +240,19 @@ class Config:
 
     def __post_init__(self):
         """Validate fields on construction (and dataclasses.replace)."""
+        if not self._image_explicit and os.environ.get("IMAGE"):
+            self._image_explicit = True
         self.validate()
 
     @property
     def image_with_tag(self) -> str:
-        return f"{self.image}:{self.tag}"
+        return join_image_tag(self.image, self.tag)
+
+    def _apply_registry_override(self, image: str) -> str:
+        """Apply OTS_REGISTRY override to an image path."""
+        if self.registry:
+            return f"{self.registry}/{_strip_registry_prefix(image)}"
+        return image
 
     @property
     def effective_image(self) -> str:
@@ -226,10 +262,7 @@ class Config:
         of the image path with the configured registry, preserving the
         full image path. When not set, returns self.image unchanged.
         """
-        if self.registry:
-            image_path = _extract_image_path(self.image)
-            return f"{self.registry}/{image_path}"
-        return self.image
+        return self._apply_registry_override(self.image)
 
     @property
     def registry_auth_file(self) -> Path:
@@ -299,7 +332,7 @@ class Config:
             Path("/run/containers/0/auth.json"),  # rootless podman on systemd
             Path("/etc/containers/auth.json"),  # root on Linux
         ]:
-            result = executor.run(["test", "-f", str(candidate)])  # type: ignore[union-attr]
+            result = executor.run(["test", "-f", str(candidate)])
             if result.ok:
                 return candidate
 
@@ -318,7 +351,7 @@ class Config:
         """Full image reference for private registry."""
         if not self.private_image:
             return None
-        return f"{self.private_image}:{self.tag}"
+        return join_image_tag(self.private_image, self.tag)
 
     @property
     def config_yaml(self) -> Path:
@@ -407,7 +440,7 @@ class Config:
         files: list[Path] = []
         for fname in CONFIG_FILES:
             fpath = self.config_dir / fname
-            result = executor.run(["test", "-f", str(fpath)])  # type: ignore[union-attr]
+            result = executor.run(["test", "-f", str(fpath)])
             if result.ok:
                 files.append(fpath)
         return files
@@ -452,6 +485,14 @@ class Config:
                 "Image names must start with an alphanumeric character and contain "
                 "only alphanumerics, dots, hyphens, underscores, and forward slashes."
             )
+        # Check for embedded tag in image (e.g. IMAGE=ghcr.io/org/app:v1.0)
+        last_slash = self.image.rfind("/")
+        colon_after = self.image.rfind(":")
+        if colon_after != -1 and colon_after > last_slash:
+            raise ValueError(
+                f"IMAGE should not include a tag (got '{self.image}'). "
+                f"Set the tag separately via TAG env var or --tag flag."
+            )
         if self.memory_max and not MEMORY_MAX_RE.match(self.memory_max):
             raise ValueError(
                 f"Invalid MEMORY_MAX: {self.memory_max!r}. "
@@ -491,9 +532,7 @@ class Config:
             return LocalExecutor()
 
         if resolved not in _ssh_cache:
-            import sys
-
-            print(f"Connecting to {resolved}...", file=sys.stderr, flush=True)
+            logger.info("Connecting to %s...", resolved)
             try:
                 _ssh_cache[resolved] = ssh_connect(resolved)
             except ImportError:
@@ -529,7 +568,7 @@ class Config:
                         "Check your SSH configuration (~/.ssh/config) and known_hosts."
                     )
                 raise
-            print("Connected.", file=sys.stderr, flush=True)
+            logger.info("Connected.")
         return SSHExecutor(_ssh_cache[resolved])
 
     def resolve_image_tag(self, *, executor: Executor | None = None) -> tuple[str, str]:
@@ -538,6 +577,10 @@ class Config:
         Sentinel tags (@current, @rollback) and bare alias names (current,
         rollback) are looked up in the deployment database. Falls back to the
         literal tag if no alias is found.
+
+        When an alias resolves, only the tag is taken from the database.
+        The image is only taken from the alias when the user did not
+        explicitly set IMAGE (i.e. IMAGE env var is not present).
 
         Args:
             executor: Optional executor for remote DB lookups. When None,
@@ -555,11 +598,11 @@ class Config:
         if tag_key.lower() in ("current", "rollback"):
             alias = db.get_alias(self.db_path, tag_key, executor=executor)
             if alias:
-                image = alias.image
-                if self.registry:
-                    image_path = _extract_image_path(image)
-                    image = f"{self.registry}/{image_path}"
-                return (image, alias.tag)
+                # Explicit image (env var or CLI positional) takes precedence
+                # over the alias image.  The alias only supplies the image
+                # when no explicit override was given.
+                image = self.image if self._image_explicit else alias.image
+                return (self._apply_registry_override(image), alias.tag)
 
         # Not an alias (or alias not set) — return as-is.
         # Callers that need a real tag (e.g. pull) should check for the
@@ -567,10 +610,28 @@ class Config:
         return (self.effective_image, self.tag)
 
     def resolved_image_with_tag(self, *, executor: Executor | None = None) -> str:
-        """Image with tag, resolving aliases like 'current' and 'rollback'.
+        """Operational image:tag string for podman pull/run.
+
+        Resolves aliases like 'current' and 'rollback', and prepends
+        the private registry prefix when ``OTS_REGISTRY`` is set.
+
+        For the canonical (registry-free) pair, use :meth:`resolve_image_tag`.
 
         Args:
             executor: Optional executor for remote DB lookups.
         """
         image, tag = self.resolve_image_tag(executor=executor)
-        return f"{image}:{tag}"
+        if self.registry:
+            image_path = _strip_registry_prefix(image)
+            image = f"{self.registry}/{image_path}"
+        return join_image_tag(image, tag)
+
+    def podman_auth_args(self, *, executor: Executor | None = None) -> list[str]:
+        """Return ``--authfile`` arguments when a private registry is configured.
+
+        Returns an empty list when no registry is set, so callers can
+        always do ``cmd.extend(cfg.podman_auth_args(...))``.
+        """
+        if not self.registry:
+            return []
+        return ["--authfile", str(self.get_registry_auth_file(executor=executor))]

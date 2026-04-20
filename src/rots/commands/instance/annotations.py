@@ -11,6 +11,12 @@ Identifier patterns:
 - Web: numeric ports (7043, 7044)
 - Worker: numeric or named (1, 2, billing, emails)
 - Scheduler: numeric or named (main, 1)
+
+Usage:
+    --web 7043              # Single web instance
+    --web 7043,7044         # Multiple web instances
+    --web                   # All web instances (no identifiers)
+    --type web              # All web instances (equivalent)
 """
 
 from enum import StrEnum
@@ -36,17 +42,7 @@ Delay = Annotated[
     ),
 ]
 
-# Instance identifiers as positional arguments
-# Works for all types: ports for web, IDs for worker/scheduler
-Identifiers = Annotated[
-    tuple[str, ...],
-    cyclopts.Parameter(
-        show=False,  # Positional, not shown as named param in help
-        help="Instance identifiers (ports for web, IDs for worker/scheduler)",
-    ),
-]
-
-# Instance type selector
+# Instance type selector (targets all instances of a type)
 TypeSelector = Annotated[
     InstanceType | None,
     cyclopts.Parameter(
@@ -55,44 +51,45 @@ TypeSelector = Annotated[
     ),
 ]
 
-# Shorthand flags for --type
+# Type+identifier flags: comma-separated instance identifiers
+# --web 7043,7044  or  --web (all web instances)
 WebFlag = Annotated[
-    bool,
+    str | None,
     cyclopts.Parameter(
         name=["--web"],
-        help="Target web instances (shorthand for --type web)",
+        help="Target web instances (comma-separated ports, e.g. 7043,7044)",
     ),
 ]
 
 WorkerFlag = Annotated[
-    bool,
+    str | None,
     cyclopts.Parameter(
         name=["--worker"],
-        help="Target worker instances (shorthand for --type worker)",
+        help="Target worker instances (comma-separated IDs, e.g. 1,2,billing)",
     ),
 ]
 
 SchedulerFlag = Annotated[
-    bool,
+    str | None,
     cyclopts.Parameter(
         name=["--scheduler"],
-        help="Target scheduler instances (shorthand for --type scheduler)",
+        help="Target scheduler instances (comma-separated IDs, e.g. main,1)",
     ),
 ]
 
 
 def resolve_instance_type(
     type_: InstanceType | None,
-    web: bool,
-    worker: bool,
-    scheduler: bool,
-) -> InstanceType | None:
-    """Resolve instance type from --type flag or shorthand flags.
+    web: str | None,
+    worker: str | None,
+    scheduler: str | None,
+) -> tuple[InstanceType | None, tuple[str, ...]]:
+    """Resolve instance type and identifiers from flags.
 
-    Returns None if no type specified (meaning "all types").
-    Raises if multiple shorthand flags are set.
+    Returns (instance_type, identifiers) where identifiers is a tuple
+    of comma-split values from the flag, or empty tuple for "all".
     """
-    shorthand_count = sum([web, worker, scheduler])
+    shorthand_count = sum(x is not None for x in [web, worker, scheduler])
 
     if shorthand_count > 1:
         raise SystemExit("Only one of --web, --worker, or --scheduler can be specified")
@@ -100,13 +97,16 @@ def resolve_instance_type(
     if type_ is not None:
         if shorthand_count > 0:
             raise SystemExit("Cannot use --type with --web, --worker, or --scheduler")
-        return type_
+        return (type_, ())
 
-    if web:
-        return InstanceType.WEB
-    if worker:
-        return InstanceType.WORKER
-    if scheduler:
-        return InstanceType.SCHEDULER
+    if web is not None:
+        ids = tuple(x for x in web.split(",") if x) if web else ()
+        return (InstanceType.WEB, ids)
+    if worker is not None:
+        ids = tuple(x for x in worker.split(",") if x) if worker else ()
+        return (InstanceType.WORKER, ids)
+    if scheduler is not None:
+        ids = tuple(x for x in scheduler.split(",") if x) if scheduler else ()
+        return (InstanceType.SCHEDULER, ids)
 
-    return None  # All types
+    return (None, ())  # All types

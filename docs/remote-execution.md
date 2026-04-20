@@ -1,6 +1,6 @@
 # Remote Execution
 
-ots-containers supports executing commands on remote hosts via SSH, allowing a single operator workstation to manage containers across multiple servers.
+rots supports executing commands on remote hosts via SSH, allowing a single operator workstation to manage containers across multiple servers.
 
 ## How It Works
 
@@ -30,7 +30,7 @@ ops-jurisdictions/
   us/.otsinfra.env     # US servers
 ```
 
-When you `cd` into a jurisdiction directory and run `ots instances ...`, the walk-up resolver finds the appropriate `.otsinfra.env` and connects to the right host automatically.
+When you `cd` into a jurisdiction directory and run `rots instances ...`, the walk-up resolver finds the appropriate `.otsinfra.env` and connects to the right host automatically.
 
 ### Format
 
@@ -52,8 +52,10 @@ OTS_TAG=v0.19.0
 | `OTS_REPOSITORY` | Container image repository | No |
 | `OTS_IMAGE` | Full image reference | No |
 | `OTS_TAG` | Image tag to deploy | No |
+| `RABBITMQ_URL` | RabbitMQ AMQP connection URL | No (sidecar) |
+| `SIDECAR_HOST_ID` | Per-host queue identifier | No (sidecar) |
 
-Only `OTS_HOST` is used by the executor resolution chain. The other keys are available for tooling and CI workflows.
+Only `OTS_HOST` is used by the executor resolution chain. The other keys are available for tooling, CI workflows, and sidecar fleet management.
 
 ## SSH Configuration
 
@@ -82,15 +84,34 @@ Connections use `RejectPolicy` -- the remote host must already be in `~/.ssh/kno
 ssh-keyscan -H eu-prod-1.onetimesecret.com >> ~/.ssh/known_hosts
 ```
 
-### otsinfra Integration
+### pots Integration
 
-The `otsinfra` tool (in `hosts/inventory/`) generates both SSH config entries and dnsmasq configuration at setup time. When you provision a new host through otsinfra:
+The `pots` tool (sibling package in the monorepo) generates both SSH config entries and dnsmasq configuration at setup time. When you provision a new host through pots:
 
 1. SSH config entries are added for each host's FQDN
 2. dnsmasq configuration maps FQDNs to IP addresses for local DNS resolution
 3. SSH host keys are added to known_hosts
 
 This means the SSH infrastructure is established once during host provisioning, and the runtime executor has no dependency on the inventory system -- it uses standard SSH config and DNS.
+
+## Sidecar Integration
+
+For fleet management via RabbitMQ sidecar, add these optional variables to `.otsinfra.env`:
+
+| Key | Purpose | Default |
+|---|---|---|
+| `RABBITMQ_URL` | AMQP connection URL | env → `.otsinfra.env` → `/etc/default/onetimesecret` → localhost |
+| `SIDECAR_HOST_ID` | Per-host queue routing | env → `.otsinfra.env` → `/etc/default/onetimesecret` → `socket.gethostname()` |
+
+Example configuration:
+
+```bash
+OTS_HOST=prod-eu-1.example.com
+RABBITMQ_URL=amqp://sidecar:secret@rabbitmq.internal:5672/ots
+SIDECAR_HOST_ID=prod-eu-1
+```
+
+The sidecar daemon (`rots sidecar run`) reads these values to bind to both the shared queue (`ots.sidecar.commands`) and a host-specific queue (`ots.sidecar.commands.{host_id}`). This enables targeted command delivery to specific hosts in the fleet.
 
 ## Executor Types
 
