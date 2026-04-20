@@ -84,8 +84,8 @@ def _strip_registry_prefix(image: str) -> str:
     """Strip the registry hostname from an OCI image reference, keeping the path.
 
     OCI convention: the first ``/``-delimited component is a registry hostname
-    when it contains a ``.`` or ``:``.  Otherwise the entire string is an
-    image path (e.g. ``library/nginx``).
+    when it contains a ``.`` or ``:``, or is ``localhost``.  Otherwise the
+    entire string is an image path (e.g. ``library/nginx``).
 
     Examples::
 
@@ -94,6 +94,9 @@ def _strip_registry_prefix(image: str) -> str:
 
         _strip_registry_prefix("registry:5000/org/app")
         # -> "org/app"
+
+        _strip_registry_prefix("localhost/image")
+        # -> "image"
 
         _strip_registry_prefix("onetimesecret/onetimesecret")
         # -> "onetimesecret/onetimesecret"  (no registry to strip)
@@ -105,7 +108,7 @@ def _strip_registry_prefix(image: str) -> str:
     if slash == -1:
         return image
     first_component = image[:slash]
-    if "." in first_component or ":" in first_component:
+    if "." in first_component or ":" in first_component or first_component == "localhost":
         return image[slash + 1 :]
     return image
 
@@ -245,6 +248,12 @@ class Config:
     def image_with_tag(self) -> str:
         return join_image_tag(self.image, self.tag)
 
+    def _apply_registry_override(self, image: str) -> str:
+        """Apply OTS_REGISTRY override to an image path."""
+        if self.registry:
+            return f"{self.registry}/{_strip_registry_prefix(image)}"
+        return image
+
     @property
     def effective_image(self) -> str:
         """Image path with OTS_REGISTRY override applied when set.
@@ -253,10 +262,7 @@ class Config:
         of the image path with the configured registry, preserving the
         full image path. When not set, returns self.image unchanged.
         """
-        if self.registry:
-            image_path = _strip_registry_prefix(self.image)
-            return f"{self.registry}/{image_path}"
-        return self.image
+        return self._apply_registry_override(self.image)
 
     @property
     def registry_auth_file(self) -> Path:
@@ -596,9 +602,7 @@ class Config:
                 # over the alias image.  The alias only supplies the image
                 # when no explicit override was given.
                 image = self.image if self._image_explicit else alias.image
-                if self.registry:
-                    image = f"{self.registry}/{_strip_registry_prefix(image)}"
-                return (image, alias.tag)
+                return (self._apply_registry_override(image), alias.tag)
 
         # Not an alias (or alias not set) — return as-is.
         # Callers that need a real tag (e.g. pull) should check for the

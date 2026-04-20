@@ -720,6 +720,12 @@ class TestStripRegistryPrefix:
 
         assert _strip_registry_prefix("registry:5000/org/image") == "org/image"
 
+    def test_strips_localhost(self):
+        """Should strip localhost as a registry hostname per OCI convention."""
+        from rots.config import _strip_registry_prefix
+
+        assert _strip_registry_prefix("localhost/image") == "image"
+
     def test_preserves_path_without_registry(self):
         """Should preserve full path when first component has no dot or colon."""
         from rots.config import _strip_registry_prefix
