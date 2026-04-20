@@ -730,7 +730,9 @@ class TestStripRegistryPrefix:
         """Should preserve full path when first component has no dot or colon."""
         from rots.config import _strip_registry_prefix
 
-        assert _strip_registry_prefix("onetimesecret/onetimesecret") == "onetimesecret/onetimesecret"
+        assert (
+            _strip_registry_prefix("onetimesecret/onetimesecret") == "onetimesecret/onetimesecret"
+        )
 
     def test_bare_image_name(self):
         """Should return bare image name unchanged."""

@@ -45,7 +45,6 @@ Each topic is a separate module with its own `cyclopts.App`:
 | `service`   | Native systemd services (Valkey, Redis) |
 | `image`     | Container image management              |
 | `assets`    | Static asset management                 |
-| `cloudinit` | Cloud-init configuration generation     |
 | `env`       | Environment file management             |
 
 To add a new topic, create a module and register it in `cli.py`.

@@ -20,9 +20,6 @@ pytest tests/test_quadlet.py -k "test_template"
 # Run service management tests
 pytest tests/test_service.py
 
-# Run cloud-init tests
-pytest tests/commands/cloudinit/
-
 # Run tests with coverage (CI threshold: 70%)
 pytest tests/ --cov=rots --cov-report=term-missing --cov-fail-under=70
 
@@ -75,11 +72,6 @@ This is a dual-purpose service orchestration tool:
 - **app.py** - Service lifecycle: `init`, `start`, `stop`, `restart`, `status`, `logs`, `enable`, `disable`, `list_instances`
 - **packages.py** - Service package definitions: `VALKEY`, `REDIS` with config paths, secrets handling, systemd templates
 - **\_helpers.py** - Shared utilities: config file management, secrets creation, systemctl wrappers
-
-#### Cloud-Init Commands (`cloudinit/`)
-
-- **app.py** - Cloud-init generation: `generate`, `validate`
-- **templates.py** - DEB822-style apt sources templates for Debian 13 (Trixie), PostgreSQL, and Valkey repositories
 
 ### Key Patterns
 

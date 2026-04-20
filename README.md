@@ -160,22 +160,6 @@ rots service disable redis 6380
 rots service
 ```
 
-### Generating Cloud-Init Configurations
-
-```bash
-# Generate basic cloud-init config
-rots cloudinit generate > user-data.yaml
-
-# Include PostgreSQL repository
-rots cloudinit generate --include-postgresql --postgresql-key /path/to/pgdg.asc
-
-# Include Valkey repository
-rots cloudinit generate --include-valkey --valkey-key /path/to/valkey.gpg
-
-# Validate configuration
-rots cloudinit validate user-data.yaml
-```
-
 ### Sidecar Daemon
 
 The sidecar daemon enables remote control of OTS instances via RabbitMQ or local control via Unix socket.
