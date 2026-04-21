@@ -422,6 +422,18 @@ def run(
             help="Disable RabbitMQ consumer",
         ),
     ] = False,
+    role: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--role",
+            help=(
+                "Sidecar role gate: 'db' or 'web'. When set, only handlers "
+                "whose @register_handler(roles=...) includes this role are "
+                "exposed by the dispatcher. Omit to expose every registered "
+                "handler (useful for ad-hoc / single-host setups)."
+            ),
+        ),
+    ] = None,
 ):
     """Run the sidecar daemon in foreground mode.
 
@@ -431,6 +443,8 @@ def run(
     Examples:
         rots sidecar run
         rots sidecar run --socket /tmp/test.sock --no-rabbitmq
+        rots sidecar run --role db
+        rots sidecar run --role web
     """
     import signal
     import sys
@@ -440,8 +454,10 @@ def run(
     from rots.sidecar.rabbitmq import RabbitMQConfig, RabbitMQConsumer
     from rots.sidecar.socket import SocketServer
 
-    # Register all command handlers before creating servers
-    _import_handlers()
+    # Register all command handlers before creating servers. When --role is
+    # supplied the dispatcher is narrowed to handlers that declared that role
+    # via @register_handler(roles=...).
+    _import_handlers(role=role)
 
     # Load RabbitMQ config (resolves host_id) before creating consumer
     rabbitmq_config = None if no_rabbitmq else RabbitMQConfig.from_environment()
@@ -449,6 +465,7 @@ def run(
     print(f"Starting sidecar daemon (PID: {os.getpid()})")
     print(f"Socket: {socket}")
     print(f"RabbitMQ: {'disabled' if no_rabbitmq else 'enabled'}")
+    print(f"Role: {role if role else 'all'}")
     if rabbitmq_config:
         print(f"Host ID: {rabbitmq_config.host_id}")
 

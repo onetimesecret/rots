@@ -67,6 +67,22 @@ class Command(StrEnum):
     PROVISION_SOCKS_KEY_READ = "provision.socks_key_read"
     PROVISION_SOCKS_KEY_WRITE = "provision.socks_key_write"
 
+    # Two-phase provisioning (issue #55) — postgres
+    POSTGRES_BOOTSTRAP_APP = "postgres.bootstrap_app"
+    POSTGRES_ADD_HBA = "postgres.add_hba"
+    POSTGRES_ROTATE_PASSWORD = "postgres.rotate_password"
+
+    # Two-phase provisioning (issue #55) — valkey
+    VALKEY_CREATE_ACL_USER = "valkey.create_acl_user"
+    VALKEY_RELOAD_ACL = "valkey.reload_acl"
+
+    # Two-phase provisioning (issue #55) — secrets delivery
+    SECRETS_DELIVER = "secrets.deliver"
+
+    # Two-phase provisioning (issue #55) — backup
+    BACKUP_INSTALL = "backup.install"
+    BACKUP_UNINSTALL = "backup.uninstall"
+
 
 @dataclass
 class CommandResult:
@@ -98,24 +114,70 @@ class CommandResult:
 # Type alias for handler functions
 Handler = Callable[[dict[str, Any]], CommandResult]
 
+# Known sidecar roles. Downstream agents filter handler registration by role
+# so that, e.g., a web sidecar only exposes secrets.deliver + container-lifecycle
+# commands but not postgres/valkey/backup handlers.
+ROLE_DB = "db"
+ROLE_WEB = "web"
+ALL_ROLES: frozenset[str] = frozenset({ROLE_DB, ROLE_WEB})
+
+# Default role set applied when a handler does not declare one. This preserves
+# behaviour for the handlers that predate role gating (lifecycle, config, etc.)
+# — they are generic enough to be useful on both sidecar roles.
+DEFAULT_ROLES: frozenset[str] = ALL_ROLES
+
+# Per-command role metadata. Populated by @register_handler. Used by
+# _import_handlers(role=...) to filter which handlers are actually installed
+# into the active dispatcher for a given sidecar role.
+_handler_roles: dict[Command, frozenset[str]] = {}
+
 # Registry of command handlers, populated by handler modules
 _handlers: dict[Command, Handler] = {}
 
 
-def register_handler(command: Command) -> Callable[[Handler], Handler]:
+def register_handler(
+    command: Command,
+    *,
+    roles: set[str] | frozenset[str] | None = None,
+) -> Callable[[Handler], Handler]:
     """Decorator to register a handler for a command.
+
+    Args:
+        command: The Command enum member this handler implements.
+        roles: Which sidecar roles should expose this handler. Defaults to
+            ``{"db", "web"}`` (``DEFAULT_ROLES``) so legacy handlers work
+            unchanged. New handlers that are role-specific must declare this
+            explicitly — e.g. postgres handlers pass ``roles={"db"}``.
 
     Usage:
         @register_handler(Command.RESTART_WEB)
         def handle_restart_web(params: dict[str, Any]) -> CommandResult:
             ...
+
+        @register_handler(Command.POSTGRES_BOOTSTRAP_APP, roles={"db"})
+        def handle_postgres_bootstrap(params: dict[str, Any]) -> CommandResult:
+            ...
     """
+
+    role_set: frozenset[str] = DEFAULT_ROLES if roles is None else frozenset(roles)
+
+    unknown = role_set - ALL_ROLES
+    if unknown:
+        raise ValueError(
+            f"Unknown role(s) for {command.value}: {sorted(unknown)}. "
+            f"Expected subset of {sorted(ALL_ROLES)}."
+        )
 
     def decorator(func: Handler) -> Handler:
         if command in _handlers:
             logger.warning("Overwriting handler for command: %s", command.value)
         _handlers[command] = func
-        logger.debug("Registered handler for command: %s", command.value)
+        _handler_roles[command] = role_set
+        logger.debug(
+            "Registered handler for command: %s (roles=%s)",
+            command.value,
+            sorted(role_set),
+        )
         return func
 
     return decorator
@@ -186,13 +248,37 @@ def get_all_commands() -> list[str]:
 # Import handlers to trigger registration
 # These imports happen at module load time so handlers are available
 # when the dispatcher is used
-def _import_handlers() -> None:
-    """Import handler modules to trigger registration.
+def _import_handlers(role: str | None = None) -> None:
+    """Import handler modules and filter the active dispatcher by role.
 
-    Called lazily to avoid circular imports. Handler modules use
-    the @register_handler decorator which populates _handlers.
+    Called lazily to avoid circular imports. Handler modules use the
+    ``@register_handler`` decorator which populates ``_handlers`` and
+    ``_handler_roles``.
+
+    Args:
+        role: If provided, the active dispatcher (``_handlers``) is filtered
+            after import so only commands whose declared roles include
+            ``role`` remain registered. If ``None`` (the default), every
+            registered handler stays in the dispatcher. Use ``None`` for
+            tests and tooling that need the full command surface; pass
+            ``"db"`` or ``"web"`` from the sidecar daemon's ``run``
+            command to install only the commands that role should expose.
+
+    Raises:
+        ValueError: if ``role`` is not a member of ``ALL_ROLES``.
     """
-    # Import handler modules to trigger @register_handler decorators
+    # Import existing handler modules to trigger @register_handler decorators
+    # Import new two-phase provisioning handler modules (issue #55). These live
+    # under the sibling commands tree because they carry heavier deps and share
+    # shared types (_types.py) / transport (_transport.py) with the operator
+    # command. Registration still lands in this module's _handlers registry.
+    from rots.commands.sidecar.handlers import (
+        backup,  # noqa: F401
+        postgres,  # noqa: F401
+        secrets,  # noqa: F401
+        valkey,  # noqa: F401
+    )
+
     from . import (
         handlers_config,  # noqa: F401
         handlers_discovery,  # noqa: F401
@@ -203,6 +289,27 @@ def _import_handlers() -> None:
         handlers_rots,  # noqa: F401
         handlers_status,  # noqa: F401
     )
+
+    if role is None:
+        return
+
+    if role not in ALL_ROLES:
+        raise ValueError(f"Unknown sidecar role: {role!r}. Expected one of {sorted(ALL_ROLES)}.")
+
+    # Filter: drop handlers whose declared role set excludes the active role.
+    # Handlers without declared roles default to DEFAULT_ROLES, which includes
+    # every role, so they stay registered.
+    to_remove = [
+        cmd for cmd in list(_handlers.keys()) if role not in _handler_roles.get(cmd, DEFAULT_ROLES)
+    ]
+    for cmd in to_remove:
+        logger.debug(
+            "Dropping handler %s for role=%s (declared roles=%s)",
+            cmd.value,
+            role,
+            sorted(_handler_roles.get(cmd, DEFAULT_ROLES)),
+        )
+        _handlers.pop(cmd, None)
 
 
 # Note: Handlers are registered when their modules are imported.

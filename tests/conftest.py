@@ -9,6 +9,15 @@ behavior should override with their own mocker.patch().
 
 import pytest
 
+# Re-export handler fixtures (postgres_service, valkey_service,
+# in_process_bus, fake_env_file, postgres_db, valkey_acl_prefix) so sibling
+# test directories (notably ``tests/commands/env``) can consume them without
+# duplicating fixture code. Pytest 9 makes ``pytest_plugins`` outside the
+# rootdir conftest a hard error, so the declaration lives here. Fixtures
+# are lazy — the podman-backed ones only start containers when a test
+# requests them.
+pytest_plugins = ["tests.commands.sidecar.handlers._fixtures"]
+
 
 @pytest.fixture(autouse=True)
 def _mock_secret_exists(mocker):

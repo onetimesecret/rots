@@ -12,7 +12,6 @@ build/
 # Virtual environments
 .venv/
 venv/
-ENV/
 
 # IDE
 .idea/
