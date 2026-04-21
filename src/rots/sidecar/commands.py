@@ -71,6 +71,7 @@ class Command(StrEnum):
     POSTGRES_BOOTSTRAP_APP = "postgres.bootstrap_app"
     POSTGRES_ADD_HBA = "postgres.add_hba"
     POSTGRES_ROTATE_PASSWORD = "postgres.rotate_password"
+    POSTGRES_PING = "postgres.ping"
 
     # Two-phase provisioning (issue #55) — valkey
     VALKEY_CREATE_ACL_USER = "valkey.create_acl_user"

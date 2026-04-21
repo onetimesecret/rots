@@ -60,6 +60,7 @@ __all__ = [
     "RpcClient",
     "handle_add_hba",
     "handle_bootstrap_app",
+    "handle_ping",
     "handle_rotate_password",
 ]
 
@@ -584,6 +585,17 @@ def handle_rotate_password(params: dict[str, Any]) -> CommandResult:
 
     data: PostgresRotatePasswordData = {"delivered_to": peer_id, "changed": True}
     return CommandResult.ok(data)
+
+
+@register_handler(Command.POSTGRES_PING, roles={"db"})
+def handle_ping(params: dict[str, Any]) -> CommandResult:
+    """Verify postgres connectivity via a trivial ``SELECT 1`` over peer auth."""
+    del params  # unused; dispatcher always passes a dict
+    try:
+        _psql(("-tAc", "SELECT 1"))
+    except subprocess.CalledProcessError as exc:
+        return CommandResult.fail(f"postgres.ping failed: {exc.stderr.strip() or exc}")
+    return CommandResult.ok({"ok": True, "changed": False})
 
 
 def _best_effort_revoke(role: str, warnings: list[str]) -> None:

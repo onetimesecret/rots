@@ -25,7 +25,6 @@ from rots.environment_file import (
 from rots.quadlet import DEFAULT_ENV_FILE
 
 from ..common import DryRun, JsonOutput
-from .bootstrap import bootstrap as _bootstrap_command
 from .server_init import app as _server_init_app
 
 if TYPE_CHECKING:
@@ -40,11 +39,6 @@ app = cyclopts.App(
 
 # Server-side initialization (was top-level `rots init`, now `rots env init`)
 app.command(_server_init_app)
-
-# Two-phase provisioning bootstrap (issue #55). Implemented in bootstrap.py so
-# it can be imported as a module-level function (``bootstrap._get_rpc_client``
-# is the test seam).
-app.command(_bootstrap_command, name="bootstrap")
 
 
 def _file_exists(path: Path, executor: Executor) -> bool:
