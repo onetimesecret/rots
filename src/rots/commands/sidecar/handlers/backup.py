@@ -184,6 +184,8 @@ def _validate_target(target: str) -> str | None:
         return f"invalid remote name {remote!r}: must match ^[A-Za-z0-9_-]+$"
     if "\n" in path:
         return "target path must not contain newline"
+    if any(c in path for c in ("$", "`", '"', "'", "\\")):
+        return "target path contains unsafe shell characters (one of: $ ` \" ' \\)"
     return None
 
 

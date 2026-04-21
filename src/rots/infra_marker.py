@@ -42,6 +42,7 @@ Example ``.otsinfra.yaml``::
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -238,9 +239,18 @@ def _parse_env_block(env: str, block: dict[str, Any], *, source: Path | None) ->
     db = DbTarget(host_id=_require_str(db_raw, "db.host_id", env))
 
     web_raw = _require_mapping(block, "web", env)
+    web_ip = _require_str(web_raw, "web.ip", env)
+    if "\n" in web_ip or "\r" in web_ip:
+        raise InfraMarkerError(f"envs.{env}.web.ip must not contain newlines")
+    try:
+        ipaddress.ip_address(web_ip)
+    except ValueError as exc:
+        raise InfraMarkerError(
+            f"envs.{env}.web.ip must be a valid IPv4 or IPv6 address: {exc}"
+        ) from exc
     web = WebTarget(
         host_id=_require_str(web_raw, "web.host_id", env),
-        ip=_require_str(web_raw, "web.ip", env),
+        ip=web_ip,
     )
 
     app_raw = _require_mapping(block, "app", env)

@@ -28,6 +28,7 @@ monkeypatch ``bootstrap._get_rpc_client`` to return an
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import sys
@@ -101,12 +102,14 @@ class _StepReceipt:
 def _render_hba_line(ip: str, role: str, database: str) -> str:
     """Render the pg_hba drop-in content for the web peer.
 
-    Format is fixed per spec: a single ``hostssl`` line with ``/32`` CIDR
-    and ``scram-sha-256`` auth, followed by a trailing newline. Inputs are
-    NOT escaped -- the db handler validates role/database identifiers and
-    ``peer_ip`` is surfaced verbatim into the authz rule.
+    Single ``hostssl`` line with a host-scoped CIDR and ``scram-sha-256``
+    auth, followed by a trailing newline. The CIDR prefix is ``/32`` for
+    IPv4 and ``/128`` for IPv6 — pg_hba rejects ``/32`` on an IPv6 host
+    and vice versa. ``infra_marker`` has already validated that ``ip``
+    parses as an IP address.
     """
-    return f"hostssl {database} {role} {ip}/32 scram-sha-256\n"
+    prefix = 128 if isinstance(ipaddress.ip_address(ip), ipaddress.IPv6Address) else 32
+    return f"hostssl {database} {role} {ip}/{prefix} scram-sha-256\n"
 
 
 def _plan_steps(cfg: EnvConfig, *, rotate: bool) -> list[_StepReceipt]:

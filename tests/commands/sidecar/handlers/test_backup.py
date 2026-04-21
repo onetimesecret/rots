@@ -45,6 +45,7 @@ import pytest
 import rots.commands.sidecar.handlers.backup as backup_mod
 from rots.commands.sidecar.handlers.backup import (
     ALLOWED_PROFILES,
+    _validate_target,
     handle_install,
     handle_uninstall,
 )
@@ -940,3 +941,102 @@ class TestAllowedProfilesExported:
 
     def test_allowlist_members(self):
         assert ALLOWED_PROFILES == frozenset({"db-daily", "valkey-hourly"})
+
+
+# --- unsafe shell characters in target path ------------------------------
+
+
+class TestValidateTargetShellChars:
+    """`_validate_target` rejects shell metacharacters in the path half.
+
+    The render path interpolates ``target`` into a ``/bin/bash -c`` script
+    (inside double quotes). A ``$``, backtick, quote, or backslash in the
+    path would break out of the quoting and enable command substitution
+    or injection. The validator must refuse these before the handler ever
+    writes a unit file.
+    """
+
+    @pytest.mark.parametrize(
+        "bad_char",
+        ["$", "`", '"', "'", "\\"],
+    )
+    def test_rejects_path_with_shell_metachar(self, bad_char: str):
+        target = f"remote1:backups/evil{bad_char}leak"
+        err = _validate_target(target)
+        assert err is not None
+        assert "unsafe shell characters" in err
+
+    def test_rejects_command_substitution(self):
+        # The canonical attack: `$(whoami)` in the path half yields
+        # command substitution once the bash -c wrapper evaluates it.
+        err = _validate_target("remote1:backups/$(whoami)")
+        assert err is not None
+        assert "unsafe shell characters" in err
+
+    def test_rejects_backtick_command_substitution(self):
+        err = _validate_target("remote1:backups/`id`")
+        assert err is not None
+        assert "unsafe shell characters" in err
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "remote1:backups/db",
+            "remote-1:backups/db.daily",
+            "remote_1:path/with/slashes",
+            "r1:plain",
+            "remote:2024-01-01/snapshot",
+            "remote:path-with_dashes_and.dots/123",
+        ],
+    )
+    def test_accepts_benign_paths(self, target: str):
+        # Characters used: letters, digits, `-`, `_`, `/`, `.`.
+        assert _validate_target(target) is None
+
+
+class TestInstallShellInjectionRejected:
+    """End-to-end: the unsafe-chars gate is wired through to ``handle_install``.
+
+    Proves the validator is invoked by the handler entry point — not just
+    callable in isolation — and that the rejection happens before any
+    filesystem write or subprocess shell-out. This is the reviewer-facing
+    regression test for the fix.
+    """
+
+    def test_command_substitution_target_fails_handler(
+        self,
+        backup_dirs: tuple[Path, Path],
+        fake_world: _FakeSystemdWorld,
+    ):
+        systemd_dir, rclone_dir = backup_dirs
+        result = handle_install(_valid_params(target="remote1:backups/$(whoami)"))
+
+        assert result.success is False
+        assert "unsafe shell characters" in (result.error or "")
+
+        # No subprocess call: the gate fires before systemd-analyze or
+        # systemctl would have been invoked.
+        assert fake_world.calls == []
+        # No unit files or rclone fragments landed on disk.
+        assert list(systemd_dir.iterdir()) == []
+        assert list(rclone_dir.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "remote1:backups/with`backtick",
+            'remote1:backups/with"dquote',
+            "remote1:backups/with'squote",
+            "remote1:backups/with\\backslash",
+        ],
+    )
+    def test_other_shell_chars_also_rejected_at_handler(
+        self,
+        backup_dirs: tuple[Path, Path],
+        fake_world: _FakeSystemdWorld,
+        target: str,
+    ):
+        result = handle_install(_valid_params(target=target))
+        assert result.success is False
+        assert "unsafe shell characters" in (result.error or "")
+        assert fake_world.calls == []

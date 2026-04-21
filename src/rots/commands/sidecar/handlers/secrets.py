@@ -170,6 +170,18 @@ def handle_secrets_deliver(params: dict[str, Any]) -> CommandResult:
         os.chmod(tmp_name, ENV_FILE_MODE)
         os.rename(tmp_name, path)
         tmp_name = None  # renamed, no cleanup needed
+        # Preserve pre-existing owner/group. The tempfile was created by the
+        # sidecar process (likely root); without this restore the onetimesecret
+        # group bit that the container user depends on would be dropped.
+        if lst is not None:
+            try:
+                os.chown(path, lst.st_uid, lst.st_gid)
+            except OSError as exc:
+                logger.warning(
+                    "secrets.deliver: failed to restore owner/group on %s: %s",
+                    env_file,
+                    exc,
+                )
     except OSError as exc:
         return CommandResult.fail(f"Atomic write failed for {env_file}: {exc}")
     finally:

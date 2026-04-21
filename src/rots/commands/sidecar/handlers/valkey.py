@@ -7,11 +7,20 @@ application ACL users and reload the ACL file after external edits.
 
 Auth model
 ----------
-The sidecar reads the bootstrap ACL user + token from
-``/etc/valkey/users.acl`` — dropped in by cloud-init via
-``LoadCredentialEncrypted`` (see the parent issue #37). All commands are
-issued through ``valkey-cli`` to ``127.0.0.1:6379`` using the bootstrap
-user. No TCP credentials ship over the wire.
+The sidecar authenticates to local valkey as the fixed bootstrap user
+``bootstrap`` (provisioned by upstream cloud-init, lots #41, which also
+disables the ``default`` user). The bootstrap token is sealed into the
+systemd credstore and mounted into the sidecar unit's runtime credential
+directory via ``LoadCredentialEncrypted=valkey-bootstrap-token:…``.
+systemd decrypts the token at service start and exposes it at
+``$CREDENTIALS_DIRECTORY/valkey-bootstrap-token``; this handler reads
+that path per-invocation (no caching, so rotations are picked up).
+Callers running outside a systemd unit (tests, interactive debugging)
+have no ``CREDENTIALS_DIRECTORY`` set and fall through to unauthenticated
+loopback. The on-disk ``/etc/valkey/users.acl`` is root/valkey-owned
+mode 0640 and is never read by this handler. All commands are issued
+through ``valkey-cli`` to ``127.0.0.1:6379``; no TCP credentials ship
+over the wire.
 
 Cross-host delivery
 -------------------
@@ -77,8 +86,10 @@ rules; the token-rotation "over-change" is the safe failure mode.
 from __future__ import annotations
 
 import logging
+import os
 import secrets
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from rots.sidecar.commands import Command, CommandResult, register_handler
@@ -102,9 +113,19 @@ logger = logging.getLogger(__name__)
 # accept an override — this is fixed by the package.
 ACL_FILE: str = "/etc/valkey/users.acl"
 
-# valkey-cli invocation. Implementations build on this with `-a` and the
-# bootstrap user loaded from the env file.
+# valkey-cli invocation. :func:`_run_valkey_cli` extends this with
+# ``--user <bootstrap>`` and ``REDISCLI_AUTH=<token>`` (both sourced from
+# the systemd credstore) when available.
 VALKEY_CLI: tuple[str, ...] = ("valkey-cli", "-h", "127.0.0.1", "-p", "6379")
+
+# Bootstrap auth is delivered via the systemd credstore. lots #41 seals
+# the token into the sidecar unit with
+# ``LoadCredentialEncrypted=valkey-bootstrap-token:…``; systemd decrypts
+# at service start and points ``$CREDENTIALS_DIRECTORY`` at the runtime
+# credential directory. The username is a fixed literal provisioned in
+# ``/etc/valkey/users.acl`` by the same cloud-init run.
+_BOOTSTRAP_USER = "bootstrap"
+_CREDENTIAL_NAME = "valkey-bootstrap-token"
 
 # Timeout for valkey-cli subprocess calls. Short — a healthy local daemon
 # answers in milliseconds.
@@ -149,6 +170,34 @@ def _is_valid_name(name: str) -> bool:
     return True
 
 
+def _load_bootstrap_auth() -> tuple[str, str] | None:
+    """Return ``(user, plaintext_token)`` from the systemd credstore, or ``None``.
+
+    systemd sets ``$CREDENTIALS_DIRECTORY`` for services started with
+    ``LoadCredential*=`` directives. The sidecar unit (wired by lots #41)
+    mounts the sealed bootstrap token as ``valkey-bootstrap-token`` inside
+    that directory. Callers running outside a systemd unit (tests,
+    interactive debugging) have no ``CREDENTIALS_DIRECTORY`` set and fall
+    through to unauthenticated loopback — safe in test fixtures where
+    valkey's ``default on nopass`` user still applies.
+
+    Called per-invocation (no caching) so a rotated token is picked up on
+    the next RPC without restarting the sidecar.
+    """
+    creds_dir = os.environ.get("CREDENTIALS_DIRECTORY")
+    if not creds_dir:
+        return None
+    token_path = Path(creds_dir) / _CREDENTIAL_NAME
+    try:
+        token = token_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        logger.debug("valkey: cannot read credstore token at %s: %s", token_path, exc)
+        return None
+    if not token:
+        return None
+    return (_BOOTSTRAP_USER, token)
+
+
 def _run_valkey_cli(*args: str) -> subprocess.CompletedProcess[str]:
     """Run ``valkey-cli`` with the supplied args. Arguments are passed through
     as a tuple — never shell-interpolated.
@@ -157,12 +206,25 @@ def _run_valkey_cli(*args: str) -> subprocess.CompletedProcess[str]:
     connection-refused case). A logical error (``ERR ...``) still comes back
     with exit 0; callers MUST inspect stdout.
     """
+    auth = _load_bootstrap_auth()
+    cli_args: tuple[str, ...] = VALKEY_CLI
+    env: dict[str, str] | None = None
+    if auth is not None:
+        user, token = auth
+        cli_args = cli_args + ("--user", user)
+        # Pass the token via REDISCLI_AUTH so it stays out of argv (ps(1)).
+        env = os.environ.copy()
+        env["REDISCLI_AUTH"] = token
+    else:
+        logger.debug("valkey: no bootstrap auth available; running without --user/-a")
+
     return subprocess.run(
-        VALKEY_CLI + args,
+        cli_args + args,
         check=True,
         capture_output=True,
         text=True,
         timeout=_VALKEY_CLI_TIMEOUT,
+        env=env,
     )
 
 

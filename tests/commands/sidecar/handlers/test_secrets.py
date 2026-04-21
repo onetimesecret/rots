@@ -337,3 +337,142 @@ class TestInProcessBus:
         assert result.success is True
         assert result.data["changed"] is True
         assert "routed-through-bus" in env_path.read_text()
+
+
+# --- owner/group preservation across atomic rename ----------------------
+
+
+class TestOwnerGroupPreservation:
+    """After ``os.rename``, the handler must restore the pre-existing uid/gid.
+
+    Rationale: the tempfile is created by the sidecar process (typically
+    root). A naive rename would inherit root:root on the replaced file,
+    dropping the ``onetimesecret`` group bit that the container user
+    relies on via ``EnvironmentFile=``. The handler calls
+    ``os.chown(path, lst.st_uid, lst.st_gid)`` after rename — this class
+    proves that path is exercised and is best-effort.
+    """
+
+    def test_preserves_uid_gid_on_update(
+        self,
+        env_path: Path,
+        fake_env_file: tuple[Path, object],
+    ):
+        # Seed a pre-existing file owned by the current uid/gid. We use
+        # the process's own ids so no EPERM can occur on the later chown
+        # call — non-root test runs can't chown to arbitrary ids. The
+        # point isn't *which* ids are set, it's that the handler
+        # re-applied whatever was there before.
+        _, seed = fake_env_file
+        seed("PG_PASSWORD=old_value\n")  # type: ignore[operator]
+        pre_uid = os.stat(env_path).st_uid
+        pre_gid = os.stat(env_path).st_gid
+
+        result = handle_secrets_deliver({"name": "PG_PASSWORD", "value": "new_value"})
+        assert result.success is True, result.error
+        assert result.data["changed"] is True
+
+        post = os.stat(env_path)
+        assert post.st_uid == pre_uid
+        assert post.st_gid == pre_gid
+
+    def test_chown_called_with_original_uid_gid(
+        self,
+        env_path: Path,
+        fake_env_file: tuple[Path, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Record the chown call to prove the preserved values flow through.
+
+        Patches ``os.chown`` at the secrets module's namespace (matches the
+        ``os.rename`` patching pattern used for atomicity) and captures
+        ``(path, uid, gid)``. This is the direct witness that the chown
+        restoration runs with the pre-rename stat values, not whatever
+        ``os.stat`` would return after rename.
+        """
+        _, seed = fake_env_file
+        seed("PG_PASSWORD=old\n")  # type: ignore[operator]
+        pre_uid = os.stat(env_path).st_uid
+        pre_gid = os.stat(env_path).st_gid
+
+        calls: list[tuple[str, int, int]] = []
+
+        def recording_chown(path: str, uid: int, gid: int) -> None:
+            calls.append((str(path), uid, gid))
+
+        monkeypatch.setattr(secrets_mod.os, "chown", recording_chown)
+
+        handle_secrets_deliver({"name": "PG_PASSWORD", "value": "brand_new"})
+
+        assert len(calls) == 1
+        recorded_path, recorded_uid, recorded_gid = calls[0]
+        assert recorded_path == str(env_path)
+        assert recorded_uid == pre_uid
+        assert recorded_gid == pre_gid
+
+    def test_fresh_write_skips_chown(
+        self,
+        env_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """No prior file → no chown call. The guard is ``if lst is not None``.
+
+        Fresh-write already works (other tests exercise it); this test
+        specifically proves the chown-preservation call is *not* made
+        when there's no prior owner to copy. Failing to skip would mean
+        chown'ing to whatever ``os.stat`` captured before, which on a
+        missing file would raise.
+        """
+        # Sanity: env_path really does not exist yet.
+        assert not env_path.exists()
+
+        calls: list[tuple[str, int, int]] = []
+
+        def recording_chown(path: str, uid: int, gid: int) -> None:
+            calls.append((str(path), uid, gid))
+
+        monkeypatch.setattr(secrets_mod.os, "chown", recording_chown)
+
+        result = handle_secrets_deliver({"name": "PG_PASSWORD", "value": "v"})
+        assert result.success is True, result.error
+        assert env_path.exists()
+        # Fresh file: no preservation call is made.
+        assert calls == []
+
+    def test_chown_permission_error_logged_not_fatal(
+        self,
+        env_path: Path,
+        fake_env_file: tuple[Path, object],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """A chown that raises PermissionError must not fail the handler.
+
+        Best-effort semantics: the new file is already in place after
+        ``os.rename`` — losing the chown step is a degraded state, not a
+        corrupt one. Spec says log a warning and return success.
+        """
+        _, seed = fake_env_file
+        seed("PG_PASSWORD=old\n")  # type: ignore[operator]
+
+        def raising_chown(path: str, uid: int, gid: int) -> None:
+            raise PermissionError("operation not permitted")
+
+        monkeypatch.setattr(secrets_mod.os, "chown", raising_chown)
+        caplog.set_level("WARNING", logger="rots.commands.sidecar.handlers.secrets")
+
+        result = handle_secrets_deliver({"name": "PG_PASSWORD", "value": "new"})
+
+        # Handler still succeeds — rename already landed.
+        assert result.success is True, result.error
+        assert result.data["changed"] is True
+        # File content actually updated.
+        assert "new" in env_path.read_text()
+
+        # A WARNING-level record from the secrets logger was emitted.
+        warnings = [
+            r
+            for r in caplog.records
+            if r.name == "rots.commands.sidecar.handlers.secrets" and r.levelname == "WARNING"
+        ]
+        assert warnings, f"Expected a WARNING log, got: {caplog.records}"
