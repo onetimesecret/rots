@@ -171,15 +171,15 @@ Every verb below returns a `CommandResult` with `data.changed: bool` (see [Idemp
 
 | Command | Roles | Args | Description |
 |---------|-------|------|-------------|
-| `postgres.bootstrap_app` | `{"db"}` | `{app: string, database: string, ...}` | Create the application role + database, idempotent |
-| `postgres.add_hba` | `{"db"}` | `{filename: string, entries: [string]}` | Install a `pg_hba.d/` drop-in, basename-validated |
-| `postgres.rotate_password` | `{"db"}` | `{app: string}` | Mint a fresh application password (non-idempotent) |
+| `postgres.bootstrap_app` | `{"db"}` | `{app: string, owner_role: string, peer_ip: string, peer_id: string}` | Create the application role + database, idempotent |
+| `postgres.add_hba` | `{"db"}` | `{name: string, content: string}` | Install a `pg_hba.d/` drop-in, basename-validated |
+| `postgres.rotate_password` | `{"db"}` | `{role: string, peer_id: string}` | Mint a fresh application password (non-idempotent) |
 | `postgres.ping` | `{"db"}` | `{}` | Connectivity probe — `SELECT 1` via peer-auth `psql` |
-| `valkey.create_acl_user` | `{"db"}` | `{user: string, password_key: string, ...}` | Create a Valkey ACL user, idempotent |
+| `valkey.create_acl_user` | `{"db"}` | `{name: string, rules: [string], peer_id: string}` | Create a Valkey ACL user, idempotent |
 | `valkey.reload_acl` | `{"db"}` | `{}` | Reload ACLs from disk via `ACL LOAD` |
 | `secrets.deliver` | `{"db", "web"}` | `{name: string, value: string, env_file?: string}` | Write an allowlisted secret into the OTS env file (see [allowlist](#secretsdeliver-allowlist)) |
-| `backup.install` | `{"db"}` | `{target: string, schedule: string, ...}` | Install a backup systemd timer, validated target path |
-| `backup.uninstall` | `{"db"}` | `{target: string}` | Remove a previously installed backup timer |
+| `backup.install` | `{"db"}` | `{profile: string, target: string, schedule: string}` | Install a backup systemd timer, validated target path |
+| `backup.uninstall` | `{"db"}` | `{profile: string}` | Remove a previously installed backup timer |
 
 The db sidecar drives provisioning: it generates secrets locally, then publishes `secrets.deliver` at the web peer so the value lands in `/etc/default/onetimesecret` without ever touching a log, shell history, or intermediate file on the db side.
 
