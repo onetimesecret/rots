@@ -8,19 +8,25 @@ application ACL users and reload the ACL file after external edits.
 Auth model
 ----------
 The sidecar authenticates to local valkey as the fixed bootstrap user
-``bootstrap`` (provisioned by upstream cloud-init, lots #41, which also
-disables the ``default`` user). The bootstrap token is sealed into the
-systemd credstore and mounted into the sidecar unit's runtime credential
-directory via ``LoadCredentialEncrypted=valkey-bootstrap-token:…``.
-systemd decrypts the token at service start and exposes it at
+``bootstrap`` (provisioned by upstream cloud-init, lots #41, alongside
+the app's ``default`` user, which stays enabled with its own password —
+the onetimesecret client cannot currently carry a username in its
+connection URL, so it must connect as ``default``). The bootstrap token
+is sealed into the systemd credstore and mounted into the sidecar unit's
+runtime credential directory via
+``LoadCredentialEncrypted=valkey-bootstrap-token:…``. systemd decrypts
+the token at service start and exposes it at
 ``$CREDENTIALS_DIRECTORY/valkey-bootstrap-token``; this handler reads
 that path per-invocation (no caching, so rotations are picked up).
-Callers running outside a systemd unit (tests, interactive debugging)
-have no ``CREDENTIALS_DIRECTORY`` set and fall through to unauthenticated
-loopback. The on-disk ``/etc/valkey/users.acl`` is root/valkey-owned
-mode 0640 and is never read by this handler. All commands are issued
-through ``valkey-cli`` to ``127.0.0.1:6379``; no TCP credentials ship
-over the wire.
+When ``CREDENTIALS_DIRECTORY`` is unset (running outside a systemd unit
+— tests, interactive debugging), the handler falls through to
+unauthenticated ``valkey-cli``. That is transparent in test fixtures
+that leave ``default on nopass``; in production (``default on`` with
+``requirepass``) the fall-through surfaces ``NOAUTH`` on the next
+command — loud failure, not a silent degradation. The on-disk
+``/etc/valkey/users.acl`` is root/valkey-owned mode 0640 and is never
+read by this handler. All commands are issued through ``valkey-cli``
+to ``127.0.0.1:6379``; no TCP credentials ship over the wire.
 
 Cross-host delivery
 -------------------
@@ -132,7 +138,7 @@ _CREDENTIAL_NAME = "valkey-bootstrap-token"
 _VALKEY_CLI_TIMEOUT = 10
 
 # Name validation: same identifier shape as Postgres roles. Valkey also rejects
-# the literal ``default`` (reserved for the bootstrap user), handled separately.
+# the literal ``default`` (valkey's built-in ACL user), handled separately.
 _NAME_MAX_LEN = 64
 
 # Known ACL GETUSER field names and whether the value is an array (True) or
@@ -178,8 +184,10 @@ def _load_bootstrap_auth() -> tuple[str, str] | None:
     mounts the sealed bootstrap token as ``valkey-bootstrap-token`` inside
     that directory. Callers running outside a systemd unit (tests,
     interactive debugging) have no ``CREDENTIALS_DIRECTORY`` set and fall
-    through to unauthenticated loopback — safe in test fixtures where
-    valkey's ``default on nopass`` user still applies.
+    through. In test fixtures that leave ``default on nopass`` this is
+    transparent; in production (``default on`` with ``requirepass``) the
+    next ``valkey-cli`` call will surface ``NOAUTH`` and fail loudly —
+    the intended failure mode when the credstore is missing its token.
 
     Called per-invocation (no caching) so a rotated token is picked up on
     the next RPC without restarting the sidecar.
@@ -436,7 +444,7 @@ def handle_create_acl_user(params: dict[str, Any]) -> CommandResult:
     if not isinstance(name, str) or not name:
         return CommandResult.fail("Missing or empty 'name' parameter")
     if name == "default":
-        return CommandResult.fail("Rejected ACL name 'default': reserved for the bootstrap user")
+        return CommandResult.fail("Rejected ACL name 'default': reserved built-in valkey user")
     if not _is_valid_name(name):
         return CommandResult.fail(
             f"Invalid ACL name: {name!r}. Must match ^[A-Za-z_][A-Za-z0-9_]{{0,63}}$"
