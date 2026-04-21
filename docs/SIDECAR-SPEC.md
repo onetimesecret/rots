@@ -104,14 +104,6 @@ Discrete operations, not shell execution. Unknown commands are rejected.
 | `health` | `{port: int}` | HTTP health check result |
 | `status` | `{unit: string}` | Systemd unit status |
 | `instances.restart_all` | `{type?: string}` | Rolling restart of all instances |
-| `postgres.bootstrap_app` | `{app: string, owner_role: string, peer_ip: string, peer_id: string}` | Roles: `db`. Create role + database, generate password, deliver to `peer_id` via `secrets.deliver`. Returns `PostgresBootstrapAppData` `{role, database, password_delivered_to, changed}`. Idempotent: if `owner_role` already exists, short-circuits with `changed=False` (password cannot be re-derived). `changed: bool` surfaces whether state was mutated. |
-| `postgres.add_hba` | `{name: string, content: string}` | Roles: `db`. Write a `pg_hba.d/` drop-in (basename allowlist, `.conf` suffix enforced, no symlinks) and call `pg_reload_conf()`. Returns `PostgresAddHbaData` `{reloaded, changed}`. Idempotent: byte-for-byte comparison against existing file. `changed: bool`. |
-| `postgres.rotate_password` | `{role: string, peer_id: string}` | Roles: `db`. Generate a fresh password for an existing role and deliver it to `peer_id`. Returns `PostgresRotatePasswordData` `{delivered_to, changed}`. Non-idempotent by design — every call mints a new password. `changed: bool` is always `True` on success; kept for uniform result shape. |
-| `valkey.create_acl_user` | `{name: string, rules: list[string], peer_id: string}` | Roles: `db`. Create or update an ACL user, rotate token only when rules differ from stored form, persist via `ACL SAVE`, deliver token to `peer_id`. Returns `ValkeyCreateAclUserData` `{delivered_to, changed}`. Idempotent on rules; token rotates only on rule change. `changed: bool`. |
-| `valkey.reload_acl` | `{}` | Roles: `db`. Snapshot `ACL LIST`, run `ACL LOAD`, snapshot again; compares sorted hashes to detect observable difference. Returns `ValkeyReloadAclData` `{ok, changed}`. `ACL LOAD` always runs; `changed: bool` flips only when the in-memory state actually shifted. |
-| `secrets.deliver` | `{name: string, value: string, env_file?: string}` | Roles: `db`, `web`. Write-if-different of a named secret into the OTS env file. Hardened allowlists — see callout below. Returns `SecretsDeliverData` `{written, path, changed}`. Idempotent: identical value is a no-op (preserves mtime). `changed: bool`. |
-| `backup.install` | `{profile: string, target: string, schedule: string}` | Roles: `db`. Install `ots-backup-<profile>.service` + `.timer` + rclone fragment; `systemctl daemon-reload` and `enable --now` the timer. Profile names allowlisted (`db-daily`, `valkey-hourly`). Returns `BackupInstallData` `{unit, timer, changed}`. Idempotent: write-if-different + enable is a no-op when nothing differed. `changed: bool`. |
-| `backup.uninstall` | `{profile: string}` | Roles: `db`. `systemctl disable --now` the timer, unlink the three generated files, `daemon-reload` if anything was removed. Returns `BackupUninstallData` `{ok, changed}`. Idempotent: absent profile returns `changed=False`. `changed: bool`. |
 
 ### `secrets.deliver` Allowlist
 
@@ -160,37 +152,20 @@ New in issue #55. Cloud-init (`lots`) brings services to life; the sidecar (`rot
 
 ### Phase 1 — cloud-init (`lots`)
 
-Scope: install `postgresql` / `valkey`, bind the local socket, configure peer auth (postgres) or drop a bootstrap ACL user + token (valkey). No application roles, no application databases, no secrets generated in `runcmd`. Tracked externally in `tools-monorepo#37` (Phase 1 of provisioning, lots side — the upstream dependency for this phase).
+Scope: install `postgresql` / `valkey` / `rbbitmq`, bind the local socket, configure peer auth (postgres) or drop a bootstrap ACL user + token (valkey). No application roles, no application databases, no secrets generated in `runcmd`. Tracked externally in `tools-monorepo#37` (Phase 1 of provisioning, lots side — the upstream dependency for this phase).
 
-### Phase 2 — sidecar (`rots`)
+### Phase 2 — sidecar (`rots`) WORK IN PROGRES
 
-Scope: everything above the "service is up" line. Generate application passwords, create roles / databases / ACL users / schemas, deliver secrets to peers via `secrets.deliver`, install and manage backup timers, manage `pg_hba.d/` drop-ins. Triggered by an operator command (`rots env bootstrap --env <env>`, not documented here — this spec is the sidecar contract, not the operator CLI).
+Scope: everything above the "service is up" line. Generate application passwords, create roles / databases / ACL users / schemas, deliver secrets to peers via `secrets.deliver`, install and manage backup timers, manage `pg_hba.d/` drop-ins. Implementation TBD
 
-### Idempotency contract
+### Design suggestion: Idempotency contract
 
-Every Phase 2 handler returns a `CommandResult` whose `data` payload includes `changed: bool`. A re-run of the same call against the same state is a no-op (`changed=False`). The one documented exception is `postgres.rotate_password`: it is non-idempotent by design (every call mints a fresh password) and its `changed` field is always `True` on success — the key is kept for uniform payload shape.
+Consider during WIP: Every Phase 2 handler returns a `CommandResult` whose `data` payload includes `changed: bool`. A re-run of the same call against the same state is a no-op (`changed=False`). The one documented exception is `postgres.rotate_password`: it is non-idempotent by design (every call mints a fresh password) and its `changed` field is always `True` on success — the key is kept for uniform payload shape.
 
-### Role gating
 
-Role membership is declared at handler registration:
+## Design suggestion: Message Format
 
-```python
-@register_handler(Command.POSTGRES_BOOTSTRAP_APP, roles={"db"})
-```
-
-- Web sidecars register `secrets.deliver` plus the existing container-lifecycle commands (`restart.*`, `config.*`, `status`, etc.).
-- DB sidecars register everything: postgres, valkey, backup, secrets, plus container-lifecycle.
-- Wrong-role invocation is rejected by the dispatcher before reaching the handler; the caller receives a `CommandResult.fail` with an explicit role-mismatch error.
-
-### Cross-host delivery
-
-Handlers that generate secrets (`postgres.bootstrap_app`, `postgres.rotate_password`, `valkey.create_acl_user`) deliver the generated value to the web peer's sidecar by publishing `secrets.deliver` at `peer_id`. The operator workstation never sees the secret — it transits from db-sidecar to web-sidecar over the RabbitMQ control plane and is written into `/etc/default/onetimesecret` atomically. Delivery failure triggers a rollback (`DROP ROLE`, `ACL DELUSER`, or `ALTER ROLE ... PASSWORD NULL` depending on the handler).
-
-The routing piece — ensuring a publish at `peer_id` reaches that specific web host's sidecar and no other — depends on `tools-monorepo#12` (per-host queue routing). That dependency is external to this repo and gates the operator command's end-to-end flow, not the handlers themselves (handlers are correct in isolation; the transport just has to deliver).
-
-## Message Format
-
-JSON over both socket and RabbitMQ.
+JSON over both socket and RabbitMQ. TBD
 
 ### Request
 
@@ -226,7 +201,7 @@ JSON over both socket and RabbitMQ.
 }
 ```
 
-## Instance Tracking
+## Design suggestion: Instance Tracking
 
 Sidecar uses the existing rots SQLite database (`/var/lib/onetimesecret/deployments.db`) to know which container instances are running. This enables:
 
@@ -234,7 +209,10 @@ Sidecar uses the existing rots SQLite database (`/var/lib/onetimesecret/deployme
 - `config.apply` to coordinate test-then-propagate across instances
 - Status queries that reflect the full deployment state
 
-## Phased Restart Behavior
+NOTE: We should consider using postgresql for this instead of SQLite, which would allow multiple web instances to coordinate.
+
+
+## Design suggestion: Phased Restart Behavior
 
 When `phased_restart.web` is invoked:
 
@@ -252,7 +230,7 @@ When `phased_restart.worker` is invoked:
 4. If ready: return success
 5. If timeout: perform full container restart, return result with `escalated: true`
 
-## Setup Mode
+## Design suggestion: Setup Mode
 
 ### Activation
 
