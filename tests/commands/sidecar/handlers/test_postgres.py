@@ -838,3 +838,72 @@ class TestRotatePasswordDeliveryFailure:
             )
         finally:
             _drop_role_best_effort(container, unique_role)
+
+
+# =========================================================================
+# handle_ping (postgres.ping — issue #59)
+# =========================================================================
+
+
+class TestPostgresPing:
+    """Trivial ``SELECT 1`` connectivity probe used by server bootstrap.
+
+    Two layers of coverage:
+
+    * Integration (``patched_psql``): hit a real postgres via the session
+      fixture. Skips automatically when podman is absent because
+      ``postgres_service`` emits ``pytest.skip`` in that case.
+    * Unit (``pg.subprocess.run`` monkeypatch): exercises the success and
+      ``CalledProcessError`` branches without any service. Mirrors the
+      pattern used by :class:`TestAddHbaReloadFailure` and the
+      ``no_subprocess`` fixtures elsewhere in this module.
+    """
+
+    def test_real_postgres_ping_succeeds(
+        self,
+        patched_psql: str,
+    ):
+        """Handler returns ``ok=True, changed=False`` against live postgres."""
+        result = pg.handle_ping({})
+
+        assert result.success is True, result.error
+        assert result.data == {"ok": True, "changed": False}
+
+    @pytest.mark.quick
+    def test_unit_success_shape(self, monkeypatch: pytest.MonkeyPatch):
+        """With a stubbed ``subprocess.run`` returning exit 0, ping reports ok."""
+
+        def fake_run(
+            cmd: list[str] | tuple[str, ...], *args: Any, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=list(cmd), returncode=0, stdout="1\n", stderr=""
+            )
+
+        monkeypatch.setattr(pg.subprocess, "run", fake_run)
+
+        result = pg.handle_ping({})
+
+        assert result.success is True
+        assert result.data == {"ok": True, "changed": False}
+
+    @pytest.mark.quick
+    def test_unit_failure_surfaces_error_prefix(self, monkeypatch: pytest.MonkeyPatch):
+        """A non-zero psql exit yields ``fail`` with the documented prefix."""
+
+        def failing_run(
+            cmd: list[str] | tuple[str, ...], *args: Any, **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            raise subprocess.CalledProcessError(
+                2,
+                list(cmd),
+                stderr="psql: could not connect to server",
+            )
+
+        monkeypatch.setattr(pg.subprocess, "run", failing_run)
+
+        result = pg.handle_ping({})
+
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.startswith("postgres.ping failed")

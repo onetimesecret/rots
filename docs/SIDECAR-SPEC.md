@@ -104,6 +104,11 @@ Discrete operations, not shell execution. Unknown commands are rejected.
 | `health` | `{port: int}` | HTTP health check result |
 | `status` | `{unit: string}` | Systemd unit status |
 | `instances.restart_all` | `{type?: string}` | Rolling restart of all instances |
+| `discover.ping` | `{}` | Liveness probe for the sidecar itself |
+| `provision.socks_key_read` | `{}` | Read the host's provisioning SSH key material |
+| `provision.socks_key_write` | `{key: string}` | Install provisioning SSH key material |
+
+Phase 2 provisioning verbs are listed separately under [Two-phase provisioning](#two-phase-provisioning).
 
 ### `secrets.deliver` Allowlist
 
@@ -154,13 +159,33 @@ New in issue #55. Cloud-init (`lots`) brings services to life; the sidecar (`rot
 
 Scope: install `postgresql` / `valkey` / `rbbitmq`, bind the local socket, configure peer auth (postgres) or drop a bootstrap ACL user + token (valkey). No application roles, no application databases, no secrets generated in `runcmd`. Tracked externally in `tools-monorepo#37` (Phase 1 of provisioning, lots side — the upstream dependency for this phase).
 
-### Phase 2 — sidecar (`rots`) WORK IN PROGRES
+### Phase 2 — sidecar (`rots`)
 
-Scope: everything above the "service is up" line. Generate application passwords, create roles / databases / ACL users / schemas, deliver secrets to peers via `secrets.deliver`, install and manage backup timers, manage `pg_hba.d/` drop-ins. Implementation TBD
+Scope: everything above the "service is up" line. Generate application passwords, create roles / databases / ACL users / schemas, deliver secrets to peers via `secrets.deliver`, install and manage backup timers, manage `pg_hba.d/` drop-ins.
 
-### Design suggestion: Idempotency contract
+Phase 2 is implemented as a set of sidecar RPC verbs. Operator-facing orchestration (an `rots env bootstrap`-style command over an `.otsinfra.yaml` marker file) is deferred — the verbs below are the stable contract; any orchestration layer that sits on top can be swapped without touching them.
 
-Consider during WIP: Every Phase 2 handler returns a `CommandResult` whose `data` payload includes `changed: bool`. A re-run of the same call against the same state is a no-op (`changed=False`). The one documented exception is `postgres.rotate_password`: it is non-idempotent by design (every call mints a fresh password) and its `changed` field is always `True` on success — the key is kept for uniform payload shape.
+#### Phase 2 command vocabulary
+
+Every verb below returns a `CommandResult` with `data.changed: bool` (see [Idempotency contract](#idempotency-contract)). Verbs are role-gated: `{"db"}` means the handler is only installed on the db-role sidecar, `{"db", "web"}` means both.
+
+| Command | Roles | Args | Description |
+|---------|-------|------|-------------|
+| `postgres.bootstrap_app` | `{"db"}` | `{app: string, database: string, ...}` | Create the application role + database, idempotent |
+| `postgres.add_hba` | `{"db"}` | `{filename: string, entries: [string]}` | Install a `pg_hba.d/` drop-in, basename-validated |
+| `postgres.rotate_password` | `{"db"}` | `{app: string}` | Mint a fresh application password (non-idempotent) |
+| `postgres.ping` | `{"db"}` | `{}` | Connectivity probe — `SELECT 1` via peer-auth `psql` |
+| `valkey.create_acl_user` | `{"db"}` | `{user: string, password_key: string, ...}` | Create a Valkey ACL user, idempotent |
+| `valkey.reload_acl` | `{"db"}` | `{}` | Reload ACLs from disk via `ACL LOAD` |
+| `secrets.deliver` | `{"db", "web"}` | `{name: string, value: string, env_file?: string}` | Write an allowlisted secret into the OTS env file (see [allowlist](#secretsdeliver-allowlist)) |
+| `backup.install` | `{"db"}` | `{target: string, schedule: string, ...}` | Install a backup systemd timer, validated target path |
+| `backup.uninstall` | `{"db"}` | `{target: string}` | Remove a previously installed backup timer |
+
+The db sidecar drives provisioning: it generates secrets locally, then publishes `secrets.deliver` at the web peer so the value lands in `/etc/default/onetimesecret` without ever touching a log, shell history, or intermediate file on the db side.
+
+### Idempotency contract
+
+Every Phase 2 handler returns a `CommandResult` whose `data` payload includes `changed: bool`. A re-run of the same call against the same state is a no-op (`changed=False`). The one documented exception is `postgres.rotate_password`: it is non-idempotent by design (every call mints a fresh password) and its `changed` field is always `True` on success — the key is kept for uniform payload shape.
 
 
 ## Design suggestion: Message Format
