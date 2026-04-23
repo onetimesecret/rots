@@ -11,7 +11,7 @@ Usage::
     from ots_shared.history import log_command, serialize_to_sql
 
     log_command(
-        "lots", "cloudinit generate", {"role": "db", "hostname": "eu-db-01"}
+        "lots", "cloudinit render", {"role": "db", "hostname": "eu-db-01"}
     )
     serialize_to_sql()  # writes history.sql alongside history.db
 """
