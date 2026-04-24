@@ -17,7 +17,7 @@ class TestLogCommand:
     """log_command records entries in the SQLite database."""
 
     def test_basic_log(self, tmp_path):
-        row_id = log_command("lots", "cloudinit render", directory=tmp_path)
+        row_id = log_command("lots", "render", directory=tmp_path)
         assert row_id == 1
         assert (tmp_path / _DB_NAME).exists()
 
@@ -79,7 +79,7 @@ class TestSerializeToSql:
     def test_sql_contains_insert_statements(self, tmp_path):
         log_command(
             "lots",
-            "cloudinit render",
+            "render",
             args={"role": "db"},
             directory=tmp_path,
         )
@@ -87,7 +87,7 @@ class TestSerializeToSql:
         content = (tmp_path / _SQL_NAME).read_text()
         assert "INSERT INTO command_log" in content
         assert "lots" in content
-        assert "cloudinit render" in content
+        assert "render" in content
 
     def test_sql_escapes_quotes(self, tmp_path):
         log_command("lots", "test", result="it's done", directory=tmp_path)
