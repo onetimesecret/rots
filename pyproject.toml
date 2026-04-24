@@ -104,9 +104,6 @@ ignore = [
   "E741"
 ]  # Ambiguous variable names (l, O, I) - clear in modern fonts
 
-[tool.uv]
-dev-dependencies = []
-
 [tool.uv.workspace]
 members = ["packages/ots-shared"]
 
