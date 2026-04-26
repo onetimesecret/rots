@@ -135,19 +135,22 @@ def _wait_for_port(host: str, port: int, timeout: float) -> bool:
     return False
 
 
-def _wait_for_postgres_ready(container: str, timeout: float) -> bool:
-    """Wait until ``psql -U postgres`` succeeds inside ``container``.
+def _wait_for_postgres_ready(
+    container: str, timeout: float, consecutive: int = 3, interval: float = 0.5
+) -> bool:
+    """Wait until ``psql -U postgres`` succeeds N consecutive times inside ``container``.
 
-    The ``postgres:16-alpine`` init script double-restarts postgres: the
-    first start is an internal init over the Unix socket, then it shuts
-    down and restarts with the final listener config. During that gap the
-    TCP port may already be open (a previous listener was still bound
-    briefly) while the final Unix socket is not yet ready, so TCP-only
-    probes return too early. Use the same invocation the handler uses —
-    ``psql`` inside the container — to decide readiness.
+    Some postgres images (e.g. ``postgres:16-alpine``) double-restart during
+    init: postgres starts over the Unix socket for internal setup, shuts down,
+    then restarts with the final listener config.  A single successful probe
+    can land during the first-start window; requiring ``consecutive`` successes
+    spaced ``interval`` seconds apart forces the cumulative probe window to
+    straddle the restart gap (~1-2 s for alpine), so we only declare ready once
+    the final listener is stable.
     """
     deadline = time.monotonic() + timeout
     last_stderr = ""
+    streak = 0
     while time.monotonic() < deadline:
         proc = subprocess.run(
             [
@@ -166,12 +169,16 @@ def _wait_for_postgres_ready(container: str, timeout: float) -> bool:
             text=True,
         )
         if proc.returncode == 0 and proc.stdout.strip() == "1":
-            return True
-        last_stderr = proc.stderr
-        time.sleep(0.3)
-    # Preserve last error for the caller's diagnostics.
+            streak += 1
+            if streak >= consecutive:
+                return True
+        else:
+            streak = 0
+            last_stderr = proc.stderr
+        time.sleep(interval)
     raise RuntimeError(
-        f"postgres in container {container!r} did not become ready: {last_stderr.strip()}"
+        f"postgres in container {container!r} did not become ready "
+        f"({consecutive} consecutive successes within {timeout}s): {last_stderr.strip()}"
     )
 
 
@@ -197,7 +204,7 @@ def postgres_service() -> Iterator[dict[str, Any]]:
 
     name = f"rots-test-postgres-{uuid.uuid4().hex[:8]}"
     port = _pick_port()
-    image = os.environ.get("ROTS_TEST_POSTGRES_IMAGE", "docker.io/library/postgres:16-alpine")
+    image = os.environ.get("ROTS_TEST_POSTGRES_IMAGE", "docker.io/library/postgres:17-trixie")
 
     subprocess.run(
         [
