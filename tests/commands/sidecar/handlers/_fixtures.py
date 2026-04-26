@@ -174,11 +174,14 @@ def _wait_for_postgres_ready(
                 return True
         else:
             streak = 0
-            last_stderr = proc.stderr
+            last_stderr = (
+                proc.stderr if proc.returncode != 0 else f"unexpected stdout: {proc.stdout!r}"
+            )
         time.sleep(interval)
+    suffix = f": {last_stderr.strip()}" if last_stderr.strip() else ""
     raise RuntimeError(
         f"postgres in container {container!r} did not become ready "
-        f"({consecutive} consecutive successes within {timeout}s): {last_stderr.strip()}"
+        f"({streak}/{consecutive} consecutive successes within {timeout}s){suffix}"
     )
 
 
