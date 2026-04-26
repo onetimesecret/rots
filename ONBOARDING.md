@@ -28,7 +28,7 @@ Top MCP Servers:
   - [ ] rots (`packages/rots/`) — Podman Quadlet/systemd container orchestration (public, submodule: git@github.com:onetimesecret/rots.git)
   - [ ] lots (`packages/lots/`) — Hetzner Cloud + cloud-init host management (public)
   - [ ] pots (`packages/pots/`) — Host inventory and SSH config generation (private)
-  - [ ] ots-shared (`packages/rots/packages/ots-shared/`) — Shared library used by rots, lots, and pots (public)
+  - [ ] ots-shared (standalone repo: git@github.com:onetimesecret/ots-shared.git) — Shared library used by rots, lots, and pots (public, on PyPI)
 
 ### MCP Servers to Activate
   (none required at this time)

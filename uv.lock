@@ -2,12 +2,6 @@ version = 1
 revision = 3
 requires-python = ">=3.11"
 
-[manifest]
-members = [
-    "ots-shared",
-    "rots",
-]
-
 [[package]]
 name = "attrs"
 version = "25.4.0"
@@ -704,34 +698,21 @@ wheels = [
 [[package]]
 name = "ots-shared"
 version = "0.4.0"
-source = { editable = "packages/ots-shared" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cyclopts" },
     { name = "hcloud" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/58/3c/5a8e0745ca9e27af42031ba4637a62f849e1a3803137749d91c104c5c591/ots_shared-0.4.0.tar.gz", hash = "sha256:acf184727fb16b35d670295ca77536d9c0951f41aaae6bc0ac4a025a5ee0e1d4", size = 58030, upload-time = "2026-04-26T01:48:20.936Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5c/04/44c1d62c0a5f9d4fea165e0303aae626078ab7f0ea78212e17cd5c26f7d9/ots_shared-0.4.0-py3-none-any.whl", hash = "sha256:ed8cfe67bb93e7593b628dac566e043733d565fc3c377c9666b12f8acf78e54b", size = 36137, upload-time = "2026-04-26T01:48:19.454Z" },
 ]
 
 [package.optional-dependencies]
-dev = [
-    { name = "pyright" },
-]
 ssh = [
     { name = "paramiko" },
 ]
-test = [
-    { name = "pytest" },
-    { name = "pytest-mock" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cyclopts", specifier = ">=3.9" },
-    { name = "hcloud", specifier = ">=2.16.0" },
-    { name = "paramiko", marker = "extra == 'ssh'", specifier = ">=3.4" },
-    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
-    { name = "pytest-mock", marker = "extra == 'test'", specifier = ">=3.14" },
-]
-provides-extras = ["ssh", "dev", "test"]
 
 [[package]]
 name = "packaging"
@@ -1138,7 +1119,7 @@ requires-dist = [
     { name = "coverage", marker = "extra == 'test'", specifier = ">=7.10" },
     { name = "cyclopts", specifier = ">=4.5" },
     { name = "dns-lexicon", marker = "extra == 'dns'", specifier = ">=3.17" },
-    { name = "ots-shared", extras = ["ssh"], editable = "packages/ots-shared" },
+    { name = "ots-shared", extras = ["ssh"], specifier = ">=0.4.0" },
     { name = "pika", specifier = ">=1.3" },
     { name = "podman", specifier = ">=5.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0" },
