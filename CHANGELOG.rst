@@ -12,6 +12,102 @@ Versioning <https://semver.org/spec/v2.0.0.html>`__.
 
    <!--scriv-insert-here-->
 
+.. _changelog-0.7.2:
+
+0.7.2 — 2026-04-26
+==================
+
+Added
+-----
+
+- Two-phase sidecar provisioning: RPC handlers for ``postgres``,
+  ``valkey``, ``secrets``, and ``backup`` with role-based gating, plus
+  an operator bootstrap path (``#55``).
+- ``postgres.ping`` idempotent connectivity probe handler, role-gated
+  to ``{"db"}`` (``#59``).
+- ``ots-shared`` 0.4.0 ships ``ots_shared.hcloud`` — Hetzner Cloud
+  ``Config``/``Client`` factory, ``api_errors`` context manager,
+  ``KNOWN_ZONES``/``LOCATION_TO_ZONE``, network plan reconciliation
+  (``NetworkSpec``, ``DesiredState``, ``parse_marker``, ``diff_state``),
+  and marker-backed server defaults (``HostDefaults``,
+  ``CloudInitPayload``, ``resolve_host_defaults``,
+  ``load_cloud_init_user_data``). Other workspace tools can now
+  consume the Hetzner client directly without shelling out to lots.
+  (``#55``)
+
+Changed
+-------
+
+- Decouple ``ots-shared`` from the rots workspace. The shared library
+  now lives in its own repository at
+  ``https://github.com/onetimesecret/ots-shared`` and is consumed via
+  PyPI (``ots-shared[ssh]>=0.4.0``). Removed the
+  ``packages/ots-shared/`` source tree and the
+  ``[tool.uv.workspace]``/``[tool.uv.sources]`` entries that pinned it
+  as a workspace member.
+- Move the hcloud library layer out of ``lots.hcloud`` into
+  ``ots_shared.hcloud``. Lots CLI commands now import ``Config`` and
+  helpers from the shared package; presentation helpers
+  (``print_*``) stay in ``lots/hcloud/commands/server/_output.py``.
+  (``#55``)
+- Pin completion-install command name to ``--install-completions`` so
+  the flag is stable across cyclopts upgrades.
+- Harden sidecar RPC handlers per PR ``#55`` review feedback.
+
+Removed
+-------
+
+- Wave-2 env bootstrap and ``infra_marker`` scaffolding —
+  superseded by the sidecar RPC handlers (``#59``).
+- ``packages/ots-shared/`` source tree (history preserved in the
+  standalone ots-shared repository).
+
+Fixed
+-----
+
+- Flaky postgres handler test caused by an alpine init double-restart
+  race; improve ``_wait_for_postgres_ready`` error diagnostics
+  (``#62``).
+- Sidecar/valkey: correct auth-model docstring and bootstrap-auth
+  tests (``#55``).
+- ``load_cloud_init_user_data`` now writes its "Running cloud-init
+  command" diagnostic to stderr so ``lots hcloud server create
+  --json`` output stays clean (``#55``).
+
+Documentation
+-------------
+
+- Sidecar spec: align Phase 2 command vocabulary with the implemented
+  handlers; trim assumptions introduced by ``#55`` (``#59``).
+
+AI Assistance
+-------------
+
+- Library/CLI carve, import rewrites, test migration, and code
+  review (``#55``) coordinated across explore, python-dev,
+  qa-automation-engineer, and code-reviewer subagents.
+
+.. _changelog-0.7.1:
+
+0.7.1 — 2026-04-20
+==================
+
+Changed
+-------
+
+- Centralize ``OTS_REGISTRY`` image reference resolution in
+  ``resolve_image_tag``; add ``localhost`` registry support and an
+  ``_apply_registry_override`` helper (``#56``).
+- Default env path is now ``/etc/default/onetimesecret`` (``#54``).
+- Bump ``ots-shared`` workspace pin to 0.3.0.
+
+Removed
+-------
+
+- ``cloudinit`` subcommand and its templates (``#48``).
+- Stale references to old package names and paths from the
+  ``ots_containers`` → ``rots`` migration.
+
 .. _changelog-0.7.0:
 
 0.7.0 — 2026-04-12
