@@ -1,6 +1,6 @@
 [project]
 name = "ots-shared"
-version = "0.3.0"
+version = "0.4.0"
 description = "Shared constants and utilities for OTS operations tools"
 readme = {text = "Shared constants and utilities for OTS operations tools.", content-type = "text/plain"}
 requires-python = ">=3.11"
@@ -17,7 +17,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Topic :: System :: Systems Administration",
 ]
-dependencies = ["cyclopts>=3.9"]
+dependencies = ["cyclopts>=3.9", "hcloud>=2.16.0"]
 
 [project.urls]
 Repository = "https://github.com/onetimesecret/rots"

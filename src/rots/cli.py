@@ -52,7 +52,7 @@ app.command("rots.commands.sidecar:app", name="sidecar")
 app.command("rots.commands.workflow:app", name="workflow")
 app.command("rots.commands.self:app", name="self")
 
-app.register_install_completion_command()
+app.register_install_completion_command(name="--install-completions")
 
 
 class _CLIFormatter(logging.Formatter):

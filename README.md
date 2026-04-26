@@ -1,3 +1,5 @@
+# packages/rots/README.md
+---
 # rots - Remote OTS Commander
 
 Service orchestration CLI for [OneTimeSecret](https://github.com/onetimesecret/onetimesecret) infrastructure.
