@@ -5,6 +5,7 @@
 import dataclasses
 import difflib
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -440,7 +441,7 @@ def _render_quadlets(
     ``onetime-scheduler@.container`` under ``<render_dir>/etc/containers/systemd/``.
     Also emits ``onetime.image`` when ``cfg.registry`` is set.
 
-    ``config_source`` defaults to ``./confext/web/etc/onetimesecret`` resolved
+    ``config_source`` defaults to ``./confexts/web/etc/onetimesecret`` resolved
     against the current working directory when not supplied. Both supplied and
     default paths are resolved to absolute paths before being passed to the
     quadlet renderers.
@@ -448,7 +449,7 @@ def _render_quadlets(
     import json as json_mod
 
     if config_source is None:
-        config_source = Path("confext/web/etc/onetimesecret")
+        config_source = Path("confexts/web/etc/onetimesecret")
     config_source = config_source.resolve()
 
     apply_quiet(quiet)
@@ -499,14 +500,47 @@ def _render_quadlets(
         print(f"render: failed to generate Quadlet content: {exc}", file=sys.stderr)
         raise SystemExit(EXIT_FAILURE) from exc
 
+    # Full set of Quadlet artifacts this command owns. Anything in this set
+    # that is NOT in `payloads` is a leftover from a previous render and must
+    # be removed — otherwise lots' rsync (which doesn't pass --delete) ships
+    # the stale file alongside the fresh tree.
+    managed_names = {
+        "onetime-web@.container",
+        "onetime-worker@.container",
+        "onetime-scheduler@.container",
+        "onetime.image",
+    }
+    payload_names = {name for name, _ in payloads}
+
+    # Per-file atomic write: stage every payload as `<name>.tmp`, then
+    # `os.replace` each into place. A mid-loop crash leaves at most a stray
+    # `.tmp` file plus the fully-written files that already swapped — no
+    # half-written final file, which is what the PR's atomicity claim hinges
+    # on. Stale-file cleanup runs only after every replace lands.
+    staged: list[tuple[Path, Path]] = []
+    files_written: list[str] = []
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
-        files_written: list[str] = []
+
         for name, content in payloads:
-            path = out_dir / name
-            path.write_text(content)
-            files_written.append(str(path))
+            final_path = out_dir / name
+            tmp_path = final_path.with_name(final_path.name + ".tmp")
+            tmp_path.write_text(content)
+            staged.append((tmp_path, final_path))
+
+        for tmp_path, final_path in staged:
+            os.replace(tmp_path, final_path)
+            files_written.append(str(final_path))
+
+        for existing in out_dir.iterdir():
+            if existing.name in managed_names and existing.name not in payload_names:
+                existing.unlink()
     except OSError as exc:
+        for tmp_path, _ in staged:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
         print(f"render: I/O failure writing to {out_dir}: {exc}", file=sys.stderr)
         raise SystemExit(EXIT_FAILURE) from exc
 
@@ -606,7 +640,7 @@ def deploy(
     The ``--render <dir>`` flag emits Quadlet files to a local directory and
     performs no host I/O (no SSH, no systemd, no DB write). Use ``--config-source``
     to point at a directory of local config files when emitting Volume= lines
-    (defaults to ``./confext/web/etc/onetimesecret`` when omitted). The standalone
+    (defaults to ``./confexts/web/etc/onetimesecret`` when omitted). The standalone
     ``rots instance render`` subcommand is preferred for new code; ``--render``
     here is retained for back-compat.
 
@@ -917,7 +951,7 @@ def render(
     is configured) under ``<out_dir>/etc/containers/systemd/``. Performs no
     SSH, no systemd, and no DB writes.
 
-    ``--config-source`` defaults to ``./confext/web/etc/onetimesecret``
+    ``--config-source`` defaults to ``./confexts/web/etc/onetimesecret``
     relative to the current working directory. Files matching the canonical
     OneTimeSecret config names found in that directory are emitted as
     ``Volume=`` lines in the rendered units.

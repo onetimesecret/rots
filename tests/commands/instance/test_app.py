@@ -3438,8 +3438,8 @@ class TestDeployRender:
         finally:
             context.host_var.reset(token)
 
-    def test_render_defaults_config_source_to_confext_web(self, mocker, monkeypatch, tmp_path):
-        """When config_source=None, deploy --render defaults to ./confext/web/etc/onetimesecret.
+    def test_render_defaults_config_source_to_confexts_web(self, mocker, monkeypatch, tmp_path):
+        """When config_source=None, deploy --render defaults to ./confexts/web/etc/onetimesecret.
 
         Resolving the default against cwd (rather than an absolute hard-coded
         path) lets operators run `rots instance deploy --render ./out` from
@@ -3448,7 +3448,7 @@ class TestDeployRender:
         self._patch_render_safety_nets(mocker)
         monkeypatch.chdir(tmp_path)
 
-        default_src = tmp_path / "confext" / "web" / "etc" / "onetimesecret"
+        default_src = tmp_path / "confexts" / "web" / "etc" / "onetimesecret"
         default_src.mkdir(parents=True)
         (default_src / "config.yaml").write_text("# placeholder\n")
 
@@ -3461,7 +3461,7 @@ class TestDeployRender:
             out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
         ).read_text()
 
-        # The default config_source resolved to <cwd>/confext/web/etc/onetimesecret,
+        # The default config_source resolved to <cwd>/confexts/web/etc/onetimesecret,
         # where config.yaml exists, so a Volume= line for it must be rendered.
         assert ":/app/etc/config.yaml:ro" in web_unit
 
@@ -3621,12 +3621,64 @@ class TestInstanceRenderCommand:
         target_dir = out_dir / "etc" / "containers" / "systemd"
         assert not (target_dir / "onetime.image").exists()
 
-    def test_render_defaults_config_source_to_confext_web(self, mocker, monkeypatch, tmp_path):
-        """When --config-source omitted, defaults to ./confext/web/etc/onetimesecret."""
+    def test_render_removes_stale_image_unit_when_registry_unset(
+        self, mocker, monkeypatch, tmp_path
+    ):
+        """A re-render without a registry must delete `onetime.image` from a prior render.
+
+        lots' rsync ships the rendered tree without --delete, so a stale
+        `onetime.image` left behind from a previous run would propagate to
+        the host. The render must clean managed Quadlet artifacts that are
+        no longer in the current payload set.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        # First render: registry set, `onetime.image` is emitted.
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+        render_cmd(out_dir=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert (target_dir / "onetime.image").exists()
+
+        # Second render: registry unset, the stale image unit must be gone.
+        monkeypatch.delenv("OTS_REGISTRY")
+        render_cmd(out_dir=out_dir)
+
+        assert not (target_dir / "onetime.image").exists()
+
+    def test_render_preserves_unrelated_files_in_out_dir(self, mocker, tmp_path):
+        """Files outside the managed Quadlet set must not be touched by render.
+
+        Operators may colocate other artifacts under
+        `<out_dir>/etc/containers/systemd/`. Cleanup is scoped to the four
+        Quadlet artifacts this command owns.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        target_dir.mkdir(parents=True)
+        sentinel = target_dir / "operator-owned.conf"
+        sentinel.write_text("# operator file\n")
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        assert sentinel.exists(), "render must not delete unrelated files"
+        assert sentinel.read_text() == "# operator file\n"
+
+    def test_render_defaults_config_source_to_confexts_web(self, mocker, monkeypatch, tmp_path):
+        """When --config-source omitted, defaults to ./confexts/web/etc/onetimesecret."""
         self._patch_render_safety_nets(mocker)
         monkeypatch.chdir(tmp_path)
 
-        default_src = tmp_path / "confext" / "web" / "etc" / "onetimesecret"
+        default_src = tmp_path / "confexts" / "web" / "etc" / "onetimesecret"
         default_src.mkdir(parents=True)
         (default_src / "config.yaml").write_text("# placeholder\n")
 
@@ -3641,12 +3693,12 @@ class TestInstanceRenderCommand:
             out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
         ).read_text()
 
-        # The default config_source resolved to <cwd>/confext/web/etc/onetimesecret,
+        # The default config_source resolved to <cwd>/confexts/web/etc/onetimesecret,
         # where config.yaml exists, so a Volume= line for it must be rendered.
         assert ":/app/etc/config.yaml:ro" in web_unit
 
     def test_render_explicit_config_source_takes_precedence(self, mocker, tmp_path):
-        """`--config-source <dir>` overrides the default ./confext/web/etc/onetimesecret."""
+        """`--config-source <dir>` overrides the default ./confexts/web/etc/onetimesecret."""
         self._patch_render_safety_nets(mocker)
 
         out_dir = tmp_path / "out"

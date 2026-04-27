@@ -98,7 +98,7 @@ ConfigSource = Annotated[
         help=(
             "Directory probed for /etc/onetimesecret/*.yaml files when emitting "
             "Volume= lines under --render. Defaults to "
-            "./confext/web/etc/onetimesecret relative to the current working "
+            "./confexts/web/etc/onetimesecret relative to the current working "
             "directory when --render is set."
         ),
     ),
