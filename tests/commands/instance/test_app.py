@@ -4022,6 +4022,85 @@ class TestInstanceRenderCommand:
         ).read_text()
         assert "Image=ghcr.io/org/image:v1.2.3" in web_unit
 
+    def test_render_failure_mid_write_leaves_old_tree_intact(self, mocker, tmp_path):
+        """A failure during the staging-dir write must NOT mutate the live tree.
+
+        Tree-level atomicity: render builds the new set in a sibling staging
+        dir and renames it into place once. Any error before the rename
+        leaves the live `etc/containers/systemd/` directory untouched.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        target_dir.mkdir(parents=True)
+
+        # Seed the live tree with a previous render and a sentinel operator file.
+        (target_dir / "onetime-web@.container").write_text("# OLD WEB\n")
+        (target_dir / "onetime-worker@.container").write_text("# OLD WORKER\n")
+        (target_dir / "onetime-scheduler@.container").write_text("# OLD SCHED\n")
+        sentinel = target_dir / "operator-owned.conf"
+        sentinel.write_text("# operator file\n")
+
+        # Force a failure during template generation (before any disk write).
+        mocker.patch(
+            "rots.commands.instance.app.quadlet.render_scheduler_template",
+            side_effect=RuntimeError("boom"),
+        )
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit):
+            render_cmd(out_dir=out_dir)
+
+        # Live tree is exactly as before.
+        assert (target_dir / "onetime-web@.container").read_text() == "# OLD WEB\n"
+        assert (target_dir / "onetime-worker@.container").read_text() == "# OLD WORKER\n"
+        assert (target_dir / "onetime-scheduler@.container").read_text() == "# OLD SCHED\n"
+        assert sentinel.read_text() == "# operator file\n"
+
+    def test_render_swap_leaves_no_staging_dir_on_success(self, mocker, tmp_path):
+        """Successful render leaves no `.render-*` staging dirs behind."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        # No leftover staging dirs as siblings of the systemd dir.
+        siblings = list((out_dir / "etc" / "containers").iterdir())
+        assert {p.name for p in siblings} == {"systemd"}
+
+    def test_render_swap_cleans_staging_dir_on_failure(self, mocker, tmp_path):
+        """A failed render leaves no `.render-*` staging dirs behind either.
+
+        The staging dir is best-effort cleaned up on the error path so
+        repeated failed renders don't accumulate cruft on disk.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        target_dir.mkdir(parents=True)
+
+        mocker.patch(
+            "rots.commands.instance.app.quadlet.render_web_template",
+            side_effect=RuntimeError("boom"),
+        )
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit):
+            render_cmd(out_dir=out_dir)
+
+        # No leftover staging dirs as siblings.
+        siblings = [p.name for p in (out_dir / "etc" / "containers").iterdir()]
+        # `systemd` survives (untouched); nothing else should be there.
+        assert siblings == ["systemd"]
+
     def test_render_output_is_byte_stable_across_runs(self, mocker, tmp_path):
         """Render output must be byte-identical across reruns with identical inputs.
 

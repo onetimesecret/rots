@@ -562,37 +562,70 @@ def _render_quadlets(
         "onetime-scheduler@.container",
         "onetime.image",
     }
-    payload_names = {name for name, _ in payloads}
 
-    # Per-file atomic write: stage every payload as `<name>.tmp`, then
-    # `os.replace` each into place. A mid-loop crash leaves at most a stray
-    # `.tmp` file plus the fully-written files that already swapped — no
-    # half-written final file, which is what the PR's atomicity claim hinges
-    # on. Stale-file cleanup runs only after every replace lands.
-    staged: list[tuple[Path, Path]] = []
+    # Tree-level atomic swap: build the full new tree in a sibling staging
+    # directory on the same filesystem as out_dir (so the final rename is a
+    # single atomic syscall), then swap it into place. A mid-write crash
+    # leaves only the staging dir behind; the live out_dir is never partially
+    # mutated.
+    #
+    # Files in out_dir that are NOT in managed_names (operator-owned configs)
+    # are copied into the staging dir first so they survive the swap.
+    import shutil
+    import tempfile
+
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
     files_written: list[str] = []
+    staging_dir: Path | None = None
     try:
-        out_dir.mkdir(parents=True, exist_ok=True)
+        # Place the staging dir as a sibling of out_dir (same filesystem).
+        # tempfile.mkdtemp gives a uniquely-named dir we own end-to-end.
+        staging_dir = Path(
+            tempfile.mkdtemp(prefix=f".{out_dir.name}.render-", dir=str(out_dir.parent))
+        )
 
+        # Preserve operator-owned files: anything in the live out_dir that
+        # isn't one of the four managed Quadlet artifacts must round-trip
+        # through the staging dir, otherwise the swap deletes it.
+        if out_dir.exists():
+            for existing in out_dir.iterdir():
+                if existing.name in managed_names:
+                    continue  # superseded (or removed) by this render
+                dest = staging_dir / existing.name
+                if existing.is_dir():
+                    shutil.copytree(existing, dest, symlinks=True)
+                else:
+                    shutil.copy2(existing, dest, follow_symlinks=False)
+
+        # Write each payload into the staging dir.
         for name, content in payloads:
-            final_path = out_dir / name
-            tmp_path = final_path.with_name(final_path.name + ".tmp")
-            tmp_path.write_text(content)
-            staged.append((tmp_path, final_path))
+            (staging_dir / name).write_text(content)
+            files_written.append(str(out_dir / name))
 
-        for tmp_path, final_path in staged:
-            os.replace(tmp_path, final_path)
-            files_written.append(str(final_path))
-
-        for existing in out_dir.iterdir():
-            if existing.name in managed_names and existing.name not in payload_names:
-                existing.unlink()
+        # Atomic swap. os.replace on a directory replaces an empty target
+        # but errors on a non-empty one. Pattern: rename live -> .old,
+        # rename staging -> live, rmtree .old.
+        old_dir: Path | None = None
+        if out_dir.exists():
+            old_dir = out_dir.with_name(out_dir.name + ".old")
+            # If a stale .old exists from a prior crash, clear it first.
+            if old_dir.exists():
+                shutil.rmtree(old_dir)
+            os.replace(out_dir, old_dir)
+        try:
+            os.replace(staging_dir, out_dir)
+        except OSError:
+            # Best-effort rollback: if we moved live aside but couldn't
+            # promote staging, restore the original.
+            if old_dir is not None and old_dir.exists():
+                os.replace(old_dir, out_dir)
+            raise
+        staging_dir = None  # ownership transferred to out_dir
+        if old_dir is not None and old_dir.exists():
+            shutil.rmtree(old_dir)
     except OSError as exc:
-        for tmp_path, _ in staged:
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
+        if staging_dir is not None and staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
         print(f"render: I/O failure writing to {out_dir}: {exc}", file=sys.stderr)
         raise SystemExit(EXIT_FAILURE) from exc
 
