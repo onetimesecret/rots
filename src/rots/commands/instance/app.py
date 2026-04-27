@@ -453,49 +453,62 @@ def _render_quadlets(
 
     apply_quiet(quiet)
     out_dir = render_dir / "etc" / "containers" / "systemd"
-    out_dir.mkdir(parents=True, exist_ok=True)
 
-    web_path = out_dir / "onetime-web@.container"
-    worker_path = out_dir / "onetime-worker@.container"
-    scheduler_path = out_dir / "onetime-scheduler@.container"
+    # Render every template to memory before any disk I/O. A render failure
+    # then exits without leaving a half-populated tree on disk — important
+    # because lots' rsync would happily ship a partial state otherwise.
+    try:
+        payloads: list[tuple[str, str]] = [
+            (
+                "onetime-web@.container",
+                quadlet.render_web_template(
+                    cfg,
+                    env_file_path=None,
+                    force=False,
+                    executor=None,
+                    config_source=config_source,
+                    render_mode=True,
+                ),
+            ),
+            (
+                "onetime-worker@.container",
+                quadlet.render_worker_template(
+                    cfg,
+                    env_file_path=None,
+                    force=False,
+                    executor=None,
+                    config_source=config_source,
+                    render_mode=True,
+                ),
+            ),
+            (
+                "onetime-scheduler@.container",
+                quadlet.render_scheduler_template(
+                    cfg,
+                    env_file_path=None,
+                    force=False,
+                    executor=None,
+                    config_source=config_source,
+                    render_mode=True,
+                ),
+            ),
+        ]
+        if cfg.registry:
+            payloads.append(("onetime.image", quadlet.render_image_template(cfg, executor=None)))
+    except Exception as exc:
+        print(f"render: failed to generate Quadlet content: {exc}", file=sys.stderr)
+        raise SystemExit(EXIT_FAILURE) from exc
 
-    web_path.write_text(
-        quadlet.render_web_template(
-            cfg,
-            env_file_path=None,
-            force=False,
-            executor=None,
-            config_source=config_source,
-            render_mode=True,
-        )
-    )
-    worker_path.write_text(
-        quadlet.render_worker_template(
-            cfg,
-            env_file_path=None,
-            force=False,
-            executor=None,
-            config_source=config_source,
-            render_mode=True,
-        )
-    )
-    scheduler_path.write_text(
-        quadlet.render_scheduler_template(
-            cfg,
-            env_file_path=None,
-            force=False,
-            executor=None,
-            config_source=config_source,
-            render_mode=True,
-        )
-    )
-
-    files_written = [str(web_path), str(worker_path), str(scheduler_path)]
-
-    if cfg.registry:
-        image_path = out_dir / "onetime.image"
-        image_path.write_text(quadlet.render_image_template(cfg, executor=None))
-        files_written.append(str(image_path))
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        files_written: list[str] = []
+        for name, content in payloads:
+            path = out_dir / name
+            path.write_text(content)
+            files_written.append(str(path))
+    except OSError as exc:
+        print(f"render: I/O failure writing to {out_dir}: {exc}", file=sys.stderr)
+        raise SystemExit(EXIT_FAILURE) from exc
 
     if json_output:
         print(

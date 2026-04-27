@@ -3767,3 +3767,63 @@ class TestInstanceRenderCommand:
                 render_cmd(out_dir=out_dir)
         finally:
             context.host_var.reset(token)
+
+    def test_render_failure_exits_nonzero_with_stderr(self, mocker, capsys, tmp_path):
+        """When a template renderer raises, render exits nonzero and writes a clear stderr message.
+
+        `rots instance apply` will subprocess --render programmatically; a
+        silent failure would let lots ship an incomplete tree.
+        """
+        self._patch_render_safety_nets(mocker)
+        mocker.patch(
+            "rots.commands.instance.app.quadlet.render_worker_template",
+            side_effect=RuntimeError("boom: bad config"),
+        )
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(out_dir=out_dir)
+
+        assert excinfo.value.code != 0
+        captured = capsys.readouterr()
+        assert "render:" in captured.err
+        assert "boom: bad config" in captured.err
+        # No half-written tree: out_dir/etc/containers/systemd should be absent
+        # because we render-to-memory before any disk write.
+        assert not (out_dir / "etc" / "containers" / "systemd").exists()
+
+    def test_render_output_is_byte_stable_across_runs(self, mocker, tmp_path):
+        """Render output must be byte-identical across reruns with identical inputs.
+
+        lots' confext push uses rsync; any jitter (timestamps, dict-iteration
+        ordering, hostnames in output) causes spurious re-applies and wasted
+        systemd-confext refresh cycles. This test locks in the contract.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out1 = tmp_path / "out1"
+        out2 = tmp_path / "out2"
+        out1.mkdir()
+        out2.mkdir()
+        cfg_src = tmp_path / "cfgsrc"
+        cfg_src.mkdir()
+        (cfg_src / "config.yaml").write_text("a: 1\n")
+        (cfg_src / "auth.yaml").write_text("b: 2\n")
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out1, config_source=cfg_src, quiet=True)
+        render_cmd(out_dir=out2, config_source=cfg_src, quiet=True)
+
+        for name in (
+            "onetime-web@.container",
+            "onetime-worker@.container",
+            "onetime-scheduler@.container",
+        ):
+            a = (out1 / "etc" / "containers" / "systemd" / name).read_bytes()
+            b = (out2 / "etc" / "containers" / "systemd" / name).read_bytes()
+            assert a == b, f"{name} differs across runs"
