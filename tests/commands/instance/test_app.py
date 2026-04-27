@@ -3242,3 +3242,1365 @@ class TestStreamingCommands:
         call_kwargs = mock_ex.run_stream.call_args
         assert call_kwargs.kwargs.get("sudo") is True
         assert call_kwargs.kwargs.get("timeout") == 300
+
+
+# ---------------------------------------------------------------------------
+# Issue #67: deploy --render contract tests
+# ---------------------------------------------------------------------------
+#
+# The --render flag writes Quadlet files locally under <dir>/etc/containers/systemd/
+# and exits with no host I/O, no SSH, no systemd, no DB write, and no hooks.
+# These tests are the primary contract for that behaviour. They will fail with
+# TypeError until python-dev's parallel impl lands the new `render` and
+# `config_source` parameters on instance.deploy.
+
+
+class TestDeployRender:
+    """Tests for `deploy ... --render <dir>` (issue #67)."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch, tmp_path):
+        """Remove image env vars, pin tag, and stage the default config_source.
+
+        Render mode rejects alias tags (``@current``/``@rollback``) because
+        resolving them would touch the deployment DB. Pin to a concrete tag
+        so the render path doesn't trip the alias guard.
+
+        Render mode also validates ``--config-source`` exists. The default
+        is ``./confexts/web/etc/onetimesecret`` relative to cwd, so chdir
+        into a scratch dir and create the scaffold so tests that don't
+        supply ``config_source`` pass validation.
+        """
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        monkeypatch.setenv("TAG", "v0.24.0")
+        scratch = tmp_path / "_scratch"
+        scratch.mkdir()
+        (scratch / "confexts" / "web" / "etc" / "onetimesecret").mkdir(parents=True)
+        monkeypatch.chdir(scratch)
+
+    def _patch_render_safety_nets(self, mocker):
+        """Patch every host-touching dependency that --render must NOT call.
+
+        Returns a dict of name -> mock so individual tests can assert_not_called.
+        """
+        return {
+            "get_executor": mocker.patch.object(Config, "get_executor"),
+            "deploy_lock": mocker.patch("rots.commands.instance.app.deploy_lock"),
+            "systemd_start": mocker.patch("rots.commands.instance.app.systemd.start"),
+            "systemd_daemon_reload": mocker.patch(
+                "rots.commands.instance.app.systemd.daemon_reload",
+                create=True,
+            ),
+            "systemd_wait_for_healthy": mocker.patch(
+                "rots.commands.instance.app.systemd.wait_for_healthy"
+            ),
+            "systemd_wait_for_http_healthy": mocker.patch(
+                "rots.commands.instance.app.systemd.wait_for_http_healthy"
+            ),
+            "record_deployment": mocker.patch("rots.commands.instance.app.db.record_deployment"),
+            "run_hook": mocker.patch("rots.commands.instance.app.run_hook"),
+            "assets_update": mocker.patch("rots.commands.instance.app.assets.update"),
+            "write_web_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_web_template"
+            ),
+            "write_worker_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_worker_template"
+            ),
+            "write_scheduler_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_scheduler_template"
+            ),
+        }
+
+    def test_render_writes_three_container_files_for_web(self, mocker, tmp_path):
+        """deploy --web 7043 --render <dir> writes the three .container template files."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert (target_dir / "onetime-web@.container").exists()
+        assert (target_dir / "onetime-worker@.container").exists()
+        assert (target_dir / "onetime-scheduler@.container").exists()
+
+    def test_render_writes_image_unit_when_registry_set(self, mocker, monkeypatch, tmp_path):
+        """`onetime.image` is emitted only when cfg.registry is set."""
+        self._patch_render_safety_nets(mocker)
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert (target_dir / "onetime.image").exists()
+
+    def test_render_omits_image_unit_when_registry_unset(self, mocker, tmp_path):
+        """`onetime.image` is NOT emitted when cfg.registry is unset."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert not (target_dir / "onetime.image").exists()
+
+    def test_render_does_not_call_get_executor(self, mocker, tmp_path):
+        """Under --render, Config.get_executor must not be called."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        nets["get_executor"].assert_not_called()
+
+    def test_render_does_not_acquire_deploy_lock(self, mocker, tmp_path):
+        """Under --render, the deploy_lock context manager must not be entered."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        nets["deploy_lock"].assert_not_called()
+
+    def test_render_does_not_call_systemd(self, mocker, tmp_path):
+        """Under --render, systemd start / daemon_reload / health waits are skipped."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        nets["systemd_start"].assert_not_called()
+        nets["systemd_daemon_reload"].assert_not_called()
+        nets["systemd_wait_for_healthy"].assert_not_called()
+        nets["systemd_wait_for_http_healthy"].assert_not_called()
+
+    def test_render_does_not_record_deployment(self, mocker, tmp_path):
+        """Under --render, deployment history must not be touched."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        nets["record_deployment"].assert_not_called()
+
+    def test_render_does_not_run_hooks(self, mocker, tmp_path):
+        """Under --render, pre/post hooks must not run even if specified."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(
+            web="7043",
+            render=out_dir,
+            pre_hook="./scan.sh",
+            post_hook="./notify.sh",
+        )
+
+        nets["run_hook"].assert_not_called()
+
+    def test_render_does_not_call_write_template_helpers(self, mocker, tmp_path):
+        """Under --render, the host-targeted write_*_template helpers are bypassed.
+
+        Render mode writes to <dir>/etc/containers/systemd/ directly; it must not
+        call quadlet.write_web_template (which writes to /etc/containers/systemd/).
+        """
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        nets["write_web_template"].assert_not_called()
+        nets["write_worker_template"].assert_not_called()
+        nets["write_scheduler_template"].assert_not_called()
+
+    def test_render_with_host_raises(self, mocker, tmp_path):
+        """`--render --host some-host` must raise rather than silently ignore --host.
+
+        Mixing a remote target with local-only render is a user mistake; the
+        command must surface that conflict rather than render and exit cleanly.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        # context.host_var is the canonical channel for --host on the global app.
+        from rots import context
+
+        token = context.host_var.set("some-host.example.com")
+        try:
+            with pytest.raises(SystemExit):
+                instance.deploy(web="7043", render=out_dir)
+        finally:
+            context.host_var.reset(token)
+
+    def test_render_defaults_config_source_to_confexts_web(self, mocker, monkeypatch, tmp_path):
+        """When config_source=None, deploy --render defaults to ./confexts/web/etc/onetimesecret.
+
+        Resolving the default against cwd (rather than an absolute hard-coded
+        path) lets operators run `rots instance deploy --render ./out` from
+        their checkout without flag soup.
+        """
+        self._patch_render_safety_nets(mocker)
+        monkeypatch.chdir(tmp_path)
+
+        default_src = tmp_path / "confexts" / "web" / "etc" / "onetimesecret"
+        default_src.mkdir(parents=True)
+        (default_src / "config.yaml").write_text("# placeholder\n")
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir, config_source=None)
+
+        web_unit = (
+            out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
+        ).read_text()
+
+        # The default config_source resolved to <cwd>/confexts/web/etc/onetimesecret,
+        # where config.yaml exists, so a Volume= line for it must be rendered.
+        assert ":/app/etc/config.yaml:ro" in web_unit
+
+    def test_render_propagates_config_source_into_rendered_files(self, mocker, tmp_path):
+        """`--config-source <dir>` causes Volume= lines for matching files to appear."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        cfg_src = tmp_path / "cfgsrc"
+        cfg_src.mkdir()
+        (cfg_src / "config.yaml").write_text("# placeholder\n")
+
+        instance.deploy(web="7043", render=out_dir, config_source=cfg_src)
+
+        web_unit = (
+            out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
+        ).read_text()
+
+        # The Volume= line must reference config.yaml mounted at the
+        # container's /app/etc/config.yaml:ro path.
+        assert ":/app/etc/config.yaml:ro" in web_unit
+
+    def test_render_emits_no_secret_lines(self, mocker, tmp_path):
+        """No `Secret=` lines must appear in any rendered file under --render."""
+        self._patch_render_safety_nets(mocker)
+        # Make secrets visible at the env-file level so a regression that
+        # re-enables Secret= emission would surface.
+        from rots.environment_file import SecretSpec
+
+        env_file = tmp_path / "envfile"
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")
+        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.quadlet.secret_exists", return_value=True)
+        mocker.patch(
+            "rots.quadlet.get_secrets_from_env_file",
+            return_value=[
+                SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_auth_secret"),
+            ],
+        )
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        for unit_name in (
+            "onetime-web@.container",
+            "onetime-worker@.container",
+            "onetime-scheduler@.container",
+        ):
+            content = (target_dir / unit_name).read_text()
+            assert "Secret=" not in content, (
+                f"{unit_name} unexpectedly contains a Secret= directive: {content!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Issue #67: dedicated `instance render` subcommand contract tests
+# ---------------------------------------------------------------------------
+#
+# The `render` command on instance.app is a separate subcommand (not a flag
+# on deploy). It writes Quadlet files locally and never performs host I/O.
+# It accepts only a small set of parameters and explicitly excludes deploy-only
+# flags. Tests import the function directly from `rots.commands.instance.app`
+# rather than the package namespace, since the package `__init__.py` does not
+# re-export it (and we are forbidden from modifying production code in this
+# round).
+
+
+class TestInstanceRenderCommand:
+    """Tests for the dedicated `rots instance render` subcommand (issue #67)."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch, tmp_path):
+        """Remove image env vars, pin tag, and stage the default config_source.
+
+        Render mode rejects alias tags (``@current``/``@rollback``) because
+        resolving them would touch the deployment DB. Pin to a concrete tag
+        so the render path doesn't trip the alias guard.
+
+        Render mode also validates ``--config-source`` exists. The default
+        is ``./confexts/web/etc/onetimesecret`` relative to cwd, so chdir
+        into a scratch dir and create the scaffold so tests that don't
+        supply ``config_source`` pass validation.
+        """
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        monkeypatch.setenv("TAG", "v0.24.0")
+        scratch = tmp_path / "_scratch"
+        scratch.mkdir()
+        (scratch / "confexts" / "web" / "etc" / "onetimesecret").mkdir(parents=True)
+        monkeypatch.chdir(scratch)
+
+    def _patch_render_safety_nets(self, mocker):
+        """Patch every host-touching dependency that `render` must NOT call.
+
+        Returns a dict of name -> mock so individual tests can assert_not_called.
+        """
+        return {
+            "get_executor": mocker.patch.object(Config, "get_executor"),
+            "deploy_lock": mocker.patch("rots.commands.instance.app.deploy_lock"),
+            "systemd_start": mocker.patch("rots.commands.instance.app.systemd.start"),
+            "systemd_daemon_reload": mocker.patch(
+                "rots.commands.instance.app.systemd.daemon_reload",
+                create=True,
+            ),
+            "systemd_wait_for_healthy": mocker.patch(
+                "rots.commands.instance.app.systemd.wait_for_healthy"
+            ),
+            "systemd_wait_for_http_healthy": mocker.patch(
+                "rots.commands.instance.app.systemd.wait_for_http_healthy"
+            ),
+            "record_deployment": mocker.patch("rots.commands.instance.app.db.record_deployment"),
+            "run_hook": mocker.patch("rots.commands.instance.app.run_hook"),
+            "assets_update": mocker.patch("rots.commands.instance.app.assets.update"),
+            "write_web_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_web_template"
+            ),
+            "write_worker_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_worker_template"
+            ),
+            "write_scheduler_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_scheduler_template"
+            ),
+        }
+
+    def test_render_writes_three_container_files(self, mocker, tmp_path):
+        """`instance render <out>` writes the three .container template files."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert (target_dir / "onetime-web@.container").exists()
+        assert (target_dir / "onetime-worker@.container").exists()
+        assert (target_dir / "onetime-scheduler@.container").exists()
+
+    def test_render_writes_image_unit_when_registry_set(self, mocker, monkeypatch, tmp_path):
+        """`onetime.image` is emitted only when cfg.registry is set."""
+        self._patch_render_safety_nets(mocker)
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert (target_dir / "onetime.image").exists()
+
+    def test_render_omits_image_unit_when_registry_unset(self, mocker, tmp_path):
+        """`onetime.image` is NOT emitted when cfg.registry is unset."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert not (target_dir / "onetime.image").exists()
+
+    def test_render_removes_stale_image_unit_when_registry_unset(
+        self, mocker, monkeypatch, tmp_path
+    ):
+        """A re-render without a registry must delete `onetime.image` from a prior render.
+
+        lots' rsync ships the rendered tree without --delete, so a stale
+        `onetime.image` left behind from a previous run would propagate to
+        the host. The render must clean managed Quadlet artifacts that are
+        no longer in the current payload set.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        # First render: registry set, `onetime.image` is emitted.
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+        render_cmd(out_dir=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert (target_dir / "onetime.image").exists()
+
+        # Second render: registry unset, the stale image unit must be gone.
+        monkeypatch.delenv("OTS_REGISTRY")
+        render_cmd(out_dir=out_dir)
+
+        assert not (target_dir / "onetime.image").exists()
+
+    def test_render_preserves_unrelated_files_in_out_dir(self, mocker, tmp_path):
+        """Files outside the managed Quadlet set must not be touched by render.
+
+        Operators may colocate other artifacts under
+        `<out_dir>/etc/containers/systemd/`. Cleanup is scoped to the four
+        Quadlet artifacts this command owns.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        target_dir.mkdir(parents=True)
+        sentinel = target_dir / "operator-owned.conf"
+        sentinel.write_text("# operator file\n")
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        assert sentinel.exists(), "render must not delete unrelated files"
+        assert sentinel.read_text() == "# operator file\n"
+
+    def test_render_defaults_config_source_to_confexts_web(self, mocker, monkeypatch, tmp_path):
+        """When --config-source omitted, defaults to ./confexts/web/etc/onetimesecret."""
+        self._patch_render_safety_nets(mocker)
+        monkeypatch.chdir(tmp_path)
+
+        default_src = tmp_path / "confexts" / "web" / "etc" / "onetimesecret"
+        default_src.mkdir(parents=True)
+        (default_src / "config.yaml").write_text("# placeholder\n")
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        web_unit = (
+            out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
+        ).read_text()
+
+        # The default config_source resolved to <cwd>/confexts/web/etc/onetimesecret,
+        # where config.yaml exists, so a Volume= line for it must be rendered.
+        assert ":/app/etc/config.yaml:ro" in web_unit
+
+    def test_render_explicit_config_source_takes_precedence(self, mocker, tmp_path):
+        """`--config-source <dir>` overrides the default ./confexts/web/etc/onetimesecret."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        cfg_src = tmp_path / "explicit"
+        cfg_src.mkdir()
+        # Use a non-default file (auth.yaml) so we can prove the explicit path
+        # was probed instead of the default location (which has no files here).
+        (cfg_src / "auth.yaml").write_text("# placeholder\n")
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir, config_source=cfg_src)
+
+        web_unit = (
+            out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
+        ).read_text()
+
+        assert ":/app/etc/auth.yaml:ro" in web_unit
+
+    def test_render_signature_excludes_deploy_only_flags(self):
+        """`render` must NOT accept deploy-only flags as parameters.
+
+        These flags are meaningful only to the host-touching deploy path.
+        Exposing them on `render` would invite confusion.
+        """
+        import inspect
+
+        from rots.commands.instance.app import render as render_cmd
+
+        sig = inspect.signature(render_cmd)
+        params = sig.parameters
+
+        for forbidden in (
+            "host",
+            "pre_hook",
+            "post_hook",
+            "wait",
+            "wait_timeout",
+            "force",
+            "delay",
+            "dry_run",
+        ):
+            assert forbidden not in params, (
+                f"`render` must not accept `{forbidden}`; got signature: {sig}"
+            )
+
+    def test_render_does_not_call_get_executor(self, mocker, tmp_path):
+        """Under `render`, Config.get_executor must not be called."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        nets["get_executor"].assert_not_called()
+
+    def test_render_does_not_acquire_deploy_lock(self, mocker, tmp_path):
+        """Under `render`, the deploy_lock context manager must not be entered."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        nets["deploy_lock"].assert_not_called()
+
+    def test_render_does_not_call_systemd(self, mocker, tmp_path):
+        """Under `render`, systemd start / daemon_reload must not be called."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        nets["systemd_start"].assert_not_called()
+        nets["systemd_daemon_reload"].assert_not_called()
+
+    def test_render_does_not_record_deployment(self, mocker, tmp_path):
+        """Under `render`, deployment history must not be touched."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        nets["record_deployment"].assert_not_called()
+
+    def test_render_with_host_raises(self, mocker, tmp_path):
+        """`--host some-host` while invoking `render` must raise.
+
+        `render` is local-only by design; mixing it with --host is a user
+        mistake that must be surfaced rather than silently ignored.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots import context
+        from rots.commands.instance.app import render as render_cmd
+
+        token = context.host_var.set("some-host.example.com")
+        try:
+            with pytest.raises(SystemExit):
+                render_cmd(out_dir=out_dir)
+        finally:
+            context.host_var.reset(token)
+
+    def test_render_failure_exits_nonzero_with_stderr(self, mocker, capsys, tmp_path):
+        """When a template renderer raises, render exits nonzero and writes a clear stderr message.
+
+        `rots instance apply` will subprocess --render programmatically; a
+        silent failure would let lots ship an incomplete tree.
+        """
+        self._patch_render_safety_nets(mocker)
+        mocker.patch(
+            "rots.commands.instance.app.quadlet.render_worker_template",
+            side_effect=RuntimeError("boom: bad config"),
+        )
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(out_dir=out_dir)
+
+        assert excinfo.value.code != 0
+        captured = capsys.readouterr()
+        assert "render:" in captured.err
+        assert "boom: bad config" in captured.err
+        # No half-written tree: out_dir/etc/containers/systemd should be absent
+        # because we render-to-memory before any disk write.
+        assert not (out_dir / "etc" / "containers" / "systemd").exists()
+
+    def test_render_explicit_config_source_missing_exits(self, mocker, capsys, tmp_path):
+        """Explicit --config-source pointing at a non-existent path must error loudly.
+
+        Silent fall-through to "no Volume= overrides" hides typos; render mode
+        is meant to be explicit about its inputs.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        bogus = tmp_path / "does-not-exist"
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(out_dir=out_dir, config_source=bogus)
+
+        assert excinfo.value.code != 0
+        captured = capsys.readouterr()
+        assert "config source does not exist" in captured.err
+
+    def test_render_explicit_config_source_is_file_exits(self, mocker, capsys, tmp_path):
+        """--config-source pointing at a regular file (not a dir) must error loudly."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        a_file = tmp_path / "regular_file"
+        a_file.write_text("not a directory\n")
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(out_dir=out_dir, config_source=a_file)
+
+        assert excinfo.value.code != 0
+        captured = capsys.readouterr()
+        assert "not a directory" in captured.err
+
+    def test_render_default_config_source_missing_exits(
+        self, mocker, monkeypatch, capsys, tmp_path
+    ):
+        """The default ./confexts/web/etc/onetimesecret must exist when not overridden.
+
+        Render mode is explicit about its inputs; if the operator runs it from
+        a directory without the scaffold, fail loud rather than silently emit
+        zero Volume= overrides.
+        """
+        self._patch_render_safety_nets(mocker)
+        # chdir somewhere that does NOT have the default scaffold (the autouse
+        # _clear_env fixture chdir'd to a scratch dir that does have it).
+        bare = tmp_path / "bare"
+        bare.mkdir()
+        monkeypatch.chdir(bare)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(out_dir=out_dir)
+
+        assert excinfo.value.code != 0
+        captured = capsys.readouterr()
+        assert "config source does not exist" in captured.err
+
+    def test_render_single_positional_path_promotes_to_out_dir(self, mocker, tmp_path):
+        """A single path-shaped positional ('./out', '/tmp/x', '~/x') becomes out_dir."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir_path = tmp_path / "out"
+        out_dir_path.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        # Use an absolute path so the leading "/" triggers path detection.
+        render_cmd(reference=str(out_dir_path))
+
+        target = out_dir_path / "etc" / "containers" / "systemd"
+        assert (target / "onetime-web@.container").exists()
+
+    def test_render_single_positional_relative_path_promotes_to_out_dir(
+        self, mocker, monkeypatch, tmp_path
+    ):
+        """A relative './out' positional is also recognised as a path."""
+        self._patch_render_safety_nets(mocker)
+
+        # The autouse fixture chdir'd into a scratch dir; switch into one we
+        # control so we can pass a relative path.
+        work = tmp_path / "work"
+        (work / "confexts" / "web" / "etc" / "onetimesecret").mkdir(parents=True)
+        monkeypatch.chdir(work)
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(reference="./out")
+
+        target = work / "out" / "etc" / "containers" / "systemd"
+        assert (target / "onetime-web@.container").exists()
+
+    def test_render_single_positional_bare_image_ref_errors(self, mocker, tmp_path):
+        """A bare image ref like 'ghcr.io/org/image' (no tag) refuses to auto-promote.
+
+        The prior heuristic ("treat as out_dir if no ':' or '@'") would
+        misclassify this as a directory. The fix is to refuse to guess when
+        the input is genuinely ambiguous.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(reference="ghcr.io/org/image")
+
+        assert "cannot tell" in str(excinfo.value)
+
+    def test_render_single_positional_image_ref_with_tag_does_not_promote(self, mocker, tmp_path):
+        """An image ref with a tag is bound to reference; out_dir is then required."""
+        self._patch_render_safety_nets(mocker)
+
+        from rots.commands.instance.app import render as render_cmd
+
+        # Has a ':' -> definitely an image ref. With no out_dir, fall through
+        # to the missing-out_dir error.
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(reference="ghcr.io/org/image:v1")
+
+        assert "out_dir is required" in str(excinfo.value)
+
+    def test_render_two_positionals_image_ref_and_out_dir(self, mocker, tmp_path):
+        """Both positionals supplied: reference is the image ref, out_dir is the path."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir_path = tmp_path / "out"
+        out_dir_path.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(reference="ghcr.io/org/image:v1.2.3", out_dir=out_dir_path)
+
+        web_unit = (
+            out_dir_path / "etc" / "containers" / "systemd" / "onetime-web@.container"
+        ).read_text()
+        assert "Image=ghcr.io/org/image:v1.2.3" in web_unit
+
+    def test_render_failure_mid_write_leaves_old_tree_intact(self, mocker, tmp_path):
+        """A failure during the staging-dir write must NOT mutate the live tree.
+
+        Tree-level atomicity: render builds the new set in a sibling staging
+        dir and renames it into place once. Any error before the rename
+        leaves the live `etc/containers/systemd/` directory untouched.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        target_dir.mkdir(parents=True)
+
+        # Seed the live tree with a previous render and a sentinel operator file.
+        (target_dir / "onetime-web@.container").write_text("# OLD WEB\n")
+        (target_dir / "onetime-worker@.container").write_text("# OLD WORKER\n")
+        (target_dir / "onetime-scheduler@.container").write_text("# OLD SCHED\n")
+        sentinel = target_dir / "operator-owned.conf"
+        sentinel.write_text("# operator file\n")
+
+        # Force a failure during template generation (before any disk write).
+        mocker.patch(
+            "rots.commands.instance.app.quadlet.render_scheduler_template",
+            side_effect=RuntimeError("boom"),
+        )
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit):
+            render_cmd(out_dir=out_dir)
+
+        # Live tree is exactly as before.
+        assert (target_dir / "onetime-web@.container").read_text() == "# OLD WEB\n"
+        assert (target_dir / "onetime-worker@.container").read_text() == "# OLD WORKER\n"
+        assert (target_dir / "onetime-scheduler@.container").read_text() == "# OLD SCHED\n"
+        assert sentinel.read_text() == "# operator file\n"
+
+    def test_render_swap_leaves_no_staging_dir_on_success(self, mocker, tmp_path):
+        """Successful render leaves no `.render-*` staging dirs behind."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        # No leftover staging dirs as siblings of the systemd dir.
+        siblings = list((out_dir / "etc" / "containers").iterdir())
+        assert {p.name for p in siblings} == {"systemd"}
+
+    def test_render_swap_cleans_staging_dir_on_failure(self, mocker, tmp_path):
+        """A failed render leaves no `.render-*` staging dirs behind either.
+
+        The staging dir is best-effort cleaned up on the error path so
+        repeated failed renders don't accumulate cruft on disk.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        target_dir.mkdir(parents=True)
+
+        mocker.patch(
+            "rots.commands.instance.app.quadlet.render_web_template",
+            side_effect=RuntimeError("boom"),
+        )
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit):
+            render_cmd(out_dir=out_dir)
+
+        # No leftover staging dirs as siblings.
+        siblings = [p.name for p in (out_dir / "etc" / "containers").iterdir()]
+        # `systemd` survives (untouched); nothing else should be there.
+        assert siblings == ["systemd"]
+
+    def test_render_output_is_byte_stable_across_runs(self, mocker, tmp_path):
+        """Render output must be byte-identical across reruns with identical inputs.
+
+        lots' confext push uses rsync; any jitter (timestamps, dict-iteration
+        ordering, hostnames in output) causes spurious re-applies and wasted
+        systemd-confext refresh cycles. This test locks in the contract.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out1 = tmp_path / "out1"
+        out2 = tmp_path / "out2"
+        out1.mkdir()
+        out2.mkdir()
+        cfg_src = tmp_path / "cfgsrc"
+        cfg_src.mkdir()
+        (cfg_src / "config.yaml").write_text("a: 1\n")
+        (cfg_src / "auth.yaml").write_text("b: 2\n")
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out1, config_source=cfg_src, quiet=True)
+        render_cmd(out_dir=out2, config_source=cfg_src, quiet=True)
+
+        for name in (
+            "onetime-web@.container",
+            "onetime-worker@.container",
+            "onetime-scheduler@.container",
+        ):
+            a = (out1 / "etc" / "containers" / "systemd" / name).read_bytes()
+            b = (out2 / "etc" / "containers" / "systemd" / name).read_bytes()
+            assert a == b, f"{name} differs across runs"
+
+
+# ---------------------------------------------------------------------------
+# Issue #67 / PR #68 — Copilot review supplemental coverage
+# ---------------------------------------------------------------------------
+#
+# Backend-dev's per-item commits added direct coverage for each of the four
+# review fixes. The classes below add defence-in-depth and regression-guard
+# coverage that is complementary, not duplicative:
+#
+#   Item 1  TestRenderItem1NoDBSafetyNet     — DB-module tripwires + filesystem
+#                                              survey for deployments.db
+#   Item 2  TestRenderItem2NoPartialOutput   — config-source validation runs
+#                                              before any output tree creation
+#   Item 3  TestRenderItem3HostStillRejected — --host + valid out_dir still
+#                                              rejected after positional cleanup
+#   Item 4  TestRenderItem4AtomicityExtras   — in-place rerun byte-stability +
+#                                              no stray .tmp files
+
+
+def _stage_default_confexts(monkeypatch, tmp_path):
+    """Helper: chdir into a scratch dir staged with the default config_source.
+
+    Render mode validates ``./confexts/web/etc/onetimesecret`` exists when
+    no ``--config-source`` is supplied. Tests that don't pass an explicit
+    config_source need the scaffold staged.
+    """
+    scratch = tmp_path / "_scratch_confexts_supp"
+    scratch.mkdir(exist_ok=True)
+    (scratch / "confexts" / "web" / "etc" / "onetimesecret").mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(scratch)
+    return scratch
+
+
+class TestRenderItem1NoDBSafetyNet:
+    """Item 1, defence-in-depth — DB module entry points must not be reached.
+
+    Backend-dev's existing coverage in ``tests/test_quadlet_render.py``
+    asserts the alias rejection inside ``_build_fmt_vars`` and that
+    ``cfg.resolved_image_with_tag`` is not called. The complementary tests
+    below patch the ``rots.db`` module's entry points themselves with
+    side-effecting tripwires, so any future refactor that bypasses
+    ``_build_fmt_vars`` (e.g. a new code path that logs the resolved tag,
+    or a command-level pre-check) still surfaces a contract violation.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch, tmp_path):
+        """Strip image/tag env vars and stage the default confexts scaffold.
+
+        We deliberately do NOT pin TAG — exercising the default ``@current``
+        is the whole point of this class.
+        """
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        _stage_default_confexts(monkeypatch, tmp_path)
+
+    @pytest.fixture(autouse=True)
+    def _db_tripwires(self, mocker):
+        """Trip-wires: any call into the DB module is a contract violation.
+
+        ``db.get_alias`` / ``db.init_db`` / ``db.get_connection`` should
+        never run during ``instance render``. Patch them with side-effecting
+        AssertionErrors so a regression produces a loud, identifiable
+        failure rather than a quiet ``deployments.db`` somewhere on disk.
+        """
+        mocker.patch(
+            "rots.db.get_alias",
+            side_effect=AssertionError("render must not call db.get_alias"),
+        )
+        mocker.patch(
+            "rots.db.init_db",
+            side_effect=AssertionError("render must not call db.init_db"),
+        )
+        mocker.patch(
+            "rots.db.get_connection",
+            side_effect=AssertionError("render must not open db.get_connection"),
+        )
+
+    def _patch_safety_nets(self, mocker):
+        mocker.patch.object(Config, "get_executor")
+        mocker.patch("rots.commands.instance.app.deploy_lock")
+        mocker.patch(
+            "rots.commands.instance.app.systemd.daemon_reload",
+            create=True,
+        )
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
+
+    def test_default_at_current_tag_does_not_reach_db_module(self, mocker, tmp_path):
+        """Default ``@current`` exits cleanly; if a regression slips past
+        ``_build_fmt_vars``, the DB-module tripwires would catch it.
+        """
+        self._patch_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(out_dir=out_dir)
+
+        assert "alias" in str(excinfo.value).lower()
+
+    def test_default_tag_creates_no_deployments_db_anywhere(self, mocker, monkeypatch, tmp_path):
+        """No ``deployments.db`` may be created — anywhere under tmp_path.
+
+        ``Config.db_path`` falls through to ``$XDG_DATA_HOME/rots/`` or
+        ``~/.local/share/rots/`` on macOS / non-root. Redirect both env
+        vars at tmp_path so any accidental DB creation is observable here.
+        """
+        self._patch_safety_nets(mocker)
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit):
+            render_cmd(out_dir=out_dir)
+
+        found = list(tmp_path.rglob("deployments.db"))
+        assert found == [], f"render created deployments.db: {found}"
+
+    def test_concrete_tag_reaches_no_db_entry_points(self, mocker, tmp_path):
+        """`--tag v1.2.3` (concrete) renders successfully without any DB call.
+
+        The autouse ``_db_tripwires`` would raise AssertionError if any
+        ``db.*`` entry point ran. Reaching the assertion below proves the
+        concrete-tag path is DB-free end-to-end.
+        """
+        self._patch_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir, tag="v1.2.3")
+
+        web = (out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container").read_text()
+        assert ":v1.2.3" in web
+
+    def test_registry_set_with_concrete_tag_reaches_no_db(self, mocker, monkeypatch, tmp_path):
+        """With a registry, the .container Image= is ``onetime.image`` and DB stays untouched."""
+        self._patch_safety_nets(mocker)
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir, tag="v0.24.0")
+
+        target = out_dir / "etc" / "containers" / "systemd"
+        assert (target / "onetime.image").exists()
+        web = (target / "onetime-web@.container").read_text()
+        assert "Image=onetime.image" in web
+
+
+class TestRenderItem2NoPartialOutput:
+    """Item 2, supplemental — ``--config-source`` validation must precede output writes.
+
+    Backend-dev's coverage asserts the error messages and exit code. This
+    class adds the regression-guard that a bad ``--config-source`` does not
+    leave a partial output tree on disk (validation runs before staging).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        monkeypatch.setenv("TAG", "v0.24.0")
+        _stage_default_confexts(monkeypatch, tmp_path)
+
+    def _patch_safety_nets(self, mocker):
+        mocker.patch.object(Config, "get_executor")
+        mocker.patch("rots.commands.instance.app.deploy_lock")
+        mocker.patch(
+            "rots.commands.instance.app.systemd.daemon_reload",
+            create=True,
+        )
+
+    def test_missing_config_source_does_not_create_output_tree(self, mocker, tmp_path):
+        """A bogus ``--config-source`` must not leave behind a partial output tree."""
+        self._patch_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        bogus = tmp_path / "missing"
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit):
+            render_cmd(out_dir=out_dir, config_source=bogus)
+
+        assert not (out_dir / "etc" / "containers" / "systemd").exists()
+
+    def test_file_config_source_does_not_create_output_tree(self, mocker, tmp_path):
+        """A regular-file ``--config-source`` must not leave behind a partial tree."""
+        self._patch_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        a_file = tmp_path / "regular.txt"
+        a_file.write_text("not a directory\n")
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit):
+            render_cmd(out_dir=out_dir, config_source=a_file)
+
+        assert not (out_dir / "etc" / "containers" / "systemd").exists()
+
+    def test_valid_empty_config_source_dir_renders_with_no_volume_lines(self, mocker, tmp_path):
+        """An existing-but-empty config_source dir is valid — emits no Volume= lines."""
+        self._patch_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        empty_src = tmp_path / "empty"
+        empty_src.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir, config_source=empty_src)
+
+        web = (out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container").read_text()
+        assert "/app/etc/" not in web
+
+
+class TestRenderItem3HostStillRejected:
+    """Item 3, regression guard — ``--host`` rejection must survive the positional cleanup.
+
+    The positional-disambiguation rewrite runs before the host check is
+    re-validated. Lock in that ``--host`` combined with a perfectly valid
+    ``out_dir`` still raises, even though the disambiguation logic doesn't
+    need to fall back.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        monkeypatch.setenv("TAG", "v0.24.0")
+        _stage_default_confexts(monkeypatch, tmp_path)
+
+    def _patch_safety_nets(self, mocker):
+        mocker.patch.object(Config, "get_executor")
+        mocker.patch("rots.commands.instance.app.deploy_lock")
+        mocker.patch(
+            "rots.commands.instance.app.systemd.daemon_reload",
+            create=True,
+        )
+
+    def test_host_with_valid_out_dir_still_rejected(self, mocker, tmp_path):
+        """`--host` together with a valid ``out_dir`` is still a usage error."""
+        self._patch_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots import context
+        from rots.commands.instance.app import render as render_cmd
+
+        token = context.host_var.set("some-host.example.com")
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                render_cmd(out_dir=out_dir)
+            msg = str(excinfo.value).lower()
+            assert "host" in msg
+        finally:
+            context.host_var.reset(token)
+
+    def test_host_with_two_positionals_still_rejected(self, mocker, tmp_path):
+        """`--host` plus both positionals is also rejected — host check runs first."""
+        self._patch_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots import context
+        from rots.commands.instance.app import render as render_cmd
+
+        token = context.host_var.set("some-host.example.com")
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                render_cmd(reference="ghcr.io/org/img:v1", out_dir=out_dir)
+            msg = str(excinfo.value).lower()
+            assert "host" in msg
+        finally:
+            context.host_var.reset(token)
+
+
+class TestRenderItem4AtomicityExtras:
+    """Item 4, supplemental — additional invariants of the tree-level swap.
+
+    Backend-dev's coverage asserts:
+      * old tree intact on mid-write failure
+      * no staging dir leftover on success or failure
+
+    This class adds:
+      * In-place rerun is byte-stable (rules out swap-introduced jitter).
+      * No stray ``*.tmp`` files anywhere — guards against a partial revert
+        to the old per-file ``.tmp -> os.replace`` approach.
+      * Stale managed file (``onetime.image`` from a prior registry-set
+        render) is removed when re-rendered with registry unset, even when
+        operator-owned files coexist in the same directory.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        monkeypatch.setenv("TAG", "v0.24.0")
+        _stage_default_confexts(monkeypatch, tmp_path)
+
+    def _patch_safety_nets(self, mocker):
+        mocker.patch.object(Config, "get_executor")
+        mocker.patch("rots.commands.instance.app.deploy_lock")
+        mocker.patch(
+            "rots.commands.instance.app.systemd.daemon_reload",
+            create=True,
+        )
+
+    def test_byte_stable_rerun_in_same_out_dir(self, mocker, tmp_path):
+        """Re-rendering into the same ``out_dir`` produces byte-identical files.
+
+        Distinct from
+        ``TestInstanceRenderCommand.test_render_output_is_byte_stable_across_runs``
+        which uses two separate out_dirs. This one re-renders in place to
+        verify the atomic-swap path doesn't introduce jitter (e.g.
+        timestamps copied via ``shutil.copy2``).
+        """
+        self._patch_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        cfg_src = tmp_path / "cfg"
+        cfg_src.mkdir()
+        (cfg_src / "config.yaml").write_text("a: 1\n")
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir, config_source=cfg_src, quiet=True)
+        target = out_dir / "etc" / "containers" / "systemd"
+        first = {p.name: p.read_bytes() for p in target.iterdir()}
+
+        render_cmd(out_dir=out_dir, config_source=cfg_src, quiet=True)
+        second = {p.name: p.read_bytes() for p in target.iterdir()}
+
+        assert first == second, "rerun produced different bytes"
+
+    def test_no_stray_tmp_files_after_successful_render(self, mocker, tmp_path):
+        """A successful render leaves no ``*.tmp`` files anywhere under out_dir.
+
+        Regression guard against a partial revert to the old per-file
+        ``.tmp -> os.replace`` approach (which left stray ``.tmp`` files
+        on certain failure modes).
+        """
+        self._patch_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        leftover_tmps = list(out_dir.rglob("*.tmp"))
+        assert leftover_tmps == [], f"stray tmp files: {leftover_tmps}"
+
+    def test_rollback_when_staging_promote_fails_after_live_moved_aside(self, mocker, tmp_path):
+        """Failure of the second ``os.replace`` (staging->live) must restore the original.
+
+        The rollback path in ``_render_quadlets`` is::
+
+            os.replace(out_dir, old_dir)         # 1: rename live -> .old (succeeds)
+            try:
+                os.replace(staging_dir, out_dir) # 2: rename staging -> live (FAILS)
+            except OSError:
+                os.replace(old_dir, out_dir)     # 3: rollback to original
+                raise
+
+        Backend-dev's ``test_render_swap_cleans_staging_dir_on_failure``
+        forces failure inside ``render_web_template`` — that aborts BEFORE
+        any ``os.replace`` runs and the rollback branch is never exercised.
+        This test fails on the second ``os.replace`` specifically so the
+        rollback branch executes and is verified to leave the live tree
+        in its original state.
+        """
+        import os as _os
+
+        self._patch_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        target = out_dir / "etc" / "containers" / "systemd"
+        target.mkdir(parents=True)
+        # Seed the live tree with sentinel content + an operator file.
+        (target / "onetime-web@.container").write_text("# OLD WEB\n")
+        (target / "onetime-worker@.container").write_text("# OLD WORKER\n")
+        (target / "onetime-scheduler@.container").write_text("# OLD SCHED\n")
+        operator = target / "operator-owned.conf"
+        operator.write_text("# operator file\n")
+
+        real_replace = _os.replace
+        call_count = {"n": 0}
+
+        def flaky_replace(src, dst, *a, **kw):
+            call_count["n"] += 1
+            # The sequence is: (1) live -> .old, (2) staging -> live, (3) .old -> live (rollback).
+            # Fail call 2 to trigger the rollback at call 3.
+            if call_count["n"] == 2:
+                raise OSError("injected failure on staging promotion")
+            return real_replace(src, dst, *a, **kw)
+
+        mocker.patch("rots.commands.instance.app.os.replace", side_effect=flaky_replace)
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(out_dir=out_dir)
+        assert excinfo.value.code != 0
+
+        # Rollback ran: live tree is exactly as before.
+        assert (target / "onetime-web@.container").read_text() == "# OLD WEB\n"
+        assert (target / "onetime-worker@.container").read_text() == "# OLD WORKER\n"
+        assert (target / "onetime-scheduler@.container").read_text() == "# OLD SCHED\n"
+        assert operator.read_text() == "# operator file\n"
+
+        # No leftover .old directory at the rename target.
+        siblings = {p.name for p in (out_dir / "etc" / "containers").iterdir()}
+        assert siblings == {"systemd"}, f"unexpected sibling dirs after rollback: {siblings}"
+
+    def test_stale_image_unit_removed_alongside_operator_files(self, mocker, monkeypatch, tmp_path):
+        """Re-render without registry: stale ``onetime.image`` removed, operator files survive.
+
+        Combined invariant: the tree-level swap correctly classifies
+        managed vs operator-owned files when both are present.
+        """
+        self._patch_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        target = out_dir / "etc" / "containers" / "systemd"
+        target.mkdir(parents=True)
+        # Stale managed file from a prior registry-set render.
+        stale = target / "onetime.image"
+        stale.write_text("[Image]\nImage=stale.example.com/old:v0\n")
+        # Operator-owned files — must survive.
+        operator_a = target / "operator-a.conf"
+        operator_a.write_text("# A\n")
+        operator_b = target / "third-party@.container"
+        operator_b.write_text("# B\n")
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        assert not stale.exists(), "stale onetime.image must be removed"
+        assert operator_a.read_text() == "# A\n", "operator-a.conf must survive"
+        assert operator_b.read_text() == "# B\n", "third-party@.container must survive"
+        # The three rendered .container files must be present.
+        for name in (
+            "onetime-web@.container",
+            "onetime-worker@.container",
+            "onetime-scheduler@.container",
+        ):
+            assert (target / name).exists(), f"{name} missing after render"

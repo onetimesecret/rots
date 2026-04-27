@@ -5,7 +5,9 @@
 import dataclasses
 import difflib
 import logging
+import os
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import cyclopts
@@ -38,8 +40,10 @@ from ._helpers import (
     run_hook,
 )
 from .annotations import (
+    ConfigSource,
     Delay,
     InstanceType,
+    RenderDir,
     SchedulerFlag,
     TypeSelector,
     WebFlag,
@@ -404,6 +408,246 @@ def run(
         logger.info("Stopped")
 
 
+def _looks_like_path(value: str) -> bool:
+    """Return True when *value* has a clear filesystem-path shape.
+
+    Used to disambiguate a single positional argument on ``instance render``
+    between an image reference and an output directory. We only call a value
+    a path when its shape is unambiguous; truly ambiguous strings (e.g.
+    ``ghcr.io/org/image``, bare ``out``) get an explicit error from the
+    caller rather than a silent miscategorization.
+    """
+    if not value:
+        return False
+    # Bare "." and ".." are paths.
+    if value in (".", ".."):
+        return True
+    # Leading characters that mark filesystem paths in shells.
+    if value.startswith(("./", "../", "/", "~/", "~")):
+        return True
+    # Trailing slash is a directory hint.
+    if value.endswith("/"):
+        return True
+    return False
+
+
+def _build_render_cfg(*, reference: str | None, tag: str | None) -> Config:
+    """Construct a ``Config`` for render mode, applying image/tag overrides.
+
+    Render mode performs no host I/O: no executor is created, no remote SSH
+    is opened, and no deployment database is consulted. The downstream
+    template renderers (called with ``render_mode=True``) substitute ``Image=``
+    using ``cfg.effective_image`` joined with ``cfg.tag`` directly — they do
+    not call ``cfg.resolved_image_with_tag``, which would touch the alias DB.
+
+    Because alias tags (``@current``, ``@rollback``) require a DB lookup to
+    resolve, render mode rejects them at template-build time with a clear
+    error. Callers must supply a concrete tag or digest via ``--tag`` or in
+    the image reference itself.
+    """
+    cfg = Config()
+    ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
+    override_tag = ref_tag or tag
+    if ref_image or override_tag:
+        cfg = dataclasses.replace(
+            cfg,
+            image=ref_image or cfg.image,
+            tag=override_tag or cfg.tag,
+            _image_explicit=bool(ref_image) or cfg._image_explicit,
+        )
+    return cfg
+
+
+def _render_quadlets(
+    cfg: Config,
+    render_dir: Path,
+    *,
+    config_source: Path | None,
+    quiet: bool,
+    json_output: bool,
+) -> None:
+    """Emit Quadlet template files to ``render_dir`` with no host I/O.
+
+    Writes ``onetime-web@.container``, ``onetime-worker@.container``, and
+    ``onetime-scheduler@.container`` under ``<render_dir>/etc/containers/systemd/``.
+    Also emits ``onetime.image`` when ``cfg.registry`` is set.
+
+    ``config_source`` defaults to ``./confexts/web/etc/onetimesecret`` resolved
+    against the current working directory when not supplied. Both supplied and
+    default paths are resolved to absolute paths before being passed to the
+    quadlet renderers.
+    """
+    import json as json_mod
+
+    if config_source is None:
+        config_source = Path("confexts/web/etc/onetimesecret")
+    # Resolve early and fail loud on any path issue. A typo in --config-source
+    # would otherwise silently produce zero Volume= overrides — the rendered
+    # tree looks fine but is missing the operator's config files. The default
+    # (./confexts/web/etc/onetimesecret) gets the same treatment: render mode
+    # is meant to be explicit about its inputs.
+    try:
+        config_source = config_source.resolve()
+    except OSError as exc:
+        print(
+            f"render: cannot resolve --config-source path: {config_source}: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(EXIT_FAILURE) from exc
+    if not config_source.exists():
+        print(f"render: config source does not exist: {config_source}", file=sys.stderr)
+        raise SystemExit(EXIT_FAILURE)
+    if not config_source.is_dir():
+        print(
+            f"render: config source is not a directory: {config_source}",
+            file=sys.stderr,
+        )
+        raise SystemExit(EXIT_FAILURE)
+
+    apply_quiet(quiet)
+    out_dir = render_dir / "etc" / "containers" / "systemd"
+
+    # Render every template to memory before any disk I/O. A render failure
+    # then exits without leaving a half-populated tree on disk — important
+    # because lots' rsync would happily ship a partial state otherwise.
+    try:
+        payloads: list[tuple[str, str]] = [
+            (
+                "onetime-web@.container",
+                quadlet.render_web_template(
+                    cfg,
+                    env_file_path=None,
+                    force=False,
+                    executor=None,
+                    config_source=config_source,
+                    render_mode=True,
+                ),
+            ),
+            (
+                "onetime-worker@.container",
+                quadlet.render_worker_template(
+                    cfg,
+                    env_file_path=None,
+                    force=False,
+                    executor=None,
+                    config_source=config_source,
+                    render_mode=True,
+                ),
+            ),
+            (
+                "onetime-scheduler@.container",
+                quadlet.render_scheduler_template(
+                    cfg,
+                    env_file_path=None,
+                    force=False,
+                    executor=None,
+                    config_source=config_source,
+                    render_mode=True,
+                ),
+            ),
+        ]
+        if cfg.registry:
+            payloads.append(("onetime.image", quadlet.render_image_template(cfg, executor=None)))
+    except Exception as exc:
+        print(f"render: failed to generate Quadlet content: {exc}", file=sys.stderr)
+        raise SystemExit(EXIT_FAILURE) from exc
+
+    # Full set of Quadlet artifacts this command owns. Anything in this set
+    # that is NOT in `payloads` is a leftover from a previous render and must
+    # be removed — otherwise lots' rsync (which doesn't pass --delete) ships
+    # the stale file alongside the fresh tree.
+    managed_names = {
+        "onetime-web@.container",
+        "onetime-worker@.container",
+        "onetime-scheduler@.container",
+        "onetime.image",
+    }
+
+    # Tree-level atomic swap: build the full new tree in a sibling staging
+    # directory on the same filesystem as out_dir (so the final rename is a
+    # single atomic syscall), then swap it into place. A mid-write crash
+    # leaves only the staging dir behind; the live out_dir is never partially
+    # mutated.
+    #
+    # Files in out_dir that are NOT in managed_names (operator-owned configs)
+    # are copied into the staging dir first so they survive the swap.
+    import shutil
+    import tempfile
+
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    files_written: list[str] = []
+    staging_dir: Path | None = None
+    try:
+        # Place the staging dir as a sibling of out_dir (same filesystem).
+        # tempfile.mkdtemp gives a uniquely-named dir we own end-to-end.
+        staging_dir = Path(
+            tempfile.mkdtemp(prefix=f".{out_dir.name}.render-", dir=str(out_dir.parent))
+        )
+
+        # Preserve operator-owned files: anything in the live out_dir that
+        # isn't one of the four managed Quadlet artifacts must round-trip
+        # through the staging dir, otherwise the swap deletes it.
+        if out_dir.exists():
+            for existing in out_dir.iterdir():
+                if existing.name in managed_names:
+                    continue  # superseded (or removed) by this render
+                dest = staging_dir / existing.name
+                if existing.is_dir():
+                    shutil.copytree(existing, dest, symlinks=True)
+                else:
+                    shutil.copy2(existing, dest, follow_symlinks=False)
+
+        # Write each payload into the staging dir.
+        for name, content in payloads:
+            (staging_dir / name).write_text(content)
+            files_written.append(str(out_dir / name))
+
+        # Atomic swap. os.replace on a directory replaces an empty target
+        # but errors on a non-empty one. Pattern: rename live -> .old,
+        # rename staging -> live, rmtree .old.
+        old_dir: Path | None = None
+        if out_dir.exists():
+            old_dir = out_dir.with_name(out_dir.name + ".old")
+            # If a stale .old exists from a prior crash, clear it first.
+            if old_dir.exists():
+                shutil.rmtree(old_dir)
+            os.replace(out_dir, old_dir)
+        try:
+            os.replace(staging_dir, out_dir)
+        except OSError:
+            # Best-effort rollback: if we moved live aside but couldn't
+            # promote staging, restore the original.
+            if old_dir is not None and old_dir.exists():
+                os.replace(old_dir, out_dir)
+            raise
+        staging_dir = None  # ownership transferred to out_dir
+        if old_dir is not None and old_dir.exists():
+            shutil.rmtree(old_dir)
+    except OSError as exc:
+        if staging_dir is not None and staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
+        print(f"render: I/O failure writing to {out_dir}: {exc}", file=sys.stderr)
+        raise SystemExit(EXIT_FAILURE) from exc
+
+    if json_output:
+        print(
+            json_mod.dumps(
+                {
+                    "action": "render",
+                    "render": True,
+                    "render_dir": str(render_dir),
+                    "config_source": str(config_source),
+                    "files": files_written,
+                },
+                indent=2,
+            )
+        )
+    elif not quiet:
+        logger.info(f"Rendered Quadlet files to {out_dir}")
+        for f in files_written:
+            logger.info(f"  {f}")
+
+
 @app.command
 def deploy(
     reference: ImageRef = None,
@@ -469,12 +713,21 @@ def deploy(
             ),
         ),
     ] = None,
+    render: RenderDir = None,
+    config_source: ConfigSource = None,
 ):
     """Deploy new instance(s) using quadlet and Podman secrets.
 
     Writes quadlet config and starts systemd service.
     Requires /etc/default/onetimesecret and Podman secrets to be configured.
     Records deployment to timeline for audit and rollback support.
+
+    The ``--render <dir>`` flag emits Quadlet files to a local directory and
+    performs no host I/O (no SSH, no systemd, no DB write). Use ``--config-source``
+    to point at a directory of local config files when emitting Volume= lines
+    (defaults to ``./confexts/web/etc/onetimesecret`` when omitted). The standalone
+    ``rots instance render`` subcommand is preferred for new code; ``--render``
+    here is retained for back-compat.
 
     Examples:
         ots instances deploy --web 7043,7044        # Deploy web on ports
@@ -488,9 +741,25 @@ def deploy(
         ots instances deploy --web 7043 --post-hook './notify.sh'  # Notify after deploy
         ots instances deploy ghcr.io/org/image:v1.0 --web 7043  # Explicit image reference
         ots instances deploy --tag v0.24.0 --web 7043  # Specific tag only
+        ots instances deploy --web 7043 --render ./out  # Emit Quadlet files locally
     """
-    import datetime
-    import json as json_mod
+    # --render short-circuits before any deploy-specific validation.
+    # `--host` + `--render` is a usage error: render mode performs no host I/O,
+    # so accepting --host would silently mask a misconfiguration. Fail fast.
+    if render is not None:
+        if context.host_var.get(None) is not None:
+            raise SystemExit(
+                "--host cannot be combined with --render; render mode performs no host I/O."
+            )
+        cfg = _build_render_cfg(reference=reference, tag=tag)
+        _render_quadlets(
+            cfg,
+            render,
+            config_source=config_source,
+            quiet=quiet,
+            json_output=json_output,
+        )
+        return
 
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
 
@@ -507,6 +776,9 @@ def deploy(
         )
     if itype is None:
         raise SystemExit("Instance type required for deploy. Use --web, --worker, or --scheduler.")
+
+    import datetime
+    import json as json_mod
 
     cfg = Config()
 
@@ -740,6 +1012,99 @@ def deploy(
 
     if deploy_results and not all_ok:
         raise SystemExit(EXIT_PARTIAL if any_ok else EXIT_FAILURE)
+
+
+@app.command
+def render(
+    reference: ImageRef = None,
+    out_dir: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            help="Output directory for rendered Quadlet files.",
+        ),
+    ] = None,
+    web: WebFlag = None,
+    tag: TagFlag = None,
+    config_source: ConfigSource = None,
+    quiet: Quiet = False,
+    json_output: JsonOutput = False,
+):
+    """Emit Quadlet template files to a local directory with no host I/O.
+
+    Writes ``onetime-web@.container``, ``onetime-worker@.container``, and
+    ``onetime-scheduler@.container`` (plus ``onetime.image`` when a registry
+    is configured) under ``<out_dir>/etc/containers/systemd/``. Performs no
+    SSH, no systemd, and no DB writes.
+
+    ``--config-source`` defaults to ``./confexts/web/etc/onetimesecret``
+    relative to the current working directory. Files matching the canonical
+    OneTimeSecret config names found in that directory are emitted as
+    ``Volume=`` lines in the rendered units.
+
+    ``--web`` is accepted for forward-compatibility but does not affect the
+    rendered output (the templates are port-agnostic). The deploy-only flags
+    (``--host``, ``--pre-hook``, ``--post-hook``, ``--wait``, ``--wait-timeout``,
+    ``--force``, ``--delay``, ``--dry-run``) are not accepted here. Combining
+    ``--host`` with this command raises an error.
+
+    Examples:
+        ots instance render ./out                          # Render to ./out
+        ots instance render --tag v0.24.0 ./out            # Pin a specific tag
+        ots instance render ghcr.io/org/image:v1 ./out     # Explicit image reference
+        ots instance render ./out --config-source ./cfg    # Custom config probe dir
+    """
+    if context.host_var.get(None) is not None:
+        raise SystemExit(
+            "--host cannot be combined with `instance render`; "
+            "render produces local files only and performs no host I/O."
+        )
+
+    # Disambiguate the single-positional case. The signature is
+    # `<reference> <out_dir>`; with one positional, users invoking
+    # `ots instance render ./out` want it bound to out_dir, not reference.
+    #
+    # Disambiguate by shape:
+    #   * Path-like markers (./, ../, /, ~, .) -> definitely out_dir.
+    #   * Tag (":") or digest ("@") in an image-shaped string -> reference.
+    #   * Otherwise (e.g. "ghcr.io/org/image", bare "out", "image") the value
+    #     is ambiguous; rather than guess wrong (the prior heuristic would
+    #     misclassify "ghcr.io/org/image" as a directory), require both
+    #     positionals or use --tag with a directory positional.
+    if reference and out_dir is None:
+        if _looks_like_path(reference):
+            out_dir = Path(reference)
+            reference = None
+        elif ":" in reference or "@" in reference:
+            # Has a tag/digest separator: definitely an image reference.
+            # out_dir must come from a second positional or be supplied
+            # explicitly. Fall through to the missing-out_dir error below.
+            pass
+        else:
+            # Genuinely ambiguous: could be a bare image ref like
+            # "ghcr.io/org/image" or a relative directory name. Refuse to
+            # guess; ask the user to be explicit.
+            raise SystemExit(
+                f"render: cannot tell whether {reference!r} is an image reference "
+                "or an output directory. Pass both positionals explicitly:\n"
+                "  ots instance render <image-ref> <out-dir>\n"
+                "Or use --tag with a directory positional:\n"
+                "  ots instance render --tag v0.24.0 ./out"
+            )
+
+    if out_dir is None:
+        raise SystemExit("out_dir is required. Example: ots instance render ./out")
+
+    # `web` is accepted for forward-compat only; templates are port-agnostic.
+    del web
+
+    cfg = _build_render_cfg(reference=reference, tag=tag)
+    _render_quadlets(
+        cfg,
+        out_dir,
+        config_source=config_source,
+        quiet=quiet,
+        json_output=json_output,
+    )
 
 
 @app.command

@@ -20,6 +20,7 @@ Usage:
 """
 
 from enum import StrEnum
+from pathlib import Path
 from typing import Annotated
 
 import cyclopts
@@ -74,6 +75,32 @@ SchedulerFlag = Annotated[
     cyclopts.Parameter(
         name=["--scheduler"],
         help="Target scheduler instances (comma-separated IDs, e.g. main,1)",
+    ),
+]
+
+# Render quadlet files to a local directory (no host I/O, no SSH, no systemd, no DB write)
+RenderDir = Annotated[
+    Path | None,
+    cyclopts.Parameter(
+        name=["--render"],
+        help=(
+            "Write Quadlet files to a local directory and perform no host I/O "
+            "(no SSH, no systemd, no DB write)."
+        ),
+    ),
+]
+
+# Local directory probed for /etc/onetimesecret/*.yaml when emitting Volume= lines under --render
+ConfigSource = Annotated[
+    Path | None,
+    cyclopts.Parameter(
+        name=["--config-source"],
+        help=(
+            "Directory probed for /etc/onetimesecret/*.yaml files when emitting "
+            "Volume= lines under --render. Defaults to "
+            "./confexts/web/etc/onetimesecret relative to the current working "
+            "directory when --render is set."
+        ),
     ),
 ]
 

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from ots_shared.ssh import is_remote as _is_remote
 
 from . import systemd
-from .config import Config
+from .config import CONFIG_FILES, Config, join_image_tag
 from .environment_file import (
     generate_quadlet_secret_lines,
     get_secrets_from_env_file,
@@ -128,6 +128,7 @@ def get_secrets_section(
     *,
     force: bool = False,
     executor: Executor | None = None,
+    render_mode: bool = False,
 ) -> str:
     """Generate the secrets section for the quadlet template.
 
@@ -139,6 +140,8 @@ def get_secrets_section(
         force: If True, allow deployment even when secrets are not configured.
                This will produce a quadlet with no Secret= lines; the application
                will likely fail at runtime without its required secrets.
+        render_mode: If True, suppress all Secret= lines and skip env-file probing.
+               Used by `--render` to emit quadlet files locally with no host I/O.
 
     Returns:
         Multi-line string with Secret= directives
@@ -149,9 +152,12 @@ def get_secrets_section(
             CI pipelines that no destructive action was taken — the required
             configuration was simply absent.
     """
+    if render_mode:
+        return "# No secrets emitted under --render"
+
     env_path = env_file_path or DEFAULT_ENV_FILE
 
-    if _is_remote(executor):
+    if executor is not None and _is_remote(executor):
         result = executor.run(["test", "-f", str(env_path)])
         env_exists = result.ok
     else:
@@ -245,11 +251,33 @@ def get_secrets_section(
     return generate_quadlet_secret_lines(verified)
 
 
-def get_config_volumes_section(cfg: Config, *, executor: Executor | None = None) -> str:
+def get_config_volumes_section(
+    cfg: Config,
+    *,
+    executor: Executor | None = None,
+    config_source: Path | None = None,
+) -> str:
     """Generate per-file Volume directives for host config overrides.
 
     Only mounts files that exist on the host. Missing files use container defaults.
+
+    When *config_source* is set (render mode), probe the local directory for the
+    canonical CONFIG_FILES instead of the host. The Volume= left-side path is
+    still the host path (cfg.config_dir / fname) since the rendered quadlet is
+    intended for deployment to a real host.
     """
+    if config_source is not None:
+        # Render mode: probe the local config_source directory, but keep host
+        # paths on the left side of Volume= so the unit deploys correctly.
+        lines = []
+        for fname in CONFIG_FILES:
+            if (config_source / fname).exists():
+                host_path = cfg.config_dir / fname
+                lines.append(f"Volume={host_path}:/app/etc/{fname}:ro")
+        if not lines:
+            return "# No host config overrides (using container built-in defaults)"
+        return "\n".join(lines)
+
     files = cfg.get_existing_config_files(executor=executor)
 
     if not files:
@@ -332,17 +360,49 @@ def _build_fmt_vars(
     force: bool,
     extra_vars: dict | None = None,
     executor: Executor | None = None,
+    config_source: Path | None = None,
+    render_mode: bool = False,
 ) -> dict:
     """Build the format variables dict for a quadlet template.
 
     Shared by both ``_write_template`` (which writes to disk) and
     ``render_template`` (dry-run, no disk I/O).
+
+    Args:
+        config_source: When set, probe this local directory for config files
+            instead of the host (used by ``--render``).
+        render_mode: When True, suppress Secret= lines, probe ``config_source``
+            instead of the host filesystem for config volumes, and resolve the
+            ``Image=`` value without touching the deployment database. Render
+            mode rejects alias tags (``@current``, ``@rollback``, ``current``,
+            ``rollback``) since their resolution requires a DB lookup, which
+            would create ``deployments.db`` on the caller's host — violating
+            the no-host-I/O contract of ``--render``.
     """
-    secrets_section = get_secrets_section(env_file_path, force=force, executor=executor)
-    config_volumes_section = get_config_volumes_section(cfg, executor=executor)
+    secrets_section = get_secrets_section(
+        env_file_path, force=force, executor=executor, render_mode=render_mode
+    )
+    config_volumes_section = get_config_volumes_section(
+        cfg, executor=executor, config_source=config_source
+    )
 
     if cfg.registry:
         image = "onetime.image"
+    elif render_mode:
+        # Render mode contract: no host I/O, no DB writes. resolve_image_tag
+        # would call db.get_alias -> get_connection -> init_db for alias tags,
+        # creating deployments.db on the caller's filesystem. Reject aliases
+        # explicitly so the user sees a clear error rather than a silent DB
+        # file appearing in their checkout.
+        tag_key = cfg.tag.lstrip("@").lower()
+        if tag_key in ("current", "rollback"):
+            raise SystemExit(
+                f"render: tag {cfg.tag!r} is an alias and cannot be resolved without "
+                "consulting the deployment database (which render mode forbids).\n"
+                "Pass a concrete tag or digest with --tag (e.g. --tag v0.24.0) or via "
+                "an explicit image reference (e.g. ghcr.io/org/image:v0.24.0)."
+            )
+        image = join_image_tag(cfg.effective_image, cfg.tag)
     else:
         image = cfg.resolved_image_with_tag(executor=executor)
 
@@ -364,6 +424,8 @@ def render_web_template(
     *,
     force: bool = False,
     executor: Executor | None = None,
+    config_source: Path | None = None,
+    render_mode: bool = False,
 ) -> str:
     """Render the web quadlet template content without writing to disk.
 
@@ -376,6 +438,8 @@ def render_web_template(
         force=force,
         extra_vars={"valkey_after": valkey_after, "valkey_wants": valkey_wants},
         executor=executor,
+        config_source=config_source,
+        render_mode=render_mode,
     )
     return WEB_TEMPLATE.format(**fmt_vars)
 
@@ -386,9 +450,18 @@ def render_worker_template(
     *,
     force: bool = False,
     executor: Executor | None = None,
+    config_source: Path | None = None,
+    render_mode: bool = False,
 ) -> str:
     """Render the worker quadlet template content without writing to disk."""
-    fmt_vars = _build_fmt_vars(cfg, env_file_path, force=force, executor=executor)
+    fmt_vars = _build_fmt_vars(
+        cfg,
+        env_file_path,
+        force=force,
+        executor=executor,
+        config_source=config_source,
+        render_mode=render_mode,
+    )
     return WORKER_TEMPLATE.format(**fmt_vars)
 
 
@@ -398,9 +471,18 @@ def render_scheduler_template(
     *,
     force: bool = False,
     executor: Executor | None = None,
+    config_source: Path | None = None,
+    render_mode: bool = False,
 ) -> str:
     """Render the scheduler quadlet template content without writing to disk."""
-    fmt_vars = _build_fmt_vars(cfg, env_file_path, force=force, executor=executor)
+    fmt_vars = _build_fmt_vars(
+        cfg,
+        env_file_path,
+        force=force,
+        executor=executor,
+        config_source=config_source,
+        render_mode=render_mode,
+    )
     return SCHEDULER_TEMPLATE.format(**fmt_vars)
 
 
@@ -436,7 +518,7 @@ def _write_template(
         cfg, env_file_path, force=force, extra_vars=extra_vars, executor=executor
     )
     content = template.format(**fmt_vars)
-    if _is_remote(executor):
+    if executor is not None and _is_remote(executor):
         executor.run(["mkdir", "-p", str(path.parent)])
         executor.run(["tee", str(path)], input=content)
     else:
@@ -719,7 +801,7 @@ def write_image_template(
     """
     content = render_image_template(cfg, executor=executor)
     path = cfg.image_template_path
-    if _is_remote(executor):
+    if executor is not None and _is_remote(executor):
         executor.run(["mkdir", "-p", str(path.parent)])
         executor.run(["tee", str(path)], input=content)
     else:

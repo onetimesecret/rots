@@ -22,6 +22,11 @@ def _make_cfg(mocker, tmp_path, image="ghcr.io/test/image", tag="v1.0.0", regist
     cfg.valkey_service = None
     cfg.registry = registry
     cfg.config_dir = tmp_path / "etc"
+    # Concrete string attributes — render_mode's no-DB path reads cfg.tag and
+    # cfg.effective_image directly to avoid touching db.get_alias.
+    cfg.image = image
+    cfg.tag = tag
+    cfg.effective_image = image
     cfg.resolved_image_with_tag.return_value = f"{image}:{tag}"
     return cfg
 
@@ -418,3 +423,276 @@ class TestNoRegistryDirectFQIN:
         result = quadlet.render_web_template(cfg, force=True)
         assert "Image=ghcr.io/onetimesecret/onetimesecret:v1.2.3" in result
         assert "onetime.image" not in result
+
+
+# Issue #67: --render / --config-source contract.
+# These constants name the six known config files probed when --config-source is set.
+# They mirror rots.config.CONFIG_FILES but are spelled here to keep the test
+# self-documenting against the contract.
+KNOWN_CONFIG_FILES = (
+    "config.yaml",
+    "auth.yaml",
+    "logging.yaml",
+    "billing.yaml",
+    "Caddyfile.template",
+    "puma.rb",
+)
+
+
+def _make_render_cfg(mocker, tmp_path, *, registry=None):
+    """Build a Config mock suitable for render-mode (config_source) tests.
+
+    Distinct from ``_make_cfg`` only in that ``get_existing_config_files`` is
+    pre-stubbed with a sensible default. Tests that exercise the executor-based
+    fall-through override this stub explicitly.
+    """
+    cfg = _make_cfg(mocker, tmp_path, registry=registry)
+    cfg.get_existing_config_files.return_value = []
+    return cfg
+
+
+class TestGetConfigVolumesSectionWithConfigSource:
+    """get_config_volumes_section behaviour under issue #67's config_source contract."""
+
+    def test_all_six_files_present_emits_six_volume_lines(self, mocker, tmp_path):
+        """All six known config files in config_source -> one Volume= line each."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+        for fname in KNOWN_CONFIG_FILES:
+            (src / fname).touch()
+
+        result = quadlet.get_config_volumes_section(cfg, config_source=src)
+
+        volume_lines = [ln for ln in result.splitlines() if ln.startswith("Volume=")]
+        assert len(volume_lines) == 6
+        # Each Volume= line must reference the correct container path and ro mode.
+        for fname in KNOWN_CONFIG_FILES:
+            assert any(f":/app/etc/{fname}:ro" in ln for ln in volume_lines), (
+                f"missing Volume= line for {fname}: {volume_lines}"
+            )
+
+    def test_subset_present_emits_only_existing(self, mocker, tmp_path):
+        """Only files that actually exist in config_source produce Volume= lines."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "config.yaml").touch()
+        (src / "auth.yaml").touch()
+
+        result = quadlet.get_config_volumes_section(cfg, config_source=src)
+
+        volume_lines = [ln for ln in result.splitlines() if ln.startswith("Volume=")]
+        assert len(volume_lines) == 2
+        assert any(":/app/etc/config.yaml:ro" in ln for ln in volume_lines)
+        assert any(":/app/etc/auth.yaml:ro" in ln for ln in volume_lines)
+        # Other known files must NOT appear.
+        for fname in ("logging.yaml", "billing.yaml", "Caddyfile.template", "puma.rb"):
+            assert all(f":/app/etc/{fname}:ro" not in ln for ln in volume_lines)
+
+    def test_empty_directory_emits_no_volume_lines(self, mocker, tmp_path):
+        """Empty config_source directory -> no Volume= lines."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+
+        result = quadlet.get_config_volumes_section(cfg, config_source=src)
+
+        volume_lines = [ln for ln in result.splitlines() if ln.startswith("Volume=")]
+        assert volume_lines == []
+
+    def test_config_source_none_executor_none_no_volume_lines(self, mocker, tmp_path):
+        """config_source=None and executor=None -> no Volume= lines (host probing returns empty)."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        # Defensive: explicit empty result so the test does not depend on
+        # whatever the host filesystem looks like.
+        cfg.get_existing_config_files.return_value = []
+        cfg.existing_config_files = []
+
+        result = quadlet.get_config_volumes_section(cfg, config_source=None, executor=None)
+
+        volume_lines = [ln for ln in result.splitlines() if ln.startswith("Volume=")]
+        assert volume_lines == []
+
+    def test_executor_based_fall_through_still_works(self, mocker, tmp_path):
+        """With config_source=None and executor probing, Volume= lines still emit."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        # Simulate a remote host returning all six files via the executor.
+        # cfg.get_existing_config_files is the integration point we mock here;
+        # the underlying test-f probing is exercised in config tests.
+        host_paths = [cfg.config_dir / fname for fname in KNOWN_CONFIG_FILES]
+        cfg.get_existing_config_files.return_value = host_paths
+
+        # Pass a non-None sentinel for executor; the function should hand it
+        # to cfg.get_existing_config_files. The exact executor type does not
+        # matter — we only assert on the rendered output.
+        executor_sentinel = mocker.MagicMock()
+
+        result = quadlet.get_config_volumes_section(
+            cfg, executor=executor_sentinel, config_source=None
+        )
+
+        volume_lines = [ln for ln in result.splitlines() if ln.startswith("Volume=")]
+        assert len(volume_lines) == 6
+        cfg.get_existing_config_files.assert_called_once_with(executor=executor_sentinel)
+
+
+class TestRenderTemplatesWithConfigSource:
+    """render_*_template propagates config_source into the rendered output."""
+
+    def test_web_template_emits_volume_lines_for_config_source_files(self, mocker, tmp_path):
+        """render_web_template with config_source -> Volume= lines for files present there."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "config.yaml").touch()
+        (src / "auth.yaml").touch()
+
+        result = quadlet.render_web_template(cfg, force=True, config_source=src)
+
+        assert "/app/etc/config.yaml:ro" in result
+        assert "/app/etc/auth.yaml:ro" in result
+        # Files NOT placed in src must not appear.
+        assert "/app/etc/logging.yaml:ro" not in result
+
+    def test_worker_template_emits_volume_lines_for_config_source_files(self, mocker, tmp_path):
+        """render_worker_template with config_source -> Volume= lines."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "config.yaml").touch()
+
+        result = quadlet.render_worker_template(cfg, force=True, config_source=src)
+
+        assert "/app/etc/config.yaml:ro" in result
+
+    def test_scheduler_template_emits_volume_lines_for_config_source_files(self, mocker, tmp_path):
+        """render_scheduler_template with config_source -> Volume= lines."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "billing.yaml").touch()
+
+        result = quadlet.render_scheduler_template(cfg, force=True, config_source=src)
+
+        assert "/app/etc/billing.yaml:ro" in result
+
+    def test_empty_config_source_yields_no_volume_lines_in_template(self, mocker, tmp_path):
+        """Empty config_source dir -> rendered template has no Volume=...:/app/etc/ lines."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+
+        result = quadlet.render_web_template(cfg, force=True, config_source=src)
+
+        # Static asset volume mount is unaffected; only host config overrides
+        # are gated by config_source.
+        assert "/app/etc/" not in result
+
+    def test_render_mode_rejects_alias_tag_at_current(self, mocker, tmp_path):
+        """Render mode must refuse the @current alias rather than touch the DB."""
+        import pytest as _pytest
+
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        cfg.tag = "@current"
+
+        with _pytest.raises(SystemExit) as excinfo:
+            quadlet.render_web_template(cfg, force=True, render_mode=True)
+        assert "alias" in str(excinfo.value).lower()
+        # The DB lookup path must not have been entered.
+        cfg.resolved_image_with_tag.assert_not_called()
+
+    def test_render_mode_rejects_alias_tag_bare_rollback(self, mocker, tmp_path):
+        """Render mode must refuse the bare 'rollback' alias too."""
+        import pytest as _pytest
+
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        cfg.tag = "rollback"
+
+        with _pytest.raises(SystemExit):
+            quadlet.render_web_template(cfg, force=True, render_mode=True)
+        cfg.resolved_image_with_tag.assert_not_called()
+
+    def test_render_mode_does_not_call_resolved_image_with_tag(self, mocker, tmp_path):
+        """With a concrete tag, render mode bypasses cfg.resolved_image_with_tag.
+
+        That method calls db.get_alias for sentinel inputs, which would init
+        the deployment database on disk — render mode forbids host I/O.
+        """
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path, image="ghcr.io/test/image", tag="v1.2.3")
+        cfg.get_existing_config_files.return_value = []
+
+        result = quadlet.render_web_template(cfg, force=True, render_mode=True)
+        assert "Image=ghcr.io/test/image:v1.2.3" in result
+        cfg.resolved_image_with_tag.assert_not_called()
+
+    def test_no_secret_lines_when_config_source_is_set(self, mocker, tmp_path):
+        """Render mode signal: no Secret= lines when config_source is set.
+
+        This test deliberately makes secrets *visible* (returns specs, says they exist)
+        so a regression that re-enables secret emission under render would surface.
+        """
+        from rots import quadlet
+        from rots.environment_file import SecretSpec
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        # Force the secret-existence check to say "yes" — autouse fixture
+        # returns False, which alone would suppress Secret= lines.
+        mocker.patch("rots.quadlet.secret_exists", return_value=True)
+        # And make the env file probe return real-looking secrets.
+        mocker.patch(
+            "rots.quadlet.get_secrets_from_env_file",
+            return_value=[
+                SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_auth_secret"),
+                SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
+            ],
+        )
+        # Make the env file appear to exist so the secrets path is reachable
+        # in non-render mode.
+        env_file = tmp_path / "envfile"
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY\n")
+        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "config.yaml").touch()
+
+        # render_mode=True is the documented signal; pass it alongside config_source
+        # since the contract states no Secret= lines are emitted under --render.
+        result_web = quadlet.render_web_template(
+            cfg, force=True, config_source=src, render_mode=True
+        )
+        result_worker = quadlet.render_worker_template(
+            cfg, force=True, config_source=src, render_mode=True
+        )
+        result_scheduler = quadlet.render_scheduler_template(
+            cfg, force=True, config_source=src, render_mode=True
+        )
+
+        assert "Secret=" not in result_web
+        assert "Secret=" not in result_worker
+        assert "Secret=" not in result_scheduler
