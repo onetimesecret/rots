@@ -408,6 +408,29 @@ def run(
         logger.info("Stopped")
 
 
+def _looks_like_path(value: str) -> bool:
+    """Return True when *value* has a clear filesystem-path shape.
+
+    Used to disambiguate a single positional argument on ``instance render``
+    between an image reference and an output directory. We only call a value
+    a path when its shape is unambiguous; truly ambiguous strings (e.g.
+    ``ghcr.io/org/image``, bare ``out``) get an explicit error from the
+    caller rather than a silent miscategorization.
+    """
+    if not value:
+        return False
+    # Bare "." and ".." are paths.
+    if value in (".", ".."):
+        return True
+    # Leading characters that mark filesystem paths in shells.
+    if value.startswith(("./", "../", "/", "~/", "~")):
+        return True
+    # Trailing slash is a directory hint.
+    if value.endswith("/"):
+        return True
+    return False
+
+
 def _build_render_cfg(*, reference: str | None, tag: str | None) -> Config:
     """Construct a ``Config`` for render mode, applying image/tag overrides.
 
@@ -1003,14 +1026,37 @@ def render(
             "render produces local files only and performs no host I/O."
         )
 
-    # Disambiguate positional args. The signature is `<reference> <out_dir>`,
-    # but with a single positional users want it to be the directory.
-    # Image references carry a tag (":") or digest ("@"); a directory path
-    # generally has neither. When only one positional is given and it lacks
-    # both markers, treat it as out_dir.
-    if reference and out_dir is None and not any(c in reference for c in ":@"):
-        out_dir = Path(reference)
-        reference = None
+    # Disambiguate the single-positional case. The signature is
+    # `<reference> <out_dir>`; with one positional, users invoking
+    # `ots instance render ./out` want it bound to out_dir, not reference.
+    #
+    # Disambiguate by shape:
+    #   * Path-like markers (./, ../, /, ~, .) -> definitely out_dir.
+    #   * Tag (":") or digest ("@") in an image-shaped string -> reference.
+    #   * Otherwise (e.g. "ghcr.io/org/image", bare "out", "image") the value
+    #     is ambiguous; rather than guess wrong (the prior heuristic would
+    #     misclassify "ghcr.io/org/image" as a directory), require both
+    #     positionals or use --tag with a directory positional.
+    if reference and out_dir is None:
+        if _looks_like_path(reference):
+            out_dir = Path(reference)
+            reference = None
+        elif ":" in reference or "@" in reference:
+            # Has a tag/digest separator: definitely an image reference.
+            # out_dir must come from a second positional or be supplied
+            # explicitly. Fall through to the missing-out_dir error below.
+            pass
+        else:
+            # Genuinely ambiguous: could be a bare image ref like
+            # "ghcr.io/org/image" or a relative directory name. Refuse to
+            # guess; ask the user to be explicit.
+            raise SystemExit(
+                f"render: cannot tell whether {reference!r} is an image reference "
+                "or an output directory. Pass both positionals explicitly:\n"
+                "  ots instance render <image-ref> <out-dir>\n"
+                "Or use --tag with a directory positional:\n"
+                "  ots instance render --tag v0.24.0 ./out"
+            )
 
     if out_dir is None:
         raise SystemExit("out_dir is required. Example: ots instance render ./out")

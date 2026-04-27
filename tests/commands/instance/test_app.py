@@ -3943,6 +3943,85 @@ class TestInstanceRenderCommand:
         captured = capsys.readouterr()
         assert "config source does not exist" in captured.err
 
+    def test_render_single_positional_path_promotes_to_out_dir(self, mocker, tmp_path):
+        """A single path-shaped positional ('./out', '/tmp/x', '~/x') becomes out_dir."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir_path = tmp_path / "out"
+        out_dir_path.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        # Use an absolute path so the leading "/" triggers path detection.
+        render_cmd(reference=str(out_dir_path))
+
+        target = out_dir_path / "etc" / "containers" / "systemd"
+        assert (target / "onetime-web@.container").exists()
+
+    def test_render_single_positional_relative_path_promotes_to_out_dir(
+        self, mocker, monkeypatch, tmp_path
+    ):
+        """A relative './out' positional is also recognised as a path."""
+        self._patch_render_safety_nets(mocker)
+
+        # The autouse fixture chdir'd into a scratch dir; switch into one we
+        # control so we can pass a relative path.
+        work = tmp_path / "work"
+        (work / "confexts" / "web" / "etc" / "onetimesecret").mkdir(parents=True)
+        monkeypatch.chdir(work)
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(reference="./out")
+
+        target = work / "out" / "etc" / "containers" / "systemd"
+        assert (target / "onetime-web@.container").exists()
+
+    def test_render_single_positional_bare_image_ref_errors(self, mocker, tmp_path):
+        """A bare image ref like 'ghcr.io/org/image' (no tag) refuses to auto-promote.
+
+        The prior heuristic ("treat as out_dir if no ':' or '@'") would
+        misclassify this as a directory. The fix is to refuse to guess when
+        the input is genuinely ambiguous.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(reference="ghcr.io/org/image")
+
+        assert "cannot tell" in str(excinfo.value)
+
+    def test_render_single_positional_image_ref_with_tag_does_not_promote(self, mocker, tmp_path):
+        """An image ref with a tag is bound to reference; out_dir is then required."""
+        self._patch_render_safety_nets(mocker)
+
+        from rots.commands.instance.app import render as render_cmd
+
+        # Has a ':' -> definitely an image ref. With no out_dir, fall through
+        # to the missing-out_dir error.
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(reference="ghcr.io/org/image:v1")
+
+        assert "out_dir is required" in str(excinfo.value)
+
+    def test_render_two_positionals_image_ref_and_out_dir(self, mocker, tmp_path):
+        """Both positionals supplied: reference is the image ref, out_dir is the path."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir_path = tmp_path / "out"
+        out_dir_path.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(reference="ghcr.io/org/image:v1.2.3", out_dir=out_dir_path)
+
+        web_unit = (
+            out_dir_path / "etc" / "containers" / "systemd" / "onetime-web@.container"
+        ).read_text()
+        assert "Image=ghcr.io/org/image:v1.2.3" in web_unit
+
     def test_render_output_is_byte_stable_across_runs(self, mocker, tmp_path):
         """Render output must be byte-identical across reruns with identical inputs.
 
