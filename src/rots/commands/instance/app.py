@@ -411,8 +411,16 @@ def run(
 def _build_render_cfg(*, reference: str | None, tag: str | None) -> Config:
     """Construct a ``Config`` for render mode, applying image/tag overrides.
 
-    Render mode does not use an executor or query the host, so this skips the
-    deploy-only steps (executor lookup, image resolution).
+    Render mode performs no host I/O: no executor is created, no remote SSH
+    is opened, and no deployment database is consulted. The downstream
+    template renderers (called with ``render_mode=True``) substitute ``Image=``
+    using ``cfg.effective_image`` joined with ``cfg.tag`` directly — they do
+    not call ``cfg.resolved_image_with_tag``, which would touch the alias DB.
+
+    Because alias tags (``@current``, ``@rollback``) require a DB lookup to
+    resolve, render mode rejects them at template-build time with a clear
+    error. Callers must supply a concrete tag or digest via ``--tag`` or in
+    the image reference itself.
     """
     cfg = Config()
     ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)

@@ -22,6 +22,11 @@ def _make_cfg(mocker, tmp_path, image="ghcr.io/test/image", tag="v1.0.0", regist
     cfg.valkey_service = None
     cfg.registry = registry
     cfg.config_dir = tmp_path / "etc"
+    # Concrete string attributes — render_mode's no-DB path reads cfg.tag and
+    # cfg.effective_image directly to avoid touching db.get_alias.
+    cfg.image = image
+    cfg.tag = tag
+    cfg.effective_image = image
     cfg.resolved_image_with_tag.return_value = f"{image}:{tag}"
     return cfg
 
@@ -601,6 +606,49 @@ class TestRenderTemplatesWithConfigSource:
         # Static asset volume mount is unaffected; only host config overrides
         # are gated by config_source.
         assert "/app/etc/" not in result
+
+    def test_render_mode_rejects_alias_tag_at_current(self, mocker, tmp_path):
+        """Render mode must refuse the @current alias rather than touch the DB."""
+        import pytest as _pytest
+
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        cfg.tag = "@current"
+
+        with _pytest.raises(SystemExit) as excinfo:
+            quadlet.render_web_template(cfg, force=True, render_mode=True)
+        assert "alias" in str(excinfo.value).lower()
+        # The DB lookup path must not have been entered.
+        cfg.resolved_image_with_tag.assert_not_called()
+
+    def test_render_mode_rejects_alias_tag_bare_rollback(self, mocker, tmp_path):
+        """Render mode must refuse the bare 'rollback' alias too."""
+        import pytest as _pytest
+
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        cfg.tag = "rollback"
+
+        with _pytest.raises(SystemExit):
+            quadlet.render_web_template(cfg, force=True, render_mode=True)
+        cfg.resolved_image_with_tag.assert_not_called()
+
+    def test_render_mode_does_not_call_resolved_image_with_tag(self, mocker, tmp_path):
+        """With a concrete tag, render mode bypasses cfg.resolved_image_with_tag.
+
+        That method calls db.get_alias for sentinel inputs, which would init
+        the deployment database on disk — render mode forbids host I/O.
+        """
+        from rots import quadlet
+
+        cfg = _make_cfg(mocker, tmp_path, image="ghcr.io/test/image", tag="v1.2.3")
+        cfg.get_existing_config_files.return_value = []
+
+        result = quadlet.render_web_template(cfg, force=True, render_mode=True)
+        assert "Image=ghcr.io/test/image:v1.2.3" in result
+        cfg.resolved_image_with_tag.assert_not_called()
 
     def test_no_secret_lines_when_config_source_is_set(self, mocker, tmp_path):
         """Render mode signal: no Secret= lines when config_source is set.

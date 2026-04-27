@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from ots_shared.ssh import is_remote as _is_remote
 
 from . import systemd
-from .config import CONFIG_FILES, Config
+from .config import CONFIG_FILES, Config, join_image_tag
 from .environment_file import (
     generate_quadlet_secret_lines,
     get_secrets_from_env_file,
@@ -371,7 +371,13 @@ def _build_fmt_vars(
     Args:
         config_source: When set, probe this local directory for config files
             instead of the host (used by ``--render``).
-        render_mode: When True, suppress Secret= lines (used by ``--render``).
+        render_mode: When True, suppress Secret= lines, probe ``config_source``
+            instead of the host filesystem for config volumes, and resolve the
+            ``Image=`` value without touching the deployment database. Render
+            mode rejects alias tags (``@current``, ``@rollback``, ``current``,
+            ``rollback``) since their resolution requires a DB lookup, which
+            would create ``deployments.db`` on the caller's host — violating
+            the no-host-I/O contract of ``--render``.
     """
     secrets_section = get_secrets_section(
         env_file_path, force=force, executor=executor, render_mode=render_mode
@@ -382,6 +388,21 @@ def _build_fmt_vars(
 
     if cfg.registry:
         image = "onetime.image"
+    elif render_mode:
+        # Render mode contract: no host I/O, no DB writes. resolve_image_tag
+        # would call db.get_alias -> get_connection -> init_db for alias tags,
+        # creating deployments.db on the caller's filesystem. Reject aliases
+        # explicitly so the user sees a clear error rather than a silent DB
+        # file appearing in their checkout.
+        tag_key = cfg.tag.lstrip("@").lower()
+        if tag_key in ("current", "rollback"):
+            raise SystemExit(
+                f"render: tag {cfg.tag!r} is an alias and cannot be resolved without "
+                "consulting the deployment database (which render mode forbids).\n"
+                "Pass a concrete tag or digest with --tag (e.g. --tag v0.24.0) or via "
+                "an explicit image reference (e.g. ghcr.io/org/image:v0.24.0)."
+            )
+        image = join_image_tag(cfg.effective_image, cfg.tag)
     else:
         image = cfg.resolved_image_with_tag(executor=executor)
 

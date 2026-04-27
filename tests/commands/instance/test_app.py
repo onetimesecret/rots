@@ -3260,10 +3260,15 @@ class TestDeployRender:
 
     @pytest.fixture(autouse=True)
     def _clear_env(self, monkeypatch):
-        """Remove image/tag env vars so deploys are deterministic."""
+        """Remove image env vars and pin tag to a concrete value.
+
+        Render mode rejects alias tags (``@current``/``@rollback``) because
+        resolving them would touch the deployment DB. Pin to a concrete tag
+        so the render path doesn't trip the alias guard.
+        """
         monkeypatch.delenv("IMAGE", raising=False)
-        monkeypatch.delenv("TAG", raising=False)
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        monkeypatch.setenv("TAG", "v0.24.0")
 
     def _patch_render_safety_nets(self, mocker):
         """Patch every host-touching dependency that --render must NOT call.
@@ -3538,10 +3543,15 @@ class TestInstanceRenderCommand:
 
     @pytest.fixture(autouse=True)
     def _clear_env(self, monkeypatch):
-        """Remove image/tag env vars so renders are deterministic."""
+        """Remove image env vars and pin tag to a concrete value.
+
+        Render mode rejects alias tags (``@current``/``@rollback``) because
+        resolving them would touch the deployment DB. Pin to a concrete tag
+        so the render path doesn't trip the alias guard.
+        """
         monkeypatch.delenv("IMAGE", raising=False)
-        monkeypatch.delenv("TAG", raising=False)
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
+        monkeypatch.setenv("TAG", "v0.24.0")
 
     def _patch_render_safety_nets(self, mocker):
         """Patch every host-touching dependency that `render` must NOT call.
