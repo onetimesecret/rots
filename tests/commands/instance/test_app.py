@@ -3259,16 +3259,25 @@ class TestDeployRender:
     """Tests for `deploy ... --render <dir>` (issue #67)."""
 
     @pytest.fixture(autouse=True)
-    def _clear_env(self, monkeypatch):
-        """Remove image env vars and pin tag to a concrete value.
+    def _clear_env(self, monkeypatch, tmp_path):
+        """Remove image env vars, pin tag, and stage the default config_source.
 
         Render mode rejects alias tags (``@current``/``@rollback``) because
         resolving them would touch the deployment DB. Pin to a concrete tag
         so the render path doesn't trip the alias guard.
+
+        Render mode also validates ``--config-source`` exists. The default
+        is ``./confexts/web/etc/onetimesecret`` relative to cwd, so chdir
+        into a scratch dir and create the scaffold so tests that don't
+        supply ``config_source`` pass validation.
         """
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
         monkeypatch.setenv("TAG", "v0.24.0")
+        scratch = tmp_path / "_scratch"
+        scratch.mkdir()
+        (scratch / "confexts" / "web" / "etc" / "onetimesecret").mkdir(parents=True)
+        monkeypatch.chdir(scratch)
 
     def _patch_render_safety_nets(self, mocker):
         """Patch every host-touching dependency that --render must NOT call.
@@ -3542,16 +3551,25 @@ class TestInstanceRenderCommand:
     """Tests for the dedicated `rots instance render` subcommand (issue #67)."""
 
     @pytest.fixture(autouse=True)
-    def _clear_env(self, monkeypatch):
-        """Remove image env vars and pin tag to a concrete value.
+    def _clear_env(self, monkeypatch, tmp_path):
+        """Remove image env vars, pin tag, and stage the default config_source.
 
         Render mode rejects alias tags (``@current``/``@rollback``) because
         resolving them would touch the deployment DB. Pin to a concrete tag
         so the render path doesn't trip the alias guard.
+
+        Render mode also validates ``--config-source`` exists. The default
+        is ``./confexts/web/etc/onetimesecret`` relative to cwd, so chdir
+        into a scratch dir and create the scaffold so tests that don't
+        supply ``config_source`` pass validation.
         """
         monkeypatch.delenv("IMAGE", raising=False)
         monkeypatch.delenv("OTS_REGISTRY", raising=False)
         monkeypatch.setenv("TAG", "v0.24.0")
+        scratch = tmp_path / "_scratch"
+        scratch.mkdir()
+        (scratch / "confexts" / "web" / "etc" / "onetimesecret").mkdir(parents=True)
+        monkeypatch.chdir(scratch)
 
     def _patch_render_safety_nets(self, mocker):
         """Patch every host-touching dependency that `render` must NOT call.
@@ -3857,6 +3875,73 @@ class TestInstanceRenderCommand:
         # No half-written tree: out_dir/etc/containers/systemd should be absent
         # because we render-to-memory before any disk write.
         assert not (out_dir / "etc" / "containers" / "systemd").exists()
+
+    def test_render_explicit_config_source_missing_exits(self, mocker, capsys, tmp_path):
+        """Explicit --config-source pointing at a non-existent path must error loudly.
+
+        Silent fall-through to "no Volume= overrides" hides typos; render mode
+        is meant to be explicit about its inputs.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        bogus = tmp_path / "does-not-exist"
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(out_dir=out_dir, config_source=bogus)
+
+        assert excinfo.value.code != 0
+        captured = capsys.readouterr()
+        assert "config source does not exist" in captured.err
+
+    def test_render_explicit_config_source_is_file_exits(self, mocker, capsys, tmp_path):
+        """--config-source pointing at a regular file (not a dir) must error loudly."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        a_file = tmp_path / "regular_file"
+        a_file.write_text("not a directory\n")
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(out_dir=out_dir, config_source=a_file)
+
+        assert excinfo.value.code != 0
+        captured = capsys.readouterr()
+        assert "not a directory" in captured.err
+
+    def test_render_default_config_source_missing_exits(
+        self, mocker, monkeypatch, capsys, tmp_path
+    ):
+        """The default ./confexts/web/etc/onetimesecret must exist when not overridden.
+
+        Render mode is explicit about its inputs; if the operator runs it from
+        a directory without the scaffold, fail loud rather than silently emit
+        zero Volume= overrides.
+        """
+        self._patch_render_safety_nets(mocker)
+        # chdir somewhere that does NOT have the default scaffold (the autouse
+        # _clear_env fixture chdir'd to a scratch dir that does have it).
+        bare = tmp_path / "bare"
+        bare.mkdir()
+        monkeypatch.chdir(bare)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            render_cmd(out_dir=out_dir)
+
+        assert excinfo.value.code != 0
+        captured = capsys.readouterr()
+        assert "config source does not exist" in captured.err
 
     def test_render_output_is_byte_stable_across_runs(self, mocker, tmp_path):
         """Render output must be byte-identical across reruns with identical inputs.

@@ -458,7 +458,28 @@ def _render_quadlets(
 
     if config_source is None:
         config_source = Path("confexts/web/etc/onetimesecret")
-    config_source = config_source.resolve()
+    # Resolve early and fail loud on any path issue. A typo in --config-source
+    # would otherwise silently produce zero Volume= overrides — the rendered
+    # tree looks fine but is missing the operator's config files. The default
+    # (./confexts/web/etc/onetimesecret) gets the same treatment: render mode
+    # is meant to be explicit about its inputs.
+    try:
+        config_source = config_source.resolve()
+    except OSError as exc:
+        print(
+            f"render: cannot resolve --config-source path: {config_source}: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(EXIT_FAILURE) from exc
+    if not config_source.exists():
+        print(f"render: config source does not exist: {config_source}", file=sys.stderr)
+        raise SystemExit(EXIT_FAILURE)
+    if not config_source.is_dir():
+        print(
+            f"render: config source is not a directory: {config_source}",
+            file=sys.stderr,
+        )
+        raise SystemExit(EXIT_FAILURE)
 
     apply_quiet(quiet)
     out_dir = render_dir / "etc" / "containers" / "systemd"
