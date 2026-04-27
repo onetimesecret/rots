@@ -6,6 +6,7 @@ import dataclasses
 import difflib
 import logging
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import cyclopts
@@ -38,8 +39,10 @@ from ._helpers import (
     run_hook,
 )
 from .annotations import (
+    ConfigSource,
     Delay,
     InstanceType,
+    RenderDir,
     SchedulerFlag,
     TypeSelector,
     WebFlag,
@@ -404,6 +407,115 @@ def run(
         logger.info("Stopped")
 
 
+def _build_render_cfg(*, reference: str | None, tag: str | None) -> Config:
+    """Construct a ``Config`` for render mode, applying image/tag overrides.
+
+    Render mode does not use an executor or query the host, so this skips the
+    deploy-only steps (executor lookup, image resolution).
+    """
+    cfg = Config()
+    ref_image, ref_tag = parse_image_reference(reference) if reference else (None, None)
+    override_tag = ref_tag or tag
+    if ref_image or override_tag:
+        cfg = dataclasses.replace(
+            cfg,
+            image=ref_image or cfg.image,
+            tag=override_tag or cfg.tag,
+            _image_explicit=bool(ref_image) or cfg._image_explicit,
+        )
+    return cfg
+
+
+def _render_quadlets(
+    cfg: Config,
+    render_dir: Path,
+    *,
+    config_source: Path | None,
+    quiet: bool,
+    json_output: bool,
+) -> None:
+    """Emit Quadlet template files to ``render_dir`` with no host I/O.
+
+    Writes ``onetime-web@.container``, ``onetime-worker@.container``, and
+    ``onetime-scheduler@.container`` under ``<render_dir>/etc/containers/systemd/``.
+    Also emits ``onetime.image`` when ``cfg.registry`` is set.
+
+    ``config_source`` defaults to ``./confext/web/etc/onetimesecret`` resolved
+    against the current working directory when not supplied. Both supplied and
+    default paths are resolved to absolute paths before being passed to the
+    quadlet renderers.
+    """
+    import json as json_mod
+
+    if config_source is None:
+        config_source = Path("confext/web/etc/onetimesecret")
+    config_source = config_source.resolve()
+
+    apply_quiet(quiet)
+    out_dir = render_dir / "etc" / "containers" / "systemd"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    web_path = out_dir / "onetime-web@.container"
+    worker_path = out_dir / "onetime-worker@.container"
+    scheduler_path = out_dir / "onetime-scheduler@.container"
+
+    web_path.write_text(
+        quadlet.render_web_template(
+            cfg,
+            env_file_path=None,
+            force=False,
+            executor=None,
+            config_source=config_source,
+            render_mode=True,
+        )
+    )
+    worker_path.write_text(
+        quadlet.render_worker_template(
+            cfg,
+            env_file_path=None,
+            force=False,
+            executor=None,
+            config_source=config_source,
+            render_mode=True,
+        )
+    )
+    scheduler_path.write_text(
+        quadlet.render_scheduler_template(
+            cfg,
+            env_file_path=None,
+            force=False,
+            executor=None,
+            config_source=config_source,
+            render_mode=True,
+        )
+    )
+
+    files_written = [str(web_path), str(worker_path), str(scheduler_path)]
+
+    if cfg.registry:
+        image_path = out_dir / "onetime.image"
+        image_path.write_text(quadlet.render_image_template(cfg, executor=None))
+        files_written.append(str(image_path))
+
+    if json_output:
+        print(
+            json_mod.dumps(
+                {
+                    "action": "render",
+                    "render": True,
+                    "render_dir": str(render_dir),
+                    "config_source": str(config_source),
+                    "files": files_written,
+                },
+                indent=2,
+            )
+        )
+    elif not quiet:
+        logger.info(f"Rendered Quadlet files to {out_dir}")
+        for f in files_written:
+            logger.info(f"  {f}")
+
+
 @app.command
 def deploy(
     reference: ImageRef = None,
@@ -469,12 +581,21 @@ def deploy(
             ),
         ),
     ] = None,
+    render: RenderDir = None,
+    config_source: ConfigSource = None,
 ):
     """Deploy new instance(s) using quadlet and Podman secrets.
 
     Writes quadlet config and starts systemd service.
     Requires /etc/default/onetimesecret and Podman secrets to be configured.
     Records deployment to timeline for audit and rollback support.
+
+    The ``--render <dir>`` flag emits Quadlet files to a local directory and
+    performs no host I/O (no SSH, no systemd, no DB write). Use ``--config-source``
+    to point at a directory of local config files when emitting Volume= lines
+    (defaults to ``./confext/web/etc/onetimesecret`` when omitted). The standalone
+    ``rots instance render`` subcommand is preferred for new code; ``--render``
+    here is retained for back-compat.
 
     Examples:
         ots instances deploy --web 7043,7044        # Deploy web on ports
@@ -488,9 +609,25 @@ def deploy(
         ots instances deploy --web 7043 --post-hook './notify.sh'  # Notify after deploy
         ots instances deploy ghcr.io/org/image:v1.0 --web 7043  # Explicit image reference
         ots instances deploy --tag v0.24.0 --web 7043  # Specific tag only
+        ots instances deploy --web 7043 --render ./out  # Emit Quadlet files locally
     """
-    import datetime
-    import json as json_mod
+    # --render short-circuits before any deploy-specific validation.
+    # `--host` + `--render` is a usage error: render mode performs no host I/O,
+    # so accepting --host would silently mask a misconfiguration. Fail fast.
+    if render is not None:
+        if context.host_var.get(None) is not None:
+            raise SystemExit(
+                "--host cannot be combined with --render; render mode performs no host I/O."
+            )
+        cfg = _build_render_cfg(reference=reference, tag=tag)
+        _render_quadlets(
+            cfg,
+            render,
+            config_source=config_source,
+            quiet=quiet,
+            json_output=json_output,
+        )
+        return
 
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
 
@@ -507,6 +644,9 @@ def deploy(
         )
     if itype is None:
         raise SystemExit("Instance type required for deploy. Use --web, --worker, or --scheduler.")
+
+    import datetime
+    import json as json_mod
 
     cfg = Config()
 
@@ -740,6 +880,76 @@ def deploy(
 
     if deploy_results and not all_ok:
         raise SystemExit(EXIT_PARTIAL if any_ok else EXIT_FAILURE)
+
+
+@app.command
+def render(
+    reference: ImageRef = None,
+    out_dir: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            help="Output directory for rendered Quadlet files.",
+        ),
+    ] = None,
+    web: WebFlag = None,
+    tag: TagFlag = None,
+    config_source: ConfigSource = None,
+    quiet: Quiet = False,
+    json_output: JsonOutput = False,
+):
+    """Emit Quadlet template files to a local directory with no host I/O.
+
+    Writes ``onetime-web@.container``, ``onetime-worker@.container``, and
+    ``onetime-scheduler@.container`` (plus ``onetime.image`` when a registry
+    is configured) under ``<out_dir>/etc/containers/systemd/``. Performs no
+    SSH, no systemd, and no DB writes.
+
+    ``--config-source`` defaults to ``./confext/web/etc/onetimesecret``
+    relative to the current working directory. Files matching the canonical
+    OneTimeSecret config names found in that directory are emitted as
+    ``Volume=`` lines in the rendered units.
+
+    ``--web`` is accepted for forward-compatibility but does not affect the
+    rendered output (the templates are port-agnostic). The deploy-only flags
+    (``--host``, ``--pre-hook``, ``--post-hook``, ``--wait``, ``--wait-timeout``,
+    ``--force``, ``--delay``, ``--dry-run``) are not accepted here. Combining
+    ``--host`` with this command raises an error.
+
+    Examples:
+        ots instance render ./out                          # Render to ./out
+        ots instance render --tag v0.24.0 ./out            # Pin a specific tag
+        ots instance render ghcr.io/org/image:v1 ./out     # Explicit image reference
+        ots instance render ./out --config-source ./cfg    # Custom config probe dir
+    """
+    if context.host_var.get(None) is not None:
+        raise SystemExit(
+            "--host cannot be combined with `instance render`; "
+            "render produces local files only and performs no host I/O."
+        )
+
+    # Disambiguate positional args. The signature is `<reference> <out_dir>`,
+    # but with a single positional users want it to be the directory.
+    # Image references carry a tag (":") or digest ("@"); a directory path
+    # generally has neither. When only one positional is given and it lacks
+    # both markers, treat it as out_dir.
+    if reference and out_dir is None and not any(c in reference for c in ":@"):
+        out_dir = Path(reference)
+        reference = None
+
+    if out_dir is None:
+        raise SystemExit("out_dir is required. Example: ots instance render ./out")
+
+    # `web` is accepted for forward-compat only; templates are port-agnostic.
+    del web
+
+    cfg = _build_render_cfg(reference=reference, tag=tag)
+    _render_quadlets(
+        cfg,
+        out_dir,
+        config_source=config_source,
+        quiet=quiet,
+        json_output=json_output,
+    )
 
 
 @app.command

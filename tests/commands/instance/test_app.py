@@ -3242,3 +3242,528 @@ class TestStreamingCommands:
         call_kwargs = mock_ex.run_stream.call_args
         assert call_kwargs.kwargs.get("sudo") is True
         assert call_kwargs.kwargs.get("timeout") == 300
+
+
+# ---------------------------------------------------------------------------
+# Issue #67: deploy --render contract tests
+# ---------------------------------------------------------------------------
+#
+# The --render flag writes Quadlet files locally under <dir>/etc/containers/systemd/
+# and exits with no host I/O, no SSH, no systemd, no DB write, and no hooks.
+# These tests are the primary contract for that behaviour. They will fail with
+# TypeError until python-dev's parallel impl lands the new `render` and
+# `config_source` parameters on instance.deploy.
+
+
+class TestDeployRender:
+    """Tests for `deploy ... --render <dir>` (issue #67)."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        """Remove image/tag env vars so deploys are deterministic."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+    def _patch_render_safety_nets(self, mocker):
+        """Patch every host-touching dependency that --render must NOT call.
+
+        Returns a dict of name -> mock so individual tests can assert_not_called.
+        """
+        return {
+            "get_executor": mocker.patch.object(Config, "get_executor"),
+            "deploy_lock": mocker.patch("rots.commands.instance.app.deploy_lock"),
+            "systemd_start": mocker.patch("rots.commands.instance.app.systemd.start"),
+            "systemd_daemon_reload": mocker.patch(
+                "rots.commands.instance.app.systemd.daemon_reload",
+                create=True,
+            ),
+            "systemd_wait_for_healthy": mocker.patch(
+                "rots.commands.instance.app.systemd.wait_for_healthy"
+            ),
+            "systemd_wait_for_http_healthy": mocker.patch(
+                "rots.commands.instance.app.systemd.wait_for_http_healthy"
+            ),
+            "record_deployment": mocker.patch("rots.commands.instance.app.db.record_deployment"),
+            "run_hook": mocker.patch("rots.commands.instance.app.run_hook"),
+            "assets_update": mocker.patch("rots.commands.instance.app.assets.update"),
+            "write_web_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_web_template"
+            ),
+            "write_worker_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_worker_template"
+            ),
+            "write_scheduler_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_scheduler_template"
+            ),
+        }
+
+    def test_render_writes_three_container_files_for_web(self, mocker, tmp_path):
+        """deploy --web 7043 --render <dir> writes the three .container template files."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert (target_dir / "onetime-web@.container").exists()
+        assert (target_dir / "onetime-worker@.container").exists()
+        assert (target_dir / "onetime-scheduler@.container").exists()
+
+    def test_render_writes_image_unit_when_registry_set(self, mocker, monkeypatch, tmp_path):
+        """`onetime.image` is emitted only when cfg.registry is set."""
+        self._patch_render_safety_nets(mocker)
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert (target_dir / "onetime.image").exists()
+
+    def test_render_omits_image_unit_when_registry_unset(self, mocker, tmp_path):
+        """`onetime.image` is NOT emitted when cfg.registry is unset."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert not (target_dir / "onetime.image").exists()
+
+    def test_render_does_not_call_get_executor(self, mocker, tmp_path):
+        """Under --render, Config.get_executor must not be called."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        nets["get_executor"].assert_not_called()
+
+    def test_render_does_not_acquire_deploy_lock(self, mocker, tmp_path):
+        """Under --render, the deploy_lock context manager must not be entered."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        nets["deploy_lock"].assert_not_called()
+
+    def test_render_does_not_call_systemd(self, mocker, tmp_path):
+        """Under --render, systemd start / daemon_reload / health waits are skipped."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        nets["systemd_start"].assert_not_called()
+        nets["systemd_daemon_reload"].assert_not_called()
+        nets["systemd_wait_for_healthy"].assert_not_called()
+        nets["systemd_wait_for_http_healthy"].assert_not_called()
+
+    def test_render_does_not_record_deployment(self, mocker, tmp_path):
+        """Under --render, deployment history must not be touched."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        nets["record_deployment"].assert_not_called()
+
+    def test_render_does_not_run_hooks(self, mocker, tmp_path):
+        """Under --render, pre/post hooks must not run even if specified."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(
+            web="7043",
+            render=out_dir,
+            pre_hook="./scan.sh",
+            post_hook="./notify.sh",
+        )
+
+        nets["run_hook"].assert_not_called()
+
+    def test_render_does_not_call_write_template_helpers(self, mocker, tmp_path):
+        """Under --render, the host-targeted write_*_template helpers are bypassed.
+
+        Render mode writes to <dir>/etc/containers/systemd/ directly; it must not
+        call quadlet.write_web_template (which writes to /etc/containers/systemd/).
+        """
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        nets["write_web_template"].assert_not_called()
+        nets["write_worker_template"].assert_not_called()
+        nets["write_scheduler_template"].assert_not_called()
+
+    def test_render_with_host_raises(self, mocker, tmp_path):
+        """`--render --host some-host` must raise rather than silently ignore --host.
+
+        Mixing a remote target with local-only render is a user mistake; the
+        command must surface that conflict rather than render and exit cleanly.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        # context.host_var is the canonical channel for --host on the global app.
+        from rots import context
+
+        token = context.host_var.set("some-host.example.com")
+        try:
+            with pytest.raises(SystemExit):
+                instance.deploy(web="7043", render=out_dir)
+        finally:
+            context.host_var.reset(token)
+
+    def test_render_defaults_config_source_to_confext_web(self, mocker, monkeypatch, tmp_path):
+        """When config_source=None, deploy --render defaults to ./confext/web/etc/onetimesecret.
+
+        Resolving the default against cwd (rather than an absolute hard-coded
+        path) lets operators run `rots instance deploy --render ./out` from
+        their checkout without flag soup.
+        """
+        self._patch_render_safety_nets(mocker)
+        monkeypatch.chdir(tmp_path)
+
+        default_src = tmp_path / "confext" / "web" / "etc" / "onetimesecret"
+        default_src.mkdir(parents=True)
+        (default_src / "config.yaml").write_text("# placeholder\n")
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir, config_source=None)
+
+        web_unit = (
+            out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
+        ).read_text()
+
+        # The default config_source resolved to <cwd>/confext/web/etc/onetimesecret,
+        # where config.yaml exists, so a Volume= line for it must be rendered.
+        assert ":/app/etc/config.yaml:ro" in web_unit
+
+    def test_render_propagates_config_source_into_rendered_files(self, mocker, tmp_path):
+        """`--config-source <dir>` causes Volume= lines for matching files to appear."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        cfg_src = tmp_path / "cfgsrc"
+        cfg_src.mkdir()
+        (cfg_src / "config.yaml").write_text("# placeholder\n")
+
+        instance.deploy(web="7043", render=out_dir, config_source=cfg_src)
+
+        web_unit = (
+            out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
+        ).read_text()
+
+        # The Volume= line must reference config.yaml mounted at the
+        # container's /app/etc/config.yaml:ro path.
+        assert ":/app/etc/config.yaml:ro" in web_unit
+
+    def test_render_emits_no_secret_lines(self, mocker, tmp_path):
+        """No `Secret=` lines must appear in any rendered file under --render."""
+        self._patch_render_safety_nets(mocker)
+        # Make secrets visible at the env-file level so a regression that
+        # re-enables Secret= emission would surface.
+        from rots.environment_file import SecretSpec
+
+        env_file = tmp_path / "envfile"
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")
+        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
+        mocker.patch("rots.quadlet.secret_exists", return_value=True)
+        mocker.patch(
+            "rots.quadlet.get_secrets_from_env_file",
+            return_value=[
+                SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_auth_secret"),
+            ],
+        )
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        instance.deploy(web="7043", render=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        for unit_name in (
+            "onetime-web@.container",
+            "onetime-worker@.container",
+            "onetime-scheduler@.container",
+        ):
+            content = (target_dir / unit_name).read_text()
+            assert "Secret=" not in content, (
+                f"{unit_name} unexpectedly contains a Secret= directive: {content!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Issue #67: dedicated `instance render` subcommand contract tests
+# ---------------------------------------------------------------------------
+#
+# The `render` command on instance.app is a separate subcommand (not a flag
+# on deploy). It writes Quadlet files locally and never performs host I/O.
+# It accepts only a small set of parameters and explicitly excludes deploy-only
+# flags. Tests import the function directly from `rots.commands.instance.app`
+# rather than the package namespace, since the package `__init__.py` does not
+# re-export it (and we are forbidden from modifying production code in this
+# round).
+
+
+class TestInstanceRenderCommand:
+    """Tests for the dedicated `rots instance render` subcommand (issue #67)."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        """Remove image/tag env vars so renders are deterministic."""
+        monkeypatch.delenv("IMAGE", raising=False)
+        monkeypatch.delenv("TAG", raising=False)
+        monkeypatch.delenv("OTS_REGISTRY", raising=False)
+
+    def _patch_render_safety_nets(self, mocker):
+        """Patch every host-touching dependency that `render` must NOT call.
+
+        Returns a dict of name -> mock so individual tests can assert_not_called.
+        """
+        return {
+            "get_executor": mocker.patch.object(Config, "get_executor"),
+            "deploy_lock": mocker.patch("rots.commands.instance.app.deploy_lock"),
+            "systemd_start": mocker.patch("rots.commands.instance.app.systemd.start"),
+            "systemd_daemon_reload": mocker.patch(
+                "rots.commands.instance.app.systemd.daemon_reload",
+                create=True,
+            ),
+            "systemd_wait_for_healthy": mocker.patch(
+                "rots.commands.instance.app.systemd.wait_for_healthy"
+            ),
+            "systemd_wait_for_http_healthy": mocker.patch(
+                "rots.commands.instance.app.systemd.wait_for_http_healthy"
+            ),
+            "record_deployment": mocker.patch("rots.commands.instance.app.db.record_deployment"),
+            "run_hook": mocker.patch("rots.commands.instance.app.run_hook"),
+            "assets_update": mocker.patch("rots.commands.instance.app.assets.update"),
+            "write_web_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_web_template"
+            ),
+            "write_worker_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_worker_template"
+            ),
+            "write_scheduler_template": mocker.patch(
+                "rots.commands.instance.app.quadlet.write_scheduler_template"
+            ),
+        }
+
+    def test_render_writes_three_container_files(self, mocker, tmp_path):
+        """`instance render <out>` writes the three .container template files."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert (target_dir / "onetime-web@.container").exists()
+        assert (target_dir / "onetime-worker@.container").exists()
+        assert (target_dir / "onetime-scheduler@.container").exists()
+
+    def test_render_writes_image_unit_when_registry_set(self, mocker, monkeypatch, tmp_path):
+        """`onetime.image` is emitted only when cfg.registry is set."""
+        self._patch_render_safety_nets(mocker)
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert (target_dir / "onetime.image").exists()
+
+    def test_render_omits_image_unit_when_registry_unset(self, mocker, tmp_path):
+        """`onetime.image` is NOT emitted when cfg.registry is unset."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        target_dir = out_dir / "etc" / "containers" / "systemd"
+        assert not (target_dir / "onetime.image").exists()
+
+    def test_render_defaults_config_source_to_confext_web(self, mocker, monkeypatch, tmp_path):
+        """When --config-source omitted, defaults to ./confext/web/etc/onetimesecret."""
+        self._patch_render_safety_nets(mocker)
+        monkeypatch.chdir(tmp_path)
+
+        default_src = tmp_path / "confext" / "web" / "etc" / "onetimesecret"
+        default_src.mkdir(parents=True)
+        (default_src / "config.yaml").write_text("# placeholder\n")
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        web_unit = (
+            out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
+        ).read_text()
+
+        # The default config_source resolved to <cwd>/confext/web/etc/onetimesecret,
+        # where config.yaml exists, so a Volume= line for it must be rendered.
+        assert ":/app/etc/config.yaml:ro" in web_unit
+
+    def test_render_explicit_config_source_takes_precedence(self, mocker, tmp_path):
+        """`--config-source <dir>` overrides the default ./confext/web/etc/onetimesecret."""
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        cfg_src = tmp_path / "explicit"
+        cfg_src.mkdir()
+        # Use a non-default file (auth.yaml) so we can prove the explicit path
+        # was probed instead of the default location (which has no files here).
+        (cfg_src / "auth.yaml").write_text("# placeholder\n")
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir, config_source=cfg_src)
+
+        web_unit = (
+            out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
+        ).read_text()
+
+        assert ":/app/etc/auth.yaml:ro" in web_unit
+
+    def test_render_signature_excludes_deploy_only_flags(self):
+        """`render` must NOT accept deploy-only flags as parameters.
+
+        These flags are meaningful only to the host-touching deploy path.
+        Exposing them on `render` would invite confusion.
+        """
+        import inspect
+
+        from rots.commands.instance.app import render as render_cmd
+
+        sig = inspect.signature(render_cmd)
+        params = sig.parameters
+
+        for forbidden in (
+            "host",
+            "pre_hook",
+            "post_hook",
+            "wait",
+            "wait_timeout",
+            "force",
+            "delay",
+            "dry_run",
+        ):
+            assert forbidden not in params, (
+                f"`render` must not accept `{forbidden}`; got signature: {sig}"
+            )
+
+    def test_render_does_not_call_get_executor(self, mocker, tmp_path):
+        """Under `render`, Config.get_executor must not be called."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        nets["get_executor"].assert_not_called()
+
+    def test_render_does_not_acquire_deploy_lock(self, mocker, tmp_path):
+        """Under `render`, the deploy_lock context manager must not be entered."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        nets["deploy_lock"].assert_not_called()
+
+    def test_render_does_not_call_systemd(self, mocker, tmp_path):
+        """Under `render`, systemd start / daemon_reload must not be called."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        nets["systemd_start"].assert_not_called()
+        nets["systemd_daemon_reload"].assert_not_called()
+
+    def test_render_does_not_record_deployment(self, mocker, tmp_path):
+        """Under `render`, deployment history must not be touched."""
+        nets = self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir)
+
+        nets["record_deployment"].assert_not_called()
+
+    def test_render_with_host_raises(self, mocker, tmp_path):
+        """`--host some-host` while invoking `render` must raise.
+
+        `render` is local-only by design; mixing it with --host is a user
+        mistake that must be surfaced rather than silently ignored.
+        """
+        self._patch_render_safety_nets(mocker)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        from rots import context
+        from rots.commands.instance.app import render as render_cmd
+
+        token = context.host_var.set("some-host.example.com")
+        try:
+            with pytest.raises(SystemExit):
+                render_cmd(out_dir=out_dir)
+        finally:
+            context.host_var.reset(token)
