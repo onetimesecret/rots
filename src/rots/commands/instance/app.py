@@ -472,7 +472,7 @@ def _render_quadlets(
     ``onetime-scheduler@.container`` under ``<render_dir>/etc/containers/systemd/``.
     Also emits ``onetime.image`` when ``cfg.registry`` is set.
 
-    ``config_source`` defaults to ``./confexts/web/etc/onetimesecret`` resolved
+    ``config_source`` defaults to ``./confexts/web/__base__/etc/onetimesecret`` resolved
     against the current working directory when not supplied. Both supplied and
     default paths are resolved to absolute paths before being passed to the
     quadlet renderers.
@@ -480,11 +480,11 @@ def _render_quadlets(
     import json as json_mod
 
     if config_source is None:
-        config_source = Path("confexts/web/etc/onetimesecret")
+        config_source = Path("confexts/web/__base__/etc/onetimesecret")
     # Resolve early and fail loud on any path issue. A typo in --config-source
     # would otherwise silently produce zero Volume= overrides — the rendered
     # tree looks fine but is missing the operator's config files. The default
-    # (./confexts/web/etc/onetimesecret) gets the same treatment: render mode
+    # (./confexts/web/__base__/etc/onetimesecret) gets the same treatment: render mode
     # is meant to be explicit about its inputs.
     try:
         config_source = config_source.resolve()
@@ -725,7 +725,7 @@ def deploy(
     The ``--render <dir>`` flag emits Quadlet files to a local directory and
     performs no host I/O (no SSH, no systemd, no DB write). Use ``--config-source``
     to point at a directory of local config files when emitting Volume= lines
-    (defaults to ``./confexts/web/etc/onetimesecret`` when omitted). The standalone
+    (defaults to ``./confexts/web/__base__/etc/onetimesecret`` when omitted). The standalone
     ``rots instance render`` subcommand is preferred for new code; ``--render``
     here is retained for back-compat.
 
@@ -1036,7 +1036,7 @@ def render(
     is configured) under ``<out_dir>/etc/containers/systemd/``. Performs no
     SSH, no systemd, and no DB writes.
 
-    ``--config-source`` defaults to ``./confexts/web/etc/onetimesecret``
+    ``--config-source`` defaults to ``./confexts/web/__base__/etc/onetimesecret``
     relative to the current working directory. Files matching the canonical
     OneTimeSecret config names found in that directory are emitted as
     ``Volume=`` lines in the rendered units.

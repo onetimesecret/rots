@@ -3267,7 +3267,7 @@ class TestDeployRender:
         so the render path doesn't trip the alias guard.
 
         Render mode also validates ``--config-source`` exists. The default
-        is ``./confexts/web/etc/onetimesecret`` relative to cwd, so chdir
+        is ``./confexts/web/__base__/etc/onetimesecret`` relative to cwd, so chdir
         into a scratch dir and create the scaffold so tests that don't
         supply ``config_source`` pass validation.
         """
@@ -3276,7 +3276,7 @@ class TestDeployRender:
         monkeypatch.setenv("TAG", "v0.24.0")
         scratch = tmp_path / "_scratch"
         scratch.mkdir()
-        (scratch / "confexts" / "web" / "etc" / "onetimesecret").mkdir(parents=True)
+        (scratch / "confexts" / "web" / "__base__" / "etc" / "onetimesecret").mkdir(parents=True)
         monkeypatch.chdir(scratch)
 
     def _patch_render_safety_nets(self, mocker):
@@ -3453,16 +3453,17 @@ class TestDeployRender:
             context.host_var.reset(token)
 
     def test_render_defaults_config_source_to_confexts_web(self, mocker, monkeypatch, tmp_path):
-        """When config_source=None, deploy --render defaults to ./confexts/web/etc/onetimesecret.
+        """When config_source=None, deploy --render uses __base__/etc default.
 
-        Resolving the default against cwd (rather than an absolute hard-coded
-        path) lets operators run `rots instance deploy --render ./out` from
-        their checkout without flag soup.
+        Default is ./confexts/web/__base__/etc/onetimesecret. Resolving the
+        default against cwd (rather than an absolute hard-coded path) lets
+        operators run `rots instance deploy --render ./out` from their checkout
+        without flag soup.
         """
         self._patch_render_safety_nets(mocker)
         monkeypatch.chdir(tmp_path)
 
-        default_src = tmp_path / "confexts" / "web" / "etc" / "onetimesecret"
+        default_src = tmp_path / "confexts" / "web" / "__base__" / "etc" / "onetimesecret"
         default_src.mkdir(parents=True)
         (default_src / "config.yaml").write_text("# placeholder\n")
 
@@ -3475,7 +3476,7 @@ class TestDeployRender:
             out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
         ).read_text()
 
-        # The default config_source resolved to <cwd>/confexts/web/etc/onetimesecret,
+        # The default config_source resolved to <cwd>/confexts/web/__base__/etc/onetimesecret,
         # where config.yaml exists, so a Volume= line for it must be rendered.
         assert ":/app/etc/config.yaml:ro" in web_unit
 
@@ -3551,7 +3552,7 @@ class TestInstanceRenderCommand:
         so the render path doesn't trip the alias guard.
 
         Render mode also validates ``--config-source`` exists. The default
-        is ``./confexts/web/etc/onetimesecret`` relative to cwd, so chdir
+        is ``./confexts/web/__base__/etc/onetimesecret`` relative to cwd, so chdir
         into a scratch dir and create the scaffold so tests that don't
         supply ``config_source`` pass validation.
         """
@@ -3560,7 +3561,7 @@ class TestInstanceRenderCommand:
         monkeypatch.setenv("TAG", "v0.24.0")
         scratch = tmp_path / "_scratch"
         scratch.mkdir()
-        (scratch / "confexts" / "web" / "etc" / "onetimesecret").mkdir(parents=True)
+        (scratch / "confexts" / "web" / "__base__" / "etc" / "onetimesecret").mkdir(parents=True)
         monkeypatch.chdir(scratch)
 
     def _patch_render_safety_nets(self, mocker):
@@ -3694,11 +3695,11 @@ class TestInstanceRenderCommand:
         assert sentinel.read_text() == "# operator file\n"
 
     def test_render_defaults_config_source_to_confexts_web(self, mocker, monkeypatch, tmp_path):
-        """When --config-source omitted, defaults to ./confexts/web/etc/onetimesecret."""
+        """When --config-source omitted, defaults to ./confexts/web/__base__/etc/onetimesecret."""
         self._patch_render_safety_nets(mocker)
         monkeypatch.chdir(tmp_path)
 
-        default_src = tmp_path / "confexts" / "web" / "etc" / "onetimesecret"
+        default_src = tmp_path / "confexts" / "web" / "__base__" / "etc" / "onetimesecret"
         default_src.mkdir(parents=True)
         (default_src / "config.yaml").write_text("# placeholder\n")
 
@@ -3713,12 +3714,12 @@ class TestInstanceRenderCommand:
             out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container"
         ).read_text()
 
-        # The default config_source resolved to <cwd>/confexts/web/etc/onetimesecret,
+        # The default config_source resolved to <cwd>/confexts/web/__base__/etc/onetimesecret,
         # where config.yaml exists, so a Volume= line for it must be rendered.
         assert ":/app/etc/config.yaml:ro" in web_unit
 
     def test_render_explicit_config_source_takes_precedence(self, mocker, tmp_path):
-        """`--config-source <dir>` overrides the default ./confexts/web/etc/onetimesecret."""
+        """`--config-source <dir>` overrides the __base__/etc/onetimesecret default."""
         self._patch_render_safety_nets(mocker)
 
         out_dir = tmp_path / "out"
@@ -3910,7 +3911,7 @@ class TestInstanceRenderCommand:
     def test_render_default_config_source_missing_exits(
         self, mocker, monkeypatch, capsys, tmp_path
     ):
-        """The default ./confexts/web/etc/onetimesecret must exist when not overridden.
+        """The default ./confexts/web/__base__/etc/onetimesecret must exist when not overridden.
 
         Render mode is explicit about its inputs; if the operator runs it from
         a directory without the scaffold, fail loud rather than silently emit
@@ -3959,7 +3960,7 @@ class TestInstanceRenderCommand:
         # The autouse fixture chdir'd into a scratch dir; switch into one we
         # control so we can pass a relative path.
         work = tmp_path / "work"
-        (work / "confexts" / "web" / "etc" / "onetimesecret").mkdir(parents=True)
+        (work / "confexts" / "web" / "__base__" / "etc" / "onetimesecret").mkdir(parents=True)
         monkeypatch.chdir(work)
 
         from rots.commands.instance.app import render as render_cmd
@@ -4147,13 +4148,15 @@ class TestInstanceRenderCommand:
 def _stage_default_confexts(monkeypatch, tmp_path):
     """Helper: chdir into a scratch dir staged with the default config_source.
 
-    Render mode validates ``./confexts/web/etc/onetimesecret`` exists when
+    Render mode validates ``./confexts/web/__base__/etc/onetimesecret`` exists when
     no ``--config-source`` is supplied. Tests that don't pass an explicit
     config_source need the scaffold staged.
     """
     scratch = tmp_path / "_scratch_confexts_supp"
     scratch.mkdir(exist_ok=True)
-    (scratch / "confexts" / "web" / "etc" / "onetimesecret").mkdir(parents=True, exist_ok=True)
+    (scratch / "confexts" / "web" / "__base__" / "etc" / "onetimesecret").mkdir(
+        parents=True, exist_ok=True
+    )
     monkeypatch.chdir(scratch)
     return scratch
 
