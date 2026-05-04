@@ -49,6 +49,7 @@ class TestBuildVersionDetection:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -97,6 +98,7 @@ class TestBuildVersionDetection:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -182,6 +184,7 @@ class TestBuildPodmanInvocation:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -227,6 +230,7 @@ class TestBuildPodmanInvocation:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,  # No registry configured
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -266,6 +270,7 @@ class TestBuildPodmanInvocation:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry="registry.example.com",
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -306,6 +311,7 @@ class TestBuildPodmanInvocation:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -349,6 +355,7 @@ class TestBuildPodmanInvocation:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -400,6 +407,7 @@ class TestBuildDefaultBehavior:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -438,6 +446,7 @@ class TestBuildDefaultBehavior:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -482,6 +491,7 @@ class TestBuildDefaultBehavior:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -525,6 +535,7 @@ class TestBuildErrorHandling:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -601,6 +612,7 @@ class TestBuildVariants:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -655,6 +667,7 @@ class TestBuildVariants:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -725,6 +738,7 @@ class TestBuildVariants:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry="registry.example.com",
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )
@@ -780,6 +794,7 @@ def _mock_build_env(mocker, tmp_path):
             image="ghcr.io/onetimesecret/onetimesecret",
             registry=None,
             registry_auth_file=tmp_path / "auth.json",
+            podman_auth_kwargs=lambda executor=None: {},
             get_executor=lambda host=None: None,
         ),
     )
@@ -1074,6 +1089,7 @@ class TestBuildBaseCleanup:
                 image="ghcr.io/onetimesecret/onetimesecret",
                 registry=None,
                 registry_auth_file=tmp_path / "auth.json",
+                podman_auth_kwargs=lambda executor=None: {},
                 get_executor=lambda host=None: None,
             ),
         )

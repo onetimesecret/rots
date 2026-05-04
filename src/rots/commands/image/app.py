@@ -148,13 +148,13 @@ def pull(
     logger.info(f"Pulling {full_image}...")
 
     try:
-        # Use auth file for authenticated registries
-        pull_kwargs = {
-            "authfile": str(cfg.registry_auth_file),
+        # Use auth file only when explicitly configured or file exists
+        pull_kwargs: dict[str, object] = {
             "check": True,
             "capture_output": True,
             "text": True,
         }
+        pull_kwargs.update(cfg.podman_auth_kwargs(executor=ex))
         if platform:
             pull_kwargs["platform"] = platform
 
@@ -345,13 +345,11 @@ def list_remote(
         resolved_image,
         reg,
     )
-    cmd = [
-        "skopeo",
-        "list-tags",
-        "--authfile",
-        str(cfg.registry_auth_file),
-        image_ref,
-    ]
+    cmd = ["skopeo", "list-tags"]
+    auth_kwargs = cfg.podman_auth_kwargs()
+    if "authfile" in auth_kwargs:
+        cmd.extend(["--authfile", auth_kwargs["authfile"]])
+    cmd.append(image_ref)
 
     logger.info(f"$ {' '.join(cmd)}")
 
@@ -753,16 +751,19 @@ def login(
     logger.info(f"Logging in to {reg}...")
 
     try:
-        p.login(
-            reg,
-            username=user,
-            password_stdin=True,
-            authfile=str(cfg.registry_auth_file),
-            input=pw,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        login_kwargs = {
+            "username": user,
+            "password_stdin": True,
+            "input": pw,
+            "check": True,
+            "capture_output": True,
+            "text": True,
+        }
+        # For login, pass authfile only if explicitly configured (env var or override).
+        # This allows podman to create the file in its default location on first login.
+        if cfg._registry_auth_file or os.environ.get("REGISTRY_AUTH_FILE"):
+            login_kwargs["authfile"] = str(cfg.registry_auth_file)
+        p.login(reg, **login_kwargs)
         logger.info(f"Login successful: {reg}")
     except Exception as e:
         logger.error(f"Login failed: {e}")
@@ -847,13 +848,13 @@ def push(
 
     # Push to registry
     try:
-        p.push(
-            target_full,
-            authfile=str(cfg.registry_auth_file),
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        push_kwargs: dict[str, object] = {
+            "check": True,
+            "capture_output": True,
+            "text": True,
+        }
+        push_kwargs.update(cfg.podman_auth_kwargs(executor=ex))
+        p.push(target_full, **push_kwargs)
         logger.info(f"Successfully pushed {target_full}")
     except Exception as e:
         logger.error(f"Failed to push {target_full}: {e}")
@@ -899,13 +900,13 @@ def logout(
     logger.info(f"Logging out from {reg}...")
 
     try:
-        p.logout(
-            reg,
-            authfile=str(cfg.registry_auth_file),
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        logout_kwargs: dict[str, object] = {
+            "check": True,
+            "capture_output": True,
+            "text": True,
+        }
+        logout_kwargs.update(cfg.podman_auth_kwargs(executor=ex))
+        p.logout(reg, **logout_kwargs)
         logger.info(f"Logged out from {reg}")
     except Exception as e:
         logger.error(f"Logout failed: {e}")
@@ -1677,13 +1678,13 @@ def _push_images(
         logger.info(f"Pushing {target_image}...")
 
         try:
-            p.push(
-                target_image,
-                authfile=str(cfg.registry_auth_file),
-                check=True,
-                capture_output=quiet,
-                text=True,
-            )
+            push_kwargs: dict[str, object] = {
+                "check": True,
+                "capture_output": quiet,
+                "text": True,
+            }
+            push_kwargs.update(cfg.podman_auth_kwargs())
+            p.push(target_image, **push_kwargs)
             logger.info(f"Successfully pushed {target_image}")
         except Exception as e:
             logger.error(f"Failed to push {target_image}: {e}")
