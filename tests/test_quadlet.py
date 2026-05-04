@@ -93,7 +93,7 @@ class TestContainerTemplate:
 
         content = cfg.web_template_path.read_text()
         # Uses fixed path for infrastructure config (not per-instance)
-        assert "EnvironmentFile=/etc/default/onetimesecret" in content
+        assert "EnvironmentFile=/etc/default/onetimesecret.d/*.conf" in content
 
     def test_write_web_template_includes_syslog_tag(self, mocker, tmp_path):
         """Container quadlet should include syslog tag for unified log filtering."""
@@ -139,35 +139,8 @@ class TestContainerTemplate:
         assert f"Volume={config_dir}/logging.yaml:/app/etc/logging.yaml:ro" in content
         assert "Volume=static_assets:/app/public:ro" in content
 
-    def test_write_web_template_includes_podman_secrets_from_env_file(self, mocker, tmp_path):
-        """Container quadlet should include Secret= directives from env file."""
-        mocker.patch("rots.quadlet.systemd.daemon_reload")
-        mocker.patch("rots.quadlet.secret_exists", return_value=True)
-        from rots import quadlet
-        from rots.config import Config
-
-        # Create an env file with SECRET_VARIABLE_NAMES
-        env_file = tmp_path / "onetimesecret.env"
-        env_file.write_text(
-            "SECRET_VARIABLE_NAMES=API_KEY,DB_PASSWORD\n"
-            "_API_KEY=ots_api_key\n"
-            "_DB_PASSWORD=ots_db_password\n"
-        )
-
-        cfg = Config(
-            web_template_path=tmp_path / "onetime-web@.container",
-            var_dir=tmp_path / "var",
-        )
-
-        quadlet.write_web_template(cfg, env_file_path=env_file, force=True)
-
-        content = cfg.web_template_path.read_text()
-        # Secrets generated from env file's SECRET_VARIABLE_NAMES
-        assert "Secret=ots_api_key,type=env,target=API_KEY" in content
-        assert "Secret=ots_db_password,type=env,target=DB_PASSWORD" in content
-
-    def test_write_web_template_no_env_file_shows_comment(self, mocker, tmp_path):
-        """Container quadlet should show comment when no env file exists."""
+    def test_write_web_template_secrets_section_comment(self, mocker, tmp_path):
+        """Container quadlet should include drop-in directory comment for secrets."""
         mocker.patch("rots.quadlet.systemd.daemon_reload")
         from rots import quadlet
         from rots.config import Config
@@ -177,31 +150,11 @@ class TestContainerTemplate:
             var_dir=tmp_path / "var",
         )
 
-        # Pass a non-existent env file path
-        quadlet.write_web_template(cfg, env_file_path=tmp_path / "nonexistent.env", force=True)
+        quadlet.write_web_template(cfg, force=True)
 
         content = cfg.web_template_path.read_text()
-        assert "No secrets configured" in content
-
-    def test_write_web_template_no_secret_names_shows_comment(self, mocker, tmp_path):
-        """Container quadlet should show comment when no SECRET_VARIABLE_NAMES."""
-        mocker.patch("rots.quadlet.systemd.daemon_reload")
-        from rots import quadlet
-        from rots.config import Config
-
-        # Create an env file without SECRET_VARIABLE_NAMES
-        env_file = tmp_path / "onetimesecret.env"
-        env_file.write_text("REDIS_URL=redis://localhost\n")
-
-        cfg = Config(
-            web_template_path=tmp_path / "onetime-web@.container",
-            var_dir=tmp_path / "var",
-        )
-
-        quadlet.write_web_template(cfg, env_file_path=env_file, force=True)
-
-        content = cfg.web_template_path.read_text()
-        assert "No secrets configured" in content
+        # Secrets are now loaded via environment drop-in directory
+        assert "Secrets loaded via environment drop-in directory" in content
 
     def test_write_web_template_includes_systemd_dependencies(self, mocker, tmp_path):
         """Container quadlet should have proper systemd dependencies."""
@@ -527,7 +480,7 @@ class TestWorkerTemplate:
         quadlet.write_worker_template(cfg, force=True)
 
         content = cfg.worker_template_path.read_text()
-        assert "EnvironmentFile=/etc/default/onetimesecret" in content
+        assert "EnvironmentFile=/etc/default/onetimesecret.d/*.conf" in content
 
     def test_write_worker_template_includes_config_volume(self, mocker, tmp_path):
         """Worker quadlet should mount per-file config volumes."""
@@ -554,31 +507,21 @@ class TestWorkerTemplate:
         assert f"Volume={config_dir}/auth.yaml:/app/etc/auth.yaml:ro" in content
         assert f"Volume={config_dir}/logging.yaml:/app/etc/logging.yaml:ro" in content
 
-    def test_write_worker_template_includes_secrets(self, mocker, tmp_path):
-        """Worker quadlet should include Secret= directives from env file."""
+    def test_write_worker_template_secrets_section_comment(self, mocker, tmp_path):
+        """Worker quadlet should include drop-in directory comment for secrets."""
         mocker.patch("rots.quadlet.systemd.daemon_reload")
-        mocker.patch("rots.quadlet.secret_exists", return_value=True)
         from rots import quadlet
         from rots.config import Config
-
-        # Create an env file with SECRET_VARIABLE_NAMES
-        env_file = tmp_path / "onetimesecret.env"
-        env_file.write_text(
-            "SECRET_VARIABLE_NAMES=API_KEY,DB_PASSWORD\n"
-            "_API_KEY=ots_api_key\n"
-            "_DB_PASSWORD=ots_db_password\n"
-        )
 
         cfg = Config(
             worker_template_path=tmp_path / "onetime-worker@.container",
             var_dir=tmp_path / "var",
         )
 
-        quadlet.write_worker_template(cfg, env_file_path=env_file, force=True)
+        quadlet.write_worker_template(cfg, force=True)
 
         content = cfg.worker_template_path.read_text()
-        assert "Secret=ots_api_key,type=env,target=API_KEY" in content
-        assert "Secret=ots_db_password,type=env,target=DB_PASSWORD" in content
+        assert "Secrets loaded via environment drop-in directory" in content
 
     def test_write_worker_template_reloads_daemon(self, mocker, tmp_path):
         """write_worker_template should reload systemd daemon after writing."""
@@ -796,7 +739,7 @@ class TestSchedulerTemplate:
         quadlet.write_scheduler_template(cfg, force=True)
 
         content = cfg.scheduler_template_path.read_text()
-        assert "EnvironmentFile=/etc/default/onetimesecret" in content
+        assert "EnvironmentFile=/etc/default/onetimesecret.d/*.conf" in content
 
     def test_write_scheduler_template_includes_config_volume(self, mocker, tmp_path):
         """Scheduler quadlet should mount per-file config volumes."""
@@ -823,30 +766,21 @@ class TestSchedulerTemplate:
         assert f"Volume={config_dir}/auth.yaml:/app/etc/auth.yaml:ro" in content
         assert f"Volume={config_dir}/logging.yaml:/app/etc/logging.yaml:ro" in content
 
-    def test_write_scheduler_template_includes_podman_secrets(self, mocker, tmp_path):
-        """Scheduler quadlet should include Secret directives from env file."""
+    def test_write_scheduler_template_secrets_section_comment(self, mocker, tmp_path):
+        """Scheduler quadlet should include drop-in directory comment for secrets."""
         mocker.patch("rots.quadlet.systemd.daemon_reload")
-        mocker.patch("rots.quadlet.secret_exists", return_value=True)
         from rots import quadlet
         from rots.config import Config
-
-        env_file = tmp_path / "onetimesecret.env"
-        env_file.write_text(
-            "SECRET_VARIABLE_NAMES=API_KEY,DB_PASSWORD\n"
-            "_API_KEY=ots_api_key\n"
-            "_DB_PASSWORD=ots_db_password\n"
-        )
 
         cfg = Config(
             scheduler_template_path=tmp_path / "onetime-scheduler@.container",
             var_dir=tmp_path / "var",
         )
 
-        quadlet.write_scheduler_template(cfg, env_file_path=env_file, force=True)
+        quadlet.write_scheduler_template(cfg, force=True)
 
         content = cfg.scheduler_template_path.read_text()
-        assert "Secret=ots_api_key,type=env,target=API_KEY" in content
-        assert "Secret=ots_db_password,type=env,target=DB_PASSWORD" in content
+        assert "Secrets loaded via environment drop-in directory" in content
 
     def test_write_scheduler_template_creates_parent_dirs(self, mocker, tmp_path):
         """write_scheduler_template should create parent directories if needed."""
@@ -961,272 +895,14 @@ class TestGetConfigVolumesSection:
 
 
 class TestGetSecretsSection:
-    """Test get_secrets_section filtering of non-existent podman secrets."""
+    """Test get_secrets_section returns drop-in directory comment."""
 
-    def test_filters_out_nonexistent_podman_secrets(self, mocker, tmp_path):
-        """Should only include Secret= lines for secrets that actually exist in podman.
-
-        When SECRET_VARIABLE_NAMES lists variables that have been processed
-        (_VARNAME=ots_varname) but the corresponding podman secret doesn't
-        actually exist, the Secret= line should be omitted to prevent
-        container start failures.
-        """
-        # Mock secret_exists to simulate: ots_api_key exists, ots_db_password does not
-        mock_secret_exists = mocker.patch(
-            "rots.quadlet.secret_exists",
-            side_effect=lambda name, **kw: name == "ots_api_key",
-        )
-
+    def test_returns_drop_in_comment(self):
+        """get_secrets_section should return drop-in directory comment."""
         from rots.quadlet import get_secrets_section
 
-        env_file = tmp_path / "onetimesecret.env"
-        env_file.write_text(
-            "SECRET_VARIABLE_NAMES=API_KEY,DB_PASSWORD\n"
-            "_API_KEY=ots_api_key\n"
-            "_DB_PASSWORD=ots_db_password\n"
-        )
-
-        result = get_secrets_section(env_file_path=env_file)
-
-        # Only the existing secret should appear in output
-        assert "Secret=ots_api_key,type=env,target=API_KEY" in result
-        assert "Secret=ots_db_password" not in result
-
-        # secret_exists should have been called for each secret
-        assert mock_secret_exists.call_count == 2
-
-    def test_all_secrets_exist(self, mocker, tmp_path):
-        """Should include all Secret= lines when all podman secrets exist."""
-        mocker.patch(
-            "rots.quadlet.secret_exists",
-            return_value=True,
-        )
-
-        from rots.quadlet import get_secrets_section
-
-        env_file = tmp_path / "onetimesecret.env"
-        env_file.write_text(
-            "SECRET_VARIABLE_NAMES=API_KEY,DB_PASSWORD\n"
-            "_API_KEY=ots_api_key\n"
-            "_DB_PASSWORD=ots_db_password\n"
-        )
-
-        result = get_secrets_section(env_file_path=env_file)
-
-        assert "Secret=ots_api_key,type=env,target=API_KEY" in result
-        assert "Secret=ots_db_password,type=env,target=DB_PASSWORD" in result
-
-    def test_no_secrets_exist_returns_fallback(self, mocker, tmp_path):
-        """Should return a comment when no podman secrets exist at all."""
-        mocker.patch(
-            "rots.quadlet.secret_exists",
-            return_value=False,
-        )
-
-        from rots.quadlet import get_secrets_section
-
-        env_file = tmp_path / "onetimesecret.env"
-        env_file.write_text("SECRET_VARIABLE_NAMES=API_KEY\n_API_KEY=ots_api_key\n")
-
-        result = get_secrets_section(env_file_path=env_file, force=True)
-
-        # When all secrets are filtered out, should not contain Secret= lines
-        assert "Secret=" not in result
-
-    def test_missing_env_file_exits_with_precondition_code(self, tmp_path):
-        """Missing env file without --force should exit with code 3 (precondition not met)."""
-        from rots.quadlet import get_secrets_section
-
-        with pytest.raises(SystemExit) as exc_info:
-            get_secrets_section(env_file_path=tmp_path / "nonexistent.env")
-
-        assert exc_info.value.code == 3  # EXIT_PRECOND
-
-    def test_empty_secret_names_exits_with_precondition_code(self, tmp_path):
-        """Env file with no SECRET_VARIABLE_NAMES without --force exits with code 3."""
-        from rots.quadlet import get_secrets_section
-
-        env_file = tmp_path / "onetimesecret.env"
-        env_file.write_text("REDIS_URL=redis://localhost\n")  # No SECRET_VARIABLE_NAMES
-
-        with pytest.raises(SystemExit) as exc_info:
-            get_secrets_section(env_file_path=env_file)
-
-        assert exc_info.value.code == 3  # EXIT_PRECOND
-
-    def test_no_podman_secrets_exits_with_precondition_code(self, mocker, tmp_path):
-        """No existing podman secrets without --force exits with code 3."""
-        mocker.patch("rots.quadlet.secret_exists", return_value=False)
-
-        from rots.quadlet import get_secrets_section
-
-        env_file = tmp_path / "onetimesecret.env"
-        env_file.write_text("SECRET_VARIABLE_NAMES=API_KEY\n_API_KEY=ots_api_key\n")
-
-        with pytest.raises(SystemExit) as exc_info:
-            get_secrets_section(env_file_path=env_file)
-
-        assert exc_info.value.code == 3  # EXIT_PRECOND
-
-    def test_missing_env_file_force_returns_comment(self, tmp_path, caplog):
-        """get_secrets_section(force=True) with missing env file returns comment, logs WARNING."""
-        import logging
-
-        from rots.quadlet import get_secrets_section
-
-        with caplog.at_level(logging.WARNING):
-            result = get_secrets_section(
-                env_file_path=tmp_path / "nonexistent.env",
-                force=True,
-            )
-
-        assert "No secrets configured" in result
-        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
-
-    def test_no_secret_names_force_returns_comment(self, tmp_path, caplog):
-        """get_secrets_section(force=True) with no SECRET_VARIABLE_NAMES returns comment."""
-        import logging
-
-        from rots.quadlet import get_secrets_section
-
-        env_file = tmp_path / "onetimesecret.env"
-        env_file.write_text("REDIS_URL=redis://localhost\n")  # No SECRET_VARIABLE_NAMES
-
-        with caplog.at_level(logging.WARNING):
-            result = get_secrets_section(env_file_path=env_file, force=True)
-
-        assert "No secrets configured" in result
-        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
-
-    def test_write_web_template_missing_env_propagates_system_exit(self, mocker, tmp_path):
-        """write_web_template() without force propagates SystemExit(3) when env file missing."""
-        mocker.patch("rots.quadlet.systemd.daemon_reload")
-        from rots import quadlet
-        from rots.config import Config
-
-        cfg = Config(
-            web_template_path=tmp_path / "onetime-web@.container",
-            var_dir=tmp_path / "var",
-        )
-
-        with pytest.raises(SystemExit) as exc_info:
-            quadlet.write_web_template(cfg, env_file_path=tmp_path / "nonexistent.env")
-
-        assert exc_info.value.code == 3  # EXIT_PRECOND
-
-
-class TestWriteTemplatesForce:
-    """Tests for force= parameter across write_*_template functions."""
-
-    def test_write_web_template_force_skips_system_exit(self, mocker, tmp_path, caplog):
-        """write_web_template(force=True) should complete when env file is missing."""
-        import logging
-
-        mocker.patch("rots.quadlet.systemd.daemon_reload")
-        from rots import quadlet
-        from rots.config import Config
-
-        cfg = Config(
-            web_template_path=tmp_path / "onetime-web@.container",
-            var_dir=tmp_path / "var",
-        )
-
-        # Should not raise SystemExit
-        with caplog.at_level(logging.WARNING):
-            quadlet.write_web_template(cfg, env_file_path=tmp_path / "nonexistent.env", force=True)
-
-        assert cfg.web_template_path.exists()
-        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
-
-    def test_write_worker_template_force_skips_system_exit(self, mocker, tmp_path, caplog):
-        """write_worker_template(force=True) should complete when env file is missing."""
-        import logging
-
-        mocker.patch("rots.quadlet.systemd.daemon_reload")
-        from rots import quadlet
-        from rots.config import Config
-
-        cfg = Config(
-            worker_template_path=tmp_path / "onetime-worker@.container",
-            var_dir=tmp_path / "var",
-        )
-
-        with caplog.at_level(logging.WARNING):
-            quadlet.write_worker_template(
-                cfg, env_file_path=tmp_path / "nonexistent.env", force=True
-            )
-
-        assert cfg.worker_template_path.exists()
-        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
-
-    def test_write_scheduler_template_force_skips_system_exit(self, mocker, tmp_path, caplog):
-        """write_scheduler_template(force=True) should complete when env file is missing."""
-        import logging
-
-        mocker.patch("rots.quadlet.systemd.daemon_reload")
-        from rots import quadlet
-        from rots.config import Config
-
-        cfg = Config(
-            scheduler_template_path=tmp_path / "onetime-scheduler@.container",
-            var_dir=tmp_path / "var",
-        )
-
-        with caplog.at_level(logging.WARNING):
-            quadlet.write_scheduler_template(
-                cfg, env_file_path=tmp_path / "nonexistent.env", force=True
-            )
-
-        assert cfg.scheduler_template_path.exists()
-        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
-
-    def test_write_web_template_no_force_raises_system_exit(self, mocker, tmp_path):
-        """write_web_template() without force=True raises SystemExit(3) for missing env."""
-        mocker.patch("rots.quadlet.systemd.daemon_reload")
-        from rots import quadlet
-        from rots.config import Config
-
-        cfg = Config(
-            web_template_path=tmp_path / "onetime-web@.container",
-            var_dir=tmp_path / "var",
-        )
-
-        with pytest.raises(SystemExit) as exc_info:
-            quadlet.write_web_template(cfg, env_file_path=tmp_path / "nonexistent.env")
-
-        assert exc_info.value.code == 3
-
-    def test_write_worker_template_no_force_raises_system_exit(self, mocker, tmp_path):
-        """write_worker_template() without force=True raises SystemExit(3) for missing env."""
-        mocker.patch("rots.quadlet.systemd.daemon_reload")
-        from rots import quadlet
-        from rots.config import Config
-
-        cfg = Config(
-            worker_template_path=tmp_path / "onetime-worker@.container",
-            var_dir=tmp_path / "var",
-        )
-
-        with pytest.raises(SystemExit) as exc_info:
-            quadlet.write_worker_template(cfg, env_file_path=tmp_path / "nonexistent.env")
-
-        assert exc_info.value.code == 3
-
-    def test_write_scheduler_template_no_force_raises_system_exit(self, mocker, tmp_path):
-        """write_scheduler_template() without force=True raises SystemExit(3) for missing env."""
-        mocker.patch("rots.quadlet.systemd.daemon_reload")
-        from rots import quadlet
-        from rots.config import Config
-
-        cfg = Config(
-            scheduler_template_path=tmp_path / "onetime-scheduler@.container",
-            var_dir=tmp_path / "var",
-        )
-
-        with pytest.raises(SystemExit) as exc_info:
-            quadlet.write_scheduler_template(cfg, env_file_path=tmp_path / "nonexistent.env")
-
-        assert exc_info.value.code == 3
+        result = get_secrets_section()
+        assert "Secrets loaded via environment drop-in directory" in result
 
 
 class TestGetResourceLimitsSection:
@@ -1448,41 +1124,6 @@ class TestWriteTemplateRemote:
 
         # Should call daemon_reload with executor
         mock_reload.assert_called_once_with(executor=mock_ex)
-
-
-class TestGetSecretsSectionRemote:
-    """Test get_secrets_section() with remote executor."""
-
-    def test_checks_env_file_existence_remotely(self, mocker):
-        from rots.quadlet import get_secrets_section
-
-        mock_ex = _make_ssh_executor(mocker)
-        # test -f returns false (env file not found)
-        mock_ex.run.return_value = _make_remote_result(returncode=1)
-
-        with pytest.raises(SystemExit):
-            get_secrets_section(executor=mock_ex)
-
-        mock_ex.run.assert_called_once_with(["test", "-f", "/etc/default/onetimesecret"])
-
-    def test_passes_executor_to_get_secrets_from_env_file(self, mocker):
-        from rots.quadlet import get_secrets_section
-
-        mock_ex = _make_ssh_executor(mocker)
-        # env file exists
-        mock_ex.run.return_value = _make_remote_result(returncode=0)
-
-        mock_get_secrets = mocker.patch(
-            "rots.quadlet.get_secrets_from_env_file",
-            return_value=[],
-        )
-
-        # Will raise SystemExit due to no secrets + no force
-        with pytest.raises(SystemExit):
-            get_secrets_section(executor=mock_ex)
-
-        mock_get_secrets.assert_called_once()
-        assert mock_get_secrets.call_args[1]["executor"] is mock_ex
 
 
 class TestGetConfigVolumesSectionRemote:

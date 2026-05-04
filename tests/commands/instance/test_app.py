@@ -3500,22 +3500,12 @@ class TestDeployRender:
         assert ":/app/etc/config.yaml:ro" in web_unit
 
     def test_render_emits_no_secret_lines(self, mocker, tmp_path):
-        """No `Secret=` lines must appear in any rendered file under --render."""
-        self._patch_render_safety_nets(mocker)
-        # Make secrets visible at the env-file level so a regression that
-        # re-enables Secret= emission would surface.
-        from rots.environment_file import SecretSpec
+        """No `Secret=` lines must appear in any rendered file under --render.
 
-        env_file = tmp_path / "envfile"
-        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")
-        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
-        mocker.patch("rots.quadlet.secret_exists", return_value=True)
-        mocker.patch(
-            "rots.quadlet.get_secrets_from_env_file",
-            return_value=[
-                SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_auth_secret"),
-            ],
-        )
+        Secrets are now loaded via environment drop-in directory instead of
+        being enumerated as Secret= directives in the quadlet file.
+        """
+        self._patch_render_safety_nets(mocker)
 
         out_dir = tmp_path / "out"
         out_dir.mkdir()
@@ -3532,6 +3522,8 @@ class TestDeployRender:
             assert "Secret=" not in content, (
                 f"{unit_name} unexpectedly contains a Secret= directive: {content!r}"
             )
+            # Verify drop-in comment is present
+            assert "Secrets loaded via environment drop-in directory" in content
 
 
 # ---------------------------------------------------------------------------

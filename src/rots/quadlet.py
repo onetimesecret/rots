@@ -4,8 +4,9 @@
 Quadlet template generation for OneTimeSecret containers.
 
 The quadlet template is a systemd unit file that defines how to run
-the container. Secret= lines are generated dynamically based on the
-SECRET_VARIABLE_NAMES defined in the environment file.
+the container. Environment variables are loaded from a drop-in directory
+(/etc/default/onetimesecret.d/*.conf) where lexical order determines
+precedence (00-baseline.conf, 50-host.conf, etc.).
 """
 
 from __future__ import annotations
@@ -18,25 +19,20 @@ from ots_shared.ssh import is_remote as _is_remote
 
 from . import systemd
 from .config import CONFIG_FILES, Config, join_image_tag
-from .environment_file import (
-    generate_quadlet_secret_lines,
-    get_secrets_from_env_file,
-    secret_exists,
-)
 
 if TYPE_CHECKING:
     from ots_shared.ssh import Executor
 
 logger = logging.getLogger(__name__)
 
-# EXIT_PRECOND (3) is intentionally not imported from commands.common to avoid
-# a circular import: quadlet -> commands -> env -> quadlet.
-# The value matches commands.common.EXIT_PRECOND.
-_EXIT_PRECOND = 3
 
-
-# Default environment file path
-DEFAULT_ENV_FILE = Path("/etc/default/onetimesecret")
+# The quadlet templates use a drop-in directory pattern for runtime:
+#   EnvironmentFile=/etc/default/onetimesecret.d/*.conf
+# To simplify back to a single file, change the glob to:
+#   EnvironmentFile=/etc/default/onetimesecret
+DEFAULT_ENV_FILE = Path("/etc/default/onetimesecret.d/00-baseline.conf")
+# Legacy single-file path for reference:
+# DEFAULT_ENV_FILE = Path("/etc/default/onetimesecret")
 
 # Quadlet template with {secrets_section} placeholder for dynamic generation
 WEB_TEMPLATE = """\
@@ -49,10 +45,10 @@ WEB_TEMPLATE = """\
 #    rots image pull --tag <tag>
 #    # Uses credentials from /etc/containers/auth.json
 #
-# 1. Process environment file to create podman secrets:
-#    ots env process /etc/default/onetimesecret
-#    # This reads SECRET_VARIABLE_NAMES from the env file,
-#    # creates podman secrets, and updates the file
+# 1. Environment drop-in directory:
+#    /etc/default/onetimesecret.d/*.conf
+#    Lexical order determines precedence (00-baseline.conf, 50-host.conf).
+#    Baseline ships in confext; per-host overrides layer via OverlayFS.
 #
 # 2. (Optional) Place config overrides in {config_dir}/:
 #    config.yaml, auth.yaml, logging.yaml
@@ -64,14 +60,7 @@ WEB_TEMPLATE = """\
 #   Logs:     journalctl -u onetime-web@7043 -f
 #   Status:   systemctl status onetime-web@7043
 #
-# SECRET ROTATION:
-#   podman secret rm ots_hmac_secret
-#   openssl rand -hex 32 | podman secret create ots_hmac_secret -
-#   systemctl restart onetime-web@7043
-#
 # TROUBLESHOOTING:
-#   List secrets:  podman secret ls
-#   Inspect:       podman secret inspect ots_hmac_secret
 #   Container:     podman exec -it onetime-web-7043 /bin/sh
 
 [Unit]
@@ -100,9 +89,9 @@ PodmanArgs=--log-opt tag=onetime-web-%i
 # Port is derived from instance name: onetime-web@7043 -> PORT=7043
 Environment=PORT=%i
 
-# Infrastructure config (connection strings, log level)
-# Edit this file and restart to apply changes
-EnvironmentFile=/etc/default/onetimesecret
+# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
+# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
+EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 
 {secrets_section}
 
@@ -124,131 +113,21 @@ WantedBy=multi-user.target
 
 
 def get_secrets_section(
-    env_file_path: Path | None = None,
+    env_file_path: Path | None = None,  # noqa: ARG001
     *,
-    force: bool = False,
-    executor: Executor | None = None,
-    render_mode: bool = False,
+    force: bool = False,  # noqa: ARG001
+    executor: Executor | None = None,  # noqa: ARG001
+    render_mode: bool = False,  # noqa: ARG001
 ) -> str:
     """Generate the secrets section for the quadlet template.
 
-    Reads SECRET_VARIABLE_NAMES from the environment file and generates
-    corresponding Secret= directives.
+    Secrets are now managed via the drop-in environment directory
+    (/etc/default/onetimesecret.d/*.conf) rather than probed from
+    SECRET_VARIABLE_NAMES. This function returns a placeholder comment.
 
-    Args:
-        env_file_path: Path to environment file (defaults to /etc/default/onetimesecret)
-        force: If True, allow deployment even when secrets are not configured.
-               This will produce a quadlet with no Secret= lines; the application
-               will likely fail at runtime without its required secrets.
-        render_mode: If True, suppress all Secret= lines and skip env-file probing.
-               Used by `--render` to emit quadlet files locally with no host I/O.
-
-    Returns:
-        Multi-line string with Secret= directives
-
-    Raises:
-        SystemExit(3): When env file is missing or no secrets are configured,
-            unless force=True.  Exit code 3 (precondition not met) signals to
-            CI pipelines that no destructive action was taken — the required
-            configuration was simply absent.
+    The signature is preserved for API compatibility with existing callers.
     """
-    if render_mode:
-        return "# No secrets emitted under --render"
-
-    env_path = env_file_path or DEFAULT_ENV_FILE
-
-    if executor is not None and _is_remote(executor):
-        result = executor.run(["test", "-f", str(env_path)])
-        env_exists = result.ok
-    else:
-        env_exists = env_path.exists()
-
-    if not env_exists:
-        msg = (
-            f"Environment file not found: {env_path}\n"
-            "\n"
-            "The environment file must exist before deploying. It defines which\n"
-            "variables are secrets and provides infrastructure configuration.\n"
-            "\n"
-            "To create it:\n"
-            f"  sudo cp /usr/share/doc/rots/onetimesecret.env.example {env_path}\n"
-            "  # or: ots init  (scaffolds the file from template)\n"
-            "\n"
-            "Then configure secrets:\n"
-            f"  sudo vi {env_path}  # set SECRET_VARIABLE_NAMES and secret values\n"
-            "  sudo ots env process  # moves secret values into podman secret store\n"
-            "\n"
-            "Use --force to skip this check and write a quadlet with no secrets\n"
-            "(the application will fail at runtime without required secrets)."
-        )
-        if force:
-            logger.warning(msg)
-            return "# No secrets configured (env file not found - deployed with --force)"
-        logger.error(msg)
-        raise SystemExit(_EXIT_PRECOND)
-
-    secrets = get_secrets_from_env_file(env_path, executor=executor)
-    if not secrets:
-        msg = (
-            f"No secrets configured in {env_path}\n"
-            "\n"
-            "SECRET_VARIABLE_NAMES is not set or is empty. The application requires\n"
-            "secrets (AUTH_SECRET, SECRET, SESSION_SECRET, etc.) to function.\n"
-            "\n"
-            "To configure secrets:\n"
-            f"  sudo vi {env_path}  # set SECRET_VARIABLE_NAMES and secret values\n"
-            "  sudo ots env process  # moves secret values into podman secret store\n"
-            "\n"
-            "Use --force to skip this check and write a quadlet with no secrets\n"
-            "(the application will fail at runtime without required secrets)."
-        )
-        if force:
-            logger.warning(msg)
-            return "# No secrets configured (SECRET_VARIABLE_NAMES not set - deployed with --force)"
-        logger.error(msg)
-        raise SystemExit(_EXIT_PRECOND)
-
-    # Defense-in-depth: only include secrets that actually exist as podman secrets.
-    # A secret may have been processed in the env file but later deleted from the
-    # podman secret store. Warn rather than letting podman fail at container start.
-    verified = []
-    missing = []
-    for spec in secrets:
-        if secret_exists(spec.secret_name, executor=executor):
-            verified.append(spec)
-        else:
-            missing.append(spec)
-
-    if missing:
-        names = ", ".join(s.secret_name for s in missing)
-        logger.warning(
-            f"Podman secrets not found: {names}\n"
-            "These secrets are listed in SECRET_VARIABLE_NAMES but don't exist in\n"
-            "the podman secret store. Run 'ots env process' to create them.\n"
-            "Skipping their Secret= lines in the quadlet."
-        )
-
-    if not verified:
-        msg = (
-            "No podman secrets found for any configured secret variable.\n"
-            "\n"
-            f"Secrets listed in {env_path} (SECRET_VARIABLE_NAMES) have not been\n"
-            "created in the podman secret store. The application will fail at\n"
-            "runtime without them.\n"
-            "\n"
-            "To create podman secrets:\n"
-            "  sudo ots env process  # reads env file and creates podman secrets\n"
-            "\n"
-            "Use --force to skip this check and write a quadlet with no secrets\n"
-            "(the application will fail at runtime without required secrets)."
-        )
-        if force:
-            logger.warning(msg)
-            return "# No secrets configured (no podman secrets found - deployed with --force)"
-        logger.error(msg)
-        raise SystemExit(_EXIT_PRECOND)
-
-    return generate_quadlet_secret_lines(verified)
+    return "# Secrets loaded via environment drop-in directory"
 
 
 def get_config_volumes_section(
@@ -567,10 +446,10 @@ WORKER_TEMPLATE = """\
 #    rots image pull --tag <tag>
 #    # Uses credentials from /etc/containers/auth.json
 #
-# 1. Process environment file to create podman secrets:
-#    ots env process /etc/default/onetimesecret
-#    # This reads SECRET_VARIABLE_NAMES from the env file,
-#    # creates podman secrets, and updates the file
+# 1. Environment drop-in directory:
+#    /etc/default/onetimesecret.d/*.conf
+#    Lexical order determines precedence (00-baseline.conf, 50-host.conf).
+#    Baseline ships in confext; per-host overrides layer via OverlayFS.
 #
 # 2. (Optional) Place config overrides in {config_dir}/:
 #    config.yaml, auth.yaml, logging.yaml
@@ -586,14 +465,7 @@ WORKER_TEMPLATE = """\
 #   Numeric: onetime-worker@1, onetime-worker@2
 #   Named:   onetime-worker@billing, onetime-worker@emails
 #
-# SECRET ROTATION:
-#   podman secret rm ots_hmac_secret
-#   openssl rand -hex 32 | podman secret create ots_hmac_secret -
-#   systemctl restart onetime-worker@1
-#
 # TROUBLESHOOTING:
-#   List secrets:  podman secret ls
-#   Inspect:       podman secret inspect ots_hmac_secret
 #   Container:     podman exec -it onetime-worker-1 /bin/sh
 
 [Unit]
@@ -618,9 +490,9 @@ PodmanArgs=--log-opt tag=onetime-worker-%i
 # Worker ID is derived from instance name: onetime-worker@1 -> WORKER_ID=1
 Environment=WORKER_ID=%i
 
-# Infrastructure config (connection strings, log level)
-# Edit this file and restart to apply changes
-EnvironmentFile=/etc/default/onetimesecret
+# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
+# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
+EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 
 {secrets_section}
 
@@ -679,10 +551,10 @@ SCHEDULER_TEMPLATE = """\
 #    rots image pull --tag <tag>
 #    # Uses credentials from /etc/containers/auth.json
 #
-# 1. Process environment file to create podman secrets:
-#    ots env process /etc/default/onetimesecret
-#    # This reads SECRET_VARIABLE_NAMES from the env file,
-#    # creates podman secrets, and updates the file
+# 1. Environment drop-in directory:
+#    /etc/default/onetimesecret.d/*.conf
+#    Lexical order determines precedence (00-baseline.conf, 50-host.conf).
+#    Baseline ships in confext; per-host overrides layer via OverlayFS.
 #
 # 2. (Optional) Place config overrides in {config_dir}/:
 #    config.yaml, auth.yaml, logging.yaml
@@ -698,14 +570,7 @@ SCHEDULER_TEMPLATE = """\
 #   Named:   onetime-scheduler@main, onetime-scheduler@cron
 #   Numeric: onetime-scheduler@1
 #
-# SECRET ROTATION:
-#   podman secret rm ots_hmac_secret
-#   openssl rand -hex 32 | podman secret create ots_hmac_secret -
-#   systemctl restart onetime-scheduler@main
-#
 # TROUBLESHOOTING:
-#   List secrets:  podman secret ls
-#   Inspect:       podman secret inspect ots_hmac_secret
 #   Container:     podman exec -it onetime-scheduler-main /bin/sh
 
 [Unit]
@@ -730,9 +595,9 @@ PodmanArgs=--log-opt tag=onetime-scheduler-%i
 # Scheduler ID is derived from instance name: onetime-scheduler@main -> SCHEDULER_ID=main
 Environment=SCHEDULER_ID=%i
 
-# Infrastructure config (connection strings, log level)
-# Edit this file and restart to apply changes
-EnvironmentFile=/etc/default/onetimesecret
+# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
+# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
+EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 
 {secrets_section}
 
