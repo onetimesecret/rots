@@ -164,14 +164,13 @@ class TestRenderWorkerTemplate:
         result = quadlet.render_worker_template(cfg, force=True)
         assert "bin/ots worker" in result
 
-    def test_force_true_without_env_file(self, mocker, tmp_path):
-        """render_worker_template with force=True should not exit even without env file."""
+    def test_secrets_section_shows_drop_in_comment(self, mocker, tmp_path):
+        """render_worker_template should show EnvironmentFile pattern comment."""
         from rots import quadlet
 
         cfg = _make_cfg(mocker, tmp_path)
-        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", tmp_path / "noenv")
         result = quadlet.render_worker_template(cfg, force=True)
-        assert "No secrets configured" in result
+        assert "Secrets loaded via EnvironmentFile layered pattern" in result
 
 
 class TestRenderSchedulerTemplate:
@@ -223,14 +222,13 @@ class TestRenderSchedulerTemplate:
         result = quadlet.render_scheduler_template(cfg, force=True)
         assert "bin/ots scheduler" in result
 
-    def test_force_true_without_env_file(self, mocker, tmp_path):
-        """render_scheduler_template with force=True should not exit without env file."""
+    def test_secrets_section_shows_drop_in_comment(self, mocker, tmp_path):
+        """render_scheduler_template should show EnvironmentFile pattern comment."""
         from rots import quadlet
 
         cfg = _make_cfg(mocker, tmp_path)
-        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", tmp_path / "noenv")
         result = quadlet.render_scheduler_template(cfg, force=True)
-        assert "No secrets configured" in result
+        assert "Secrets loaded via EnvironmentFile layered pattern" in result
 
 
 class TestBuildFmtVars:
@@ -650,39 +648,20 @@ class TestRenderTemplatesWithConfigSource:
         assert "Image=ghcr.io/test/image:v1.2.3" in result
         cfg.resolved_image_with_tag.assert_not_called()
 
-    def test_no_secret_lines_when_config_source_is_set(self, mocker, tmp_path):
-        """Render mode signal: no Secret= lines when config_source is set.
+    def test_no_secret_lines_in_rendered_output(self, mocker, tmp_path):
+        """Rendered templates should not contain Secret= lines.
 
-        This test deliberately makes secrets *visible* (returns specs, says they exist)
-        so a regression that re-enables secret emission under render would surface.
+        Secrets are now loaded via EnvironmentFile layered pattern instead of
+        being enumerated as Secret= directives in the quadlet file.
         """
         from rots import quadlet
-        from rots.environment_file import SecretSpec
 
         cfg = _make_render_cfg(mocker, tmp_path)
-        # Force the secret-existence check to say "yes" — autouse fixture
-        # returns False, which alone would suppress Secret= lines.
-        mocker.patch("rots.quadlet.secret_exists", return_value=True)
-        # And make the env file probe return real-looking secrets.
-        mocker.patch(
-            "rots.quadlet.get_secrets_from_env_file",
-            return_value=[
-                SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_auth_secret"),
-                SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
-            ],
-        )
-        # Make the env file appear to exist so the secrets path is reachable
-        # in non-render mode.
-        env_file = tmp_path / "envfile"
-        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY\n")
-        mocker.patch("rots.quadlet.DEFAULT_ENV_FILE", env_file)
 
         src = tmp_path / "src"
         src.mkdir()
         (src / "config.yaml").touch()
 
-        # render_mode=True is the documented signal; pass it alongside config_source
-        # since the contract states no Secret= lines are emitted under --render.
         result_web = quadlet.render_web_template(
             cfg, force=True, config_source=src, render_mode=True
         )
@@ -696,3 +675,5 @@ class TestRenderTemplatesWithConfigSource:
         assert "Secret=" not in result_web
         assert "Secret=" not in result_worker
         assert "Secret=" not in result_scheduler
+        # Verify the EnvironmentFile layered pattern comment is present
+        assert "Secrets loaded via EnvironmentFile layered pattern" in result_web
