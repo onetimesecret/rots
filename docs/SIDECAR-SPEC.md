@@ -163,7 +163,7 @@ Scope: install `postgresql` / `valkey` / `rbbitmq`, bind the local socket, confi
 
 Scope: everything above the "service is up" line. Generate application passwords, create roles / databases / ACL users / schemas, deliver secrets to peers via `secrets.deliver`, install and manage backup timers, manage `pg_hba.d/` drop-ins.
 
-Phase 2 is implemented as a set of sidecar RPC verbs. Operator-facing orchestration (an `rots env bootstrap`-style command over an `.otsinfra.yaml` marker file) is deferred — the verbs below are the stable contract; any orchestration layer that sits on top can be swapped without touching them.
+Phase 2 is implemented as a set of sidecar RPC verbs. Operator-facing orchestration (an `rots env bootstrap`-style command over an `otsinfra.yaml` marker file) is deferred — the verbs below are the stable contract; any orchestration layer that sits on top can be swapped without touching them.
 
 #### Phase 2 command vocabulary
 
