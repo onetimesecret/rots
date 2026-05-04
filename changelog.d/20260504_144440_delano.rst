@@ -1,0 +1,4 @@
+Fixed
+-----
+
+- Fix authfile handling for container image login/pull operations (#72)
