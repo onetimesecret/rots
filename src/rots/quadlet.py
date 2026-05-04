@@ -77,6 +77,11 @@ RestartSec=5
 # Caddy upstream health checks (HealthInterval=30s) will detect the
 # removed backend and stop routing new requests within one check cycle.
 TimeoutStopSec=30
+# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
+# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
+# NOTE: EnvironmentFile must be in [Service] for systemd glob expansion (250+).
+# Quadlet's [Container] section passes --env-file to podman, which doesn't glob.
+EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 {resource_limits_section}
 [Container]
 ContainerName=onetime-web-%i
@@ -88,10 +93,6 @@ PodmanArgs=--log-opt tag=onetime-web-%i
 
 # Port is derived from instance name: onetime-web@7043 -> PORT=7043
 Environment=PORT=%i
-
-# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
-# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
-EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 
 {secrets_section}
 
@@ -125,7 +126,14 @@ def get_secrets_section(
     (/etc/default/onetimesecret.d/*.conf) rather than probed from
     SECRET_VARIABLE_NAMES. This function returns a placeholder comment.
 
-    The signature is preserved for API compatibility with existing callers.
+    Args:
+        env_file_path: Ignored. Preserved for API compatibility.
+        force: Ignored. Preserved for API compatibility.
+        executor: Ignored. Preserved for API compatibility.
+        render_mode: Ignored. Preserved for API compatibility.
+
+    Returns:
+        A comment string indicating secrets are loaded via drop-in directory.
     """
     return "# Secrets loaded via environment drop-in directory"
 
@@ -478,6 +486,10 @@ Restart=on-failure
 RestartSec=5
 # Allow time for graceful job completion on stop
 TimeoutStopSec=90
+# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
+# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
+# NOTE: EnvironmentFile must be in [Service] for systemd glob expansion (250+).
+EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 {resource_limits_section}
 [Container]
 ContainerName=onetime-worker-%i
@@ -489,10 +501,6 @@ PodmanArgs=--log-opt tag=onetime-worker-%i
 
 # Worker ID is derived from instance name: onetime-worker@1 -> WORKER_ID=1
 Environment=WORKER_ID=%i
-
-# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
-# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
-EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 
 {secrets_section}
 
@@ -583,6 +591,10 @@ Restart=on-failure
 RestartSec=5
 # Allow time for graceful job completion on stop
 TimeoutStopSec=60
+# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
+# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
+# NOTE: EnvironmentFile must be in [Service] for systemd glob expansion (250+).
+EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 {resource_limits_section}
 [Container]
 ContainerName=onetime-scheduler-%i
@@ -594,10 +606,6 @@ PodmanArgs=--log-opt tag=onetime-scheduler-%i
 
 # Scheduler ID is derived from instance name: onetime-scheduler@main -> SCHEDULER_ID=main
 Environment=SCHEDULER_ID=%i
-
-# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
-# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
-EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 
 {secrets_section}
 
