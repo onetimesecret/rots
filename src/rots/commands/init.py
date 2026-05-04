@@ -2,7 +2,7 @@
 
 """Reminder that environment initialization lives in lots/pots.
 
-rots operates on the server side. To create an .otsinfra.yaml
+rots operates on the server side. To create an otsinfra.yaml
 environment marker on the operator workstation, use ``lots init``
 or ``pots init``.
 
@@ -32,7 +32,7 @@ def init() -> None:
     """
     logger.info("rots init routes:")
     logger.info("")
-    logger.info("  Environment marker (.otsinfra.yaml):")
+    logger.info("  Environment marker (otsinfra.yaml):")
     logger.info("    lots init [environment]     Create marker in current directory")
     logger.info("    pots init [environment]     (same, from inventory tool)")
     logger.info("")
