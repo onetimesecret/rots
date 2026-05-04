@@ -26,13 +26,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# The quadlet templates use a drop-in directory pattern for runtime:
-#   EnvironmentFile=/etc/default/onetimesecret.d/*.conf
-# To simplify back to a single file, change the glob to:
-#   EnvironmentFile=/etc/default/onetimesecret
-DEFAULT_ENV_FILE = Path("/etc/default/onetimesecret.d/00-baseline.conf")
-# Legacy single-file path for reference:
-# DEFAULT_ENV_FILE = Path("/etc/default/onetimesecret")
+# Environment files use a two-file layered pattern:
+#   EnvironmentFile=/etc/default/onetimesecret        (baseline, confext)
+#   EnvironmentFile=-/etc/default/onetimesecret.local (optional host overrides)
+# The "-" prefix makes .local optional — missing file is not an error.
+DEFAULT_ENV_FILE = Path("/etc/default/onetimesecret")
 
 # Quadlet template with {secrets_section} placeholder for dynamic generation
 WEB_TEMPLATE = """\
@@ -45,10 +43,9 @@ WEB_TEMPLATE = """\
 #    rots image pull --tag <tag>
 #    # Uses credentials from /etc/containers/auth.json
 #
-# 1. Environment drop-in directory:
-#    /etc/default/onetimesecret.d/*.conf
-#    Lexical order determines precedence (00-baseline.conf, 50-host.conf).
-#    Baseline ships in confext; per-host overrides layer via OverlayFS.
+# 1. Environment files (layered):
+#    /etc/default/onetimesecret       - baseline config (required, via confext)
+#    /etc/default/onetimesecret.local - host overrides (optional)
 #
 # 2. (Optional) Place config overrides in {config_dir}/:
 #    config.yaml, auth.yaml, logging.yaml
@@ -77,11 +74,6 @@ RestartSec=5
 # Caddy upstream health checks (HealthInterval=30s) will detect the
 # removed backend and stop routing new requests within one check cycle.
 TimeoutStopSec=30
-# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
-# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
-# NOTE: EnvironmentFile must be in [Service] for systemd glob expansion (250+).
-# Quadlet's [Container] section passes --env-file to podman, which doesn't glob.
-EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 {resource_limits_section}
 [Container]
 ContainerName=onetime-web-%i
@@ -93,6 +85,10 @@ PodmanArgs=--log-opt tag=onetime-web-%i
 
 # Port is derived from instance name: onetime-web@7043 -> PORT=7043
 Environment=PORT=%i
+
+# Infrastructure config: baseline (confext) + optional host overrides
+EnvironmentFile=/etc/default/onetimesecret
+EnvironmentFile=-/etc/default/onetimesecret.local
 
 {secrets_section}
 
@@ -454,10 +450,9 @@ WORKER_TEMPLATE = """\
 #    rots image pull --tag <tag>
 #    # Uses credentials from /etc/containers/auth.json
 #
-# 1. Environment drop-in directory:
-#    /etc/default/onetimesecret.d/*.conf
-#    Lexical order determines precedence (00-baseline.conf, 50-host.conf).
-#    Baseline ships in confext; per-host overrides layer via OverlayFS.
+# 1. Environment files (layered):
+#    /etc/default/onetimesecret       - baseline config (required, via confext)
+#    /etc/default/onetimesecret.local - host overrides (optional)
 #
 # 2. (Optional) Place config overrides in {config_dir}/:
 #    config.yaml, auth.yaml, logging.yaml
@@ -486,10 +481,6 @@ Restart=on-failure
 RestartSec=5
 # Allow time for graceful job completion on stop
 TimeoutStopSec=90
-# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
-# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
-# NOTE: EnvironmentFile must be in [Service] for systemd glob expansion (250+).
-EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 {resource_limits_section}
 [Container]
 ContainerName=onetime-worker-%i
@@ -501,6 +492,10 @@ PodmanArgs=--log-opt tag=onetime-worker-%i
 
 # Worker ID is derived from instance name: onetime-worker@1 -> WORKER_ID=1
 Environment=WORKER_ID=%i
+
+# Infrastructure config: baseline (confext) + optional host overrides
+EnvironmentFile=/etc/default/onetimesecret
+EnvironmentFile=-/etc/default/onetimesecret.local
 
 {secrets_section}
 
@@ -559,10 +554,9 @@ SCHEDULER_TEMPLATE = """\
 #    rots image pull --tag <tag>
 #    # Uses credentials from /etc/containers/auth.json
 #
-# 1. Environment drop-in directory:
-#    /etc/default/onetimesecret.d/*.conf
-#    Lexical order determines precedence (00-baseline.conf, 50-host.conf).
-#    Baseline ships in confext; per-host overrides layer via OverlayFS.
+# 1. Environment files (layered):
+#    /etc/default/onetimesecret       - baseline config (required, via confext)
+#    /etc/default/onetimesecret.local - host overrides (optional)
 #
 # 2. (Optional) Place config overrides in {config_dir}/:
 #    config.yaml, auth.yaml, logging.yaml
@@ -591,10 +585,6 @@ Restart=on-failure
 RestartSec=5
 # Allow time for graceful job completion on stop
 TimeoutStopSec=60
-# Infrastructure config via drop-in directory (lexical order: 00-baseline, 50-host, etc.)
-# Baseline ships in confext; per-host overrides layer on top via OverlayFS merge
-# NOTE: EnvironmentFile must be in [Service] for systemd glob expansion (250+).
-EnvironmentFile=/etc/default/onetimesecret.d/*.conf
 {resource_limits_section}
 [Container]
 ContainerName=onetime-scheduler-%i
@@ -606,6 +596,10 @@ PodmanArgs=--log-opt tag=onetime-scheduler-%i
 
 # Scheduler ID is derived from instance name: onetime-scheduler@main -> SCHEDULER_ID=main
 Environment=SCHEDULER_ID=%i
+
+# Infrastructure config: baseline (confext) + optional host overrides
+EnvironmentFile=/etc/default/onetimesecret
+EnvironmentFile=-/etc/default/onetimesecret.local
 
 {secrets_section}
 

@@ -93,7 +93,8 @@ class TestContainerTemplate:
 
         content = cfg.web_template_path.read_text()
         # Uses fixed path for infrastructure config (not per-instance)
-        assert "EnvironmentFile=/etc/default/onetimesecret.d/*.conf" in content
+        assert "EnvironmentFile=/etc/default/onetimesecret" in content
+        assert "EnvironmentFile=-/etc/default/onetimesecret.local" in content
 
     def test_write_web_template_includes_syslog_tag(self, mocker, tmp_path):
         """Container quadlet should include syslog tag for unified log filtering."""
@@ -480,7 +481,8 @@ class TestWorkerTemplate:
         quadlet.write_worker_template(cfg, force=True)
 
         content = cfg.worker_template_path.read_text()
-        assert "EnvironmentFile=/etc/default/onetimesecret.d/*.conf" in content
+        assert "EnvironmentFile=/etc/default/onetimesecret" in content
+        assert "EnvironmentFile=-/etc/default/onetimesecret.local" in content
 
     def test_write_worker_template_includes_config_volume(self, mocker, tmp_path):
         """Worker quadlet should mount per-file config volumes."""
@@ -739,7 +741,8 @@ class TestSchedulerTemplate:
         quadlet.write_scheduler_template(cfg, force=True)
 
         content = cfg.scheduler_template_path.read_text()
-        assert "EnvironmentFile=/etc/default/onetimesecret.d/*.conf" in content
+        assert "EnvironmentFile=/etc/default/onetimesecret" in content
+        assert "EnvironmentFile=-/etc/default/onetimesecret.local" in content
 
     def test_write_scheduler_template_includes_config_volume(self, mocker, tmp_path):
         """Scheduler quadlet should mount per-file config volumes."""
