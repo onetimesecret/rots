@@ -3503,7 +3503,7 @@ class TestDeployRender:
     def test_render_emits_no_secret_lines(self, mocker, tmp_path):
         """No `Secret=` lines must appear in any rendered file under --render.
 
-        Secrets are now loaded via environment drop-in directory instead of
+        Secrets are now loaded via EnvironmentFile layered pattern instead of
         being enumerated as Secret= directives in the quadlet file.
         """
         self._patch_render_safety_nets(mocker)
@@ -3523,8 +3523,8 @@ class TestDeployRender:
             assert "Secret=" not in content, (
                 f"{unit_name} unexpectedly contains a Secret= directive: {content!r}"
             )
-            # Verify drop-in comment is present
-            assert "Secrets loaded via environment drop-in directory" in content
+            # Verify EnvironmentFile pattern comment is present
+            assert "Secrets loaded via EnvironmentFile layered pattern" in content
 
 
 # ---------------------------------------------------------------------------
