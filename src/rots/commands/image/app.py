@@ -759,9 +759,9 @@ def login(
             "capture_output": True,
             "text": True,
         }
-        # For login, pass authfile only if explicitly configured (env var or override).
+        # For login, pass authfile only if explicitly configured.
         # This allows podman to create the file in its default location on first login.
-        if cfg._registry_auth_file or os.environ.get("REGISTRY_AUTH_FILE"):
+        if cfg.has_explicit_auth_config:
             login_kwargs["authfile"] = str(cfg.registry_auth_file)
         p.login(reg, **login_kwargs)
         logger.info(f"Login successful: {reg}")
