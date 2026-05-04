@@ -12,6 +12,16 @@ Versioning <https://semver.org/spec/v2.0.0.html>`__.
 
    <!--scriv-insert-here-->
 
+.. _changelog-0.7.4:
+
+0.7.4 — 2026-05-04
+==================
+
+Fixed
+-----
+
+- Fix authfile handling for container image login/pull operations (#72)
+
 .. _changelog-0.7.3:
 
 0.7.3 — 2026-04-26
