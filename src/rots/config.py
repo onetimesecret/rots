@@ -304,18 +304,33 @@ class Config:
         # System path (root on Linux only)
         return Path("/etc/containers/auth.json")
 
-    def get_registry_auth_file(self, executor: Executor | None = None) -> Path:
+    @property
+    def has_explicit_auth_config(self) -> bool:
+        """True when auth file was explicitly configured (override or env var)."""
+        return bool(self._registry_auth_file or os.environ.get("REGISTRY_AUTH_FILE"))
+
+    def get_registry_auth_file(
+        self, executor: Executor | None = None, *, exists_only: bool = False
+    ) -> Path | None:
         """Remote-aware registry auth file resolution.
 
         When *executor* is None or a LocalExecutor, delegates to the
         :attr:`registry_auth_file` property (local filesystem probing).
         For remote executors, probes the remote filesystem and uses
         remote-appropriate defaults (always Linux, always root on production).
+
+        Args:
+            executor: Optional executor for remote filesystem probing.
+            exists_only: When True, return None if no auth file exists
+                (instead of returning a fallback path that may not exist).
         """
         from ots_shared.ssh import is_remote
 
         if not is_remote(executor):
-            return self.registry_auth_file
+            path = self.registry_auth_file
+            if exists_only and not path.exists():
+                return None
+            return path
 
         # Explicit override
         if self._registry_auth_file:
@@ -335,6 +350,9 @@ class Config:
             result = executor.run(["test", "-f", str(candidate)])
             if result.ok:
                 return candidate
+
+        if exists_only:
+            return None
 
         # Default to system path (root on Linux production)
         return Path("/etc/containers/auth.json")
@@ -635,3 +653,24 @@ class Config:
         if not self.registry:
             return []
         return ["--authfile", str(self.get_registry_auth_file(executor=executor))]
+
+    def podman_auth_kwargs(self, *, executor: Executor | None = None) -> dict[str, str]:
+        """Return ``authfile`` kwarg dict when auth file is explicitly configured or exists.
+
+        Returns an empty dict when no explicit auth config is set and the default
+        auth file does not exist. This allows podman to use its default auth location
+        and create the file on first login.
+
+        Use this for pull/push/logout operations where passing a non-existent authfile
+        causes podman to fail with exit 125.
+        """
+        # Explicit config always wins (no existence check needed)
+        if self.has_explicit_auth_config:
+            return {"authfile": str(self.get_registry_auth_file(executor=executor))}
+
+        # Otherwise, only return authfile if it actually exists
+        auth_path = self.get_registry_auth_file(executor=executor, exists_only=True)
+        if auth_path:
+            return {"authfile": str(auth_path)}
+
+        return {}
