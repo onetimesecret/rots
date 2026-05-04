@@ -4,9 +4,9 @@
 Quadlet template generation for OneTimeSecret containers.
 
 The quadlet template is a systemd unit file that defines how to run
-the container. Environment variables are loaded from a drop-in directory
-(/etc/default/onetimesecret.d/*.conf) where lexical order determines
-precedence (00-baseline.conf, 50-host.conf, etc.).
+the container. Environment variables are loaded via a two-file layered
+pattern: /etc/default/onetimesecret (baseline, required) plus
+/etc/default/onetimesecret.local (host overrides, optional).
 """
 
 from __future__ import annotations
@@ -118,9 +118,9 @@ def get_secrets_section(
 ) -> str:
     """Generate the secrets section for the quadlet template.
 
-    Secrets are now managed via the drop-in environment directory
-    (/etc/default/onetimesecret.d/*.conf) rather than probed from
-    SECRET_VARIABLE_NAMES. This function returns a placeholder comment.
+    Secrets are now managed via the two-file layered EnvironmentFile
+    pattern rather than probed from SECRET_VARIABLE_NAMES. This function
+    returns a placeholder comment.
 
     Args:
         env_file_path: Ignored. Preserved for API compatibility.
@@ -129,9 +129,9 @@ def get_secrets_section(
         render_mode: Ignored. Preserved for API compatibility.
 
     Returns:
-        A comment string indicating secrets are loaded via drop-in directory.
+        A comment string indicating secrets are loaded via EnvironmentFile.
     """
-    return "# Secrets loaded via environment drop-in directory"
+    return "# Secrets loaded via EnvironmentFile layered pattern"
 
 
 def get_config_volumes_section(

@@ -141,7 +141,7 @@ class TestContainerTemplate:
         assert "Volume=static_assets:/app/public:ro" in content
 
     def test_write_web_template_secrets_section_comment(self, mocker, tmp_path):
-        """Container quadlet should include drop-in directory comment for secrets."""
+        """Container quadlet should include EnvironmentFile layered pattern comment for secrets."""
         mocker.patch("rots.quadlet.systemd.daemon_reload")
         from rots import quadlet
         from rots.config import Config
@@ -154,8 +154,8 @@ class TestContainerTemplate:
         quadlet.write_web_template(cfg, force=True)
 
         content = cfg.web_template_path.read_text()
-        # Secrets are now loaded via environment drop-in directory
-        assert "Secrets loaded via environment drop-in directory" in content
+        # Secrets are now loaded via EnvironmentFile layered pattern
+        assert "Secrets loaded via EnvironmentFile layered pattern" in content
 
     def test_write_web_template_includes_systemd_dependencies(self, mocker, tmp_path):
         """Container quadlet should have proper systemd dependencies."""
@@ -510,7 +510,7 @@ class TestWorkerTemplate:
         assert f"Volume={config_dir}/logging.yaml:/app/etc/logging.yaml:ro" in content
 
     def test_write_worker_template_secrets_section_comment(self, mocker, tmp_path):
-        """Worker quadlet should include drop-in directory comment for secrets."""
+        """Worker quadlet should include EnvironmentFile layered pattern comment for secrets."""
         mocker.patch("rots.quadlet.systemd.daemon_reload")
         from rots import quadlet
         from rots.config import Config
@@ -523,7 +523,7 @@ class TestWorkerTemplate:
         quadlet.write_worker_template(cfg, force=True)
 
         content = cfg.worker_template_path.read_text()
-        assert "Secrets loaded via environment drop-in directory" in content
+        assert "Secrets loaded via EnvironmentFile layered pattern" in content
 
     def test_write_worker_template_reloads_daemon(self, mocker, tmp_path):
         """write_worker_template should reload systemd daemon after writing."""
@@ -770,7 +770,7 @@ class TestSchedulerTemplate:
         assert f"Volume={config_dir}/logging.yaml:/app/etc/logging.yaml:ro" in content
 
     def test_write_scheduler_template_secrets_section_comment(self, mocker, tmp_path):
-        """Scheduler quadlet should include drop-in directory comment for secrets."""
+        """Scheduler quadlet should include EnvironmentFile layered pattern comment for secrets."""
         mocker.patch("rots.quadlet.systemd.daemon_reload")
         from rots import quadlet
         from rots.config import Config
@@ -783,7 +783,7 @@ class TestSchedulerTemplate:
         quadlet.write_scheduler_template(cfg, force=True)
 
         content = cfg.scheduler_template_path.read_text()
-        assert "Secrets loaded via environment drop-in directory" in content
+        assert "Secrets loaded via EnvironmentFile layered pattern" in content
 
     def test_write_scheduler_template_creates_parent_dirs(self, mocker, tmp_path):
         """write_scheduler_template should create parent directories if needed."""
@@ -898,14 +898,14 @@ class TestGetConfigVolumesSection:
 
 
 class TestGetSecretsSection:
-    """Test get_secrets_section returns drop-in directory comment."""
+    """Test get_secrets_section returns EnvironmentFile layered pattern comment."""
 
     def test_returns_drop_in_comment(self):
-        """get_secrets_section should return drop-in directory comment."""
+        """get_secrets_section should return EnvironmentFile layered pattern comment."""
         from rots.quadlet import get_secrets_section
 
         result = get_secrets_section()
-        assert "Secrets loaded via environment drop-in directory" in result
+        assert "Secrets loaded via EnvironmentFile layered pattern" in result
 
 
 class TestGetResourceLimitsSection:

@@ -165,12 +165,12 @@ class TestRenderWorkerTemplate:
         assert "bin/ots worker" in result
 
     def test_secrets_section_shows_drop_in_comment(self, mocker, tmp_path):
-        """render_worker_template should show drop-in directory comment for secrets."""
+        """render_worker_template should show EnvironmentFile pattern comment."""
         from rots import quadlet
 
         cfg = _make_cfg(mocker, tmp_path)
         result = quadlet.render_worker_template(cfg, force=True)
-        assert "Secrets loaded via environment drop-in directory" in result
+        assert "Secrets loaded via EnvironmentFile layered pattern" in result
 
 
 class TestRenderSchedulerTemplate:
@@ -223,12 +223,12 @@ class TestRenderSchedulerTemplate:
         assert "bin/ots scheduler" in result
 
     def test_secrets_section_shows_drop_in_comment(self, mocker, tmp_path):
-        """render_scheduler_template should show drop-in directory comment for secrets."""
+        """render_scheduler_template should show EnvironmentFile pattern comment."""
         from rots import quadlet
 
         cfg = _make_cfg(mocker, tmp_path)
         result = quadlet.render_scheduler_template(cfg, force=True)
-        assert "Secrets loaded via environment drop-in directory" in result
+        assert "Secrets loaded via EnvironmentFile layered pattern" in result
 
 
 class TestBuildFmtVars:
@@ -651,7 +651,7 @@ class TestRenderTemplatesWithConfigSource:
     def test_no_secret_lines_in_rendered_output(self, mocker, tmp_path):
         """Rendered templates should not contain Secret= lines.
 
-        Secrets are now loaded via environment drop-in directory instead of
+        Secrets are now loaded via EnvironmentFile layered pattern instead of
         being enumerated as Secret= directives in the quadlet file.
         """
         from rots import quadlet
@@ -675,5 +675,5 @@ class TestRenderTemplatesWithConfigSource:
         assert "Secret=" not in result_web
         assert "Secret=" not in result_worker
         assert "Secret=" not in result_scheduler
-        # Verify the drop-in comment is present
-        assert "Secrets loaded via environment drop-in directory" in result_web
+        # Verify the EnvironmentFile layered pattern comment is present
+        assert "Secrets loaded via EnvironmentFile layered pattern" in result_web
