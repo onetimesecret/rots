@@ -6,7 +6,8 @@ Quadlet template generation for OneTimeSecret containers.
 The quadlet template is a systemd unit file that defines how to run
 the container. Environment variables are loaded via a two-file layered
 pattern: /etc/default/onetimesecret (baseline, required) plus
-/etc/default/onetimesecret.local (host overrides, optional).
+/etc/default/onetimesecret.local (host overrides, included only when the
+file exists on the target host).
 """
 
 from __future__ import annotations
@@ -27,10 +28,17 @@ logger = logging.getLogger(__name__)
 
 
 # Environment files use a two-file layered pattern:
-#   EnvironmentFile=/etc/default/onetimesecret        (baseline, confext)
-#   EnvironmentFile=-/etc/default/onetimesecret.local (optional host overrides)
-# The "-" prefix makes .local optional — missing file is not an error.
+#   EnvironmentFile=/etc/default/onetimesecret       (baseline, confext)
+#   EnvironmentFile=/etc/default/onetimesecret.local (host overrides, when present)
+#
+# NOTE: Quadlet's [Container] EnvironmentFile= forwards its value verbatim to
+# `podman run --env-file` and, unlike systemd's [Service] EnvironmentFile=,
+# does NOT support the leading "-" ("ignore if missing") prefix. A "-" is taken
+# as a literal relative path, joined to the quadlet directory, and fails the
+# unit (podman exit 125). So the optional override is emitted only when it
+# actually exists on the host -- see get_env_files_section().
 DEFAULT_ENV_FILE = Path("/etc/default/onetimesecret")
+LOCAL_ENV_FILE = Path("/etc/default/onetimesecret.local")
 
 # Quadlet template with {secrets_section} placeholder for dynamic generation
 WEB_TEMPLATE = """\
@@ -86,9 +94,11 @@ PodmanArgs=--log-opt tag=onetime-web-%i
 # Port is derived from instance name: onetime-web@7043 -> PORT=7043
 Environment=PORT=%i
 
-# Infrastructure config: baseline (confext) + optional host overrides
-EnvironmentFile=/etc/default/onetimesecret
-EnvironmentFile=-/etc/default/onetimesecret.local
+# Infrastructure config: baseline (confext) + optional host overrides.
+# Quadlet [Container] EnvironmentFile= has no "-" optional syntax, so the
+# .local override is emitted only when it exists on the host (see
+# get_env_files_section); the baseline is created via confext.
+{env_files_section}
 
 {secrets_section}
 
@@ -132,6 +142,51 @@ def get_secrets_section(
         A comment string indicating secrets are loaded via EnvironmentFile.
     """
     return "# Secrets loaded via EnvironmentFile layered pattern"
+
+
+def get_env_files_section(
+    cfg: Config,  # noqa: ARG001
+    *,
+    executor: Executor | None = None,
+    render_mode: bool = False,
+) -> str:
+    """Generate EnvironmentFile= directives for the [Container] section.
+
+    Quadlet's [Container] EnvironmentFile= forwards its value verbatim to
+    ``podman run --env-file``. Unlike systemd's [Service] EnvironmentFile=, it
+    does NOT support the leading ``-`` ("ignore if missing") prefix: a ``-`` is
+    treated as a literal relative path, joined to the quadlet directory, and
+    fails the unit (podman exit 125). So the optional host-override file must be
+    emitted only when it actually exists.
+
+    Always emits the baseline ``/etc/default/onetimesecret`` (created via
+    confext). Adds ``/etc/default/onetimesecret.local`` only when that file
+    exists on the target host.
+
+    In render mode there is no host to probe (the no-host-I/O contract of
+    ``--render``), so only the baseline is emitted and the override -- being
+    host-specific state -- is resolved at deploy time. This mirrors how
+    :func:`get_config_volumes_section` defers host probing.
+    """
+    lines = [f"EnvironmentFile={DEFAULT_ENV_FILE}"]
+
+    if render_mode:
+        lines.append(
+            "# Host override (/etc/default/onetimesecret.local) is added at "
+            "deploy time when present"
+        )
+        return "\n".join(lines)
+
+    from ots_shared.ssh import is_remote
+
+    if is_remote(executor):
+        exists = executor.run(["test", "-f", str(LOCAL_ENV_FILE)]).ok
+    else:
+        exists = LOCAL_ENV_FILE.exists()
+
+    if exists:
+        lines.append(f"EnvironmentFile={LOCAL_ENV_FILE}")
+    return "\n".join(lines)
 
 
 def get_config_volumes_section(
@@ -268,6 +323,7 @@ def _build_fmt_vars(
     config_volumes_section = get_config_volumes_section(
         cfg, executor=executor, config_source=config_source
     )
+    env_files_section = get_env_files_section(cfg, executor=executor, render_mode=render_mode)
 
     if cfg.registry:
         image = "onetime.image"
@@ -294,6 +350,7 @@ def _build_fmt_vars(
         "config_dir": cfg.config_dir,
         "secrets_section": secrets_section,
         "config_volumes_section": config_volumes_section,
+        "env_files_section": env_files_section,
         "resource_limits_section": get_resource_limits_section(cfg),
     }
     if extra_vars:
@@ -493,9 +550,11 @@ PodmanArgs=--log-opt tag=onetime-worker-%i
 # Worker ID is derived from instance name: onetime-worker@1 -> WORKER_ID=1
 Environment=WORKER_ID=%i
 
-# Infrastructure config: baseline (confext) + optional host overrides
-EnvironmentFile=/etc/default/onetimesecret
-EnvironmentFile=-/etc/default/onetimesecret.local
+# Infrastructure config: baseline (confext) + optional host overrides.
+# Quadlet [Container] EnvironmentFile= has no "-" optional syntax, so the
+# .local override is emitted only when it exists on the host (see
+# get_env_files_section); the baseline is created via confext.
+{env_files_section}
 
 {secrets_section}
 
@@ -597,9 +656,11 @@ PodmanArgs=--log-opt tag=onetime-scheduler-%i
 # Scheduler ID is derived from instance name: onetime-scheduler@main -> SCHEDULER_ID=main
 Environment=SCHEDULER_ID=%i
 
-# Infrastructure config: baseline (confext) + optional host overrides
-EnvironmentFile=/etc/default/onetimesecret
-EnvironmentFile=-/etc/default/onetimesecret.local
+# Infrastructure config: baseline (confext) + optional host overrides.
+# Quadlet [Container] EnvironmentFile= has no "-" optional syntax, so the
+# .local override is emitted only when it exists on the host (see
+# get_env_files_section); the baseline is created via confext.
+{env_files_section}
 
 {secrets_section}
 
