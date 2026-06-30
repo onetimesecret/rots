@@ -12,6 +12,29 @@ Versioning <https://semver.org/spec/v2.0.0.html>`__.
 
    <!--scriv-insert-here-->
 
+.. _changelog-0.7.5:
+
+0.7.5 — 2026-06-29
+==================
+
+Fixed
+-----
+
+- Stop emitting an invalid ``EnvironmentFile=-/etc/default/onetimesecret.local``
+  line in generated Quadlet ``[Container]`` units. Quadlet does not honor
+  systemd's ``-`` ("optional") prefix and passed it to ``podman --env-file``
+  verbatim, which resolved to a non-existent relative path and crashed the
+  container with exit 125 (restart loop). The optional ``.local`` host override
+  is now emitted only when the file exists on the target host. Regression from
+  v0.7.4.
+
+AI Assistance
+-------------
+
+- Root-cause diagnosis (podman exit 125 from the unsupported ``-`` prefix),
+  fix design mirroring ``get_config_volumes_section``, and regression tests
+  developed with AI assistance.
+
 .. _changelog-0.7.4:
 
 0.7.4 — 2026-05-04
