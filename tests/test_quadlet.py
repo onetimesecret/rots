@@ -94,7 +94,11 @@ class TestContainerTemplate:
         content = cfg.web_template_path.read_text()
         # Uses fixed path for infrastructure config (not per-instance)
         assert "EnvironmentFile=/etc/default/onetimesecret" in content
-        assert "EnvironmentFile=-/etc/default/onetimesecret.local" in content
+        # Regression guard: Quadlet [Container] EnvironmentFile= has no "-"
+        # optional syntax; a dash is taken as a literal path and fails the
+        # unit (podman exit 125). The .local override must never be emitted
+        # with a leading dash.
+        assert "EnvironmentFile=-" not in content
 
     def test_write_web_template_includes_syslog_tag(self, mocker, tmp_path):
         """Container quadlet should include syslog tag for unified log filtering."""
@@ -482,7 +486,11 @@ class TestWorkerTemplate:
 
         content = cfg.worker_template_path.read_text()
         assert "EnvironmentFile=/etc/default/onetimesecret" in content
-        assert "EnvironmentFile=-/etc/default/onetimesecret.local" in content
+        # Regression guard: Quadlet [Container] EnvironmentFile= has no "-"
+        # optional syntax; a dash is taken as a literal path and fails the
+        # unit (podman exit 125). The .local override must never be emitted
+        # with a leading dash.
+        assert "EnvironmentFile=-" not in content
 
     def test_write_worker_template_includes_config_volume(self, mocker, tmp_path):
         """Worker quadlet should mount per-file config volumes."""
@@ -742,7 +750,11 @@ class TestSchedulerTemplate:
 
         content = cfg.scheduler_template_path.read_text()
         assert "EnvironmentFile=/etc/default/onetimesecret" in content
-        assert "EnvironmentFile=-/etc/default/onetimesecret.local" in content
+        # Regression guard: Quadlet [Container] EnvironmentFile= has no "-"
+        # optional syntax; a dash is taken as a literal path and fails the
+        # unit (podman exit 125). The .local override must never be emitted
+        # with a leading dash.
+        assert "EnvironmentFile=-" not in content
 
     def test_write_scheduler_template_includes_config_volume(self, mocker, tmp_path):
         """Scheduler quadlet should mount per-file config volumes."""
@@ -895,6 +907,58 @@ class TestGetConfigVolumesSection:
         assert f"Volume={config_dir}/config.yaml:/app/etc/config.yaml:ro" in result
         assert f"Volume={config_dir}/auth.yaml:/app/etc/auth.yaml:ro" in result
         assert "logging.yaml" not in result
+
+
+class TestGetEnvFilesSection:
+    """Tests for get_env_files_section() -- the [Container] EnvironmentFile= lines.
+
+    Regression coverage for the podman exit-125 bug: Quadlet [Container]
+    EnvironmentFile= does not honor systemd's "-" optional prefix, so the
+    optional .local override must be emitted only when it exists, never with a
+    leading dash.
+    """
+
+    def test_baseline_always_emitted_no_dash(self, tmp_path, mocker):
+        """Baseline is always present; no entry ever carries a leading dash."""
+        from rots import quadlet
+        from rots.config import Config
+
+        # Force the override to be absent regardless of the host machine.
+        mocker.patch.object(quadlet, "LOCAL_ENV_FILE", tmp_path / "absent.local")
+
+        result = quadlet.get_env_files_section(Config())
+        assert "EnvironmentFile=/etc/default/onetimesecret" in result
+        assert "EnvironmentFile=-" not in result
+        assert "onetimesecret.local" not in result
+
+    def test_override_emitted_without_dash_when_present(self, tmp_path, mocker):
+        """When .local exists on the host, it is added as a plain (dash-free) entry."""
+        from rots import quadlet
+        from rots.config import Config
+
+        local = tmp_path / "onetimesecret.local"
+        local.write_text("FOO=bar\n")
+        mocker.patch.object(quadlet, "LOCAL_ENV_FILE", local)
+
+        result = quadlet.get_env_files_section(Config())
+        assert "EnvironmentFile=/etc/default/onetimesecret" in result
+        assert f"EnvironmentFile={local}" in result
+        assert "EnvironmentFile=-" not in result
+
+    def test_render_mode_emits_baseline_only(self, tmp_path, mocker):
+        """Render mode (no host I/O) emits baseline only, never probing the override."""
+        from rots import quadlet
+        from rots.config import Config
+
+        # Even if a like-named file exists locally, render mode must not probe it.
+        local = tmp_path / "onetimesecret.local"
+        local.write_text("FOO=bar\n")
+        mocker.patch.object(quadlet, "LOCAL_ENV_FILE", local)
+
+        result = quadlet.get_env_files_section(Config(), render_mode=True)
+        assert "EnvironmentFile=/etc/default/onetimesecret" in result
+        assert f"EnvironmentFile={local}" not in result
+        assert "EnvironmentFile=-" not in result
 
 
 class TestGetSecretsSection:
