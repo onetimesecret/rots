@@ -1080,6 +1080,7 @@ class TestDeployEnvVarResolution:
             "rots.commands.instance.app.deploy_lock",
             return_value=contextlib.nullcontext(),
         )
+        mocker.patch("rots.environment_file.check_secrets_resolvable")
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.deploy(web="7043")
@@ -1156,6 +1157,7 @@ class TestRedeployEnvVarResolution:
             return_value=True,
         )
         mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mocker.patch("rots.environment_file.check_secrets_resolvable")
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.redeploy(web="7043")
@@ -1867,6 +1869,7 @@ class TestDeployHooks:
         mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
         mocker.patch("rots.commands.instance.app.systemd.start")
         mocker.patch("rots.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.environment_file.check_secrets_resolvable")
         mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
         instance.deploy(web="7043", pre_hook="./scan.sh")
@@ -1885,6 +1888,7 @@ class TestDeployHooks:
         mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
         mocker.patch("rots.commands.instance.app.systemd.start")
         mocker.patch("rots.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.environment_file.check_secrets_resolvable")
         mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
         instance.deploy(web="7043", post_hook="./notify.sh")
