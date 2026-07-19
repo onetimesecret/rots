@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING
 from ots_shared.ssh import is_remote as _is_remote
 
 from rots import systemd
-from rots.environment_file import get_secrets_from_env_file
 from rots.systemd import SystemctlError
 
 from .annotations import InstanceType
@@ -265,35 +264,37 @@ def format_journalctl_hint(instances: dict[InstanceType, list[str]]) -> str:
     return f"journalctl {tag_args} -f"
 
 
-def build_secret_args(env_file: Path, *, executor: Executor | None = None) -> list[str]:
-    """Build podman --secret arguments from environment file.
+def build_env_file_args(base_env_file: Path, *, executor: Executor | None = None) -> list[str]:
+    """Build layered podman ``--env-file`` arguments for an ad-hoc container run.
 
-    Reads SECRET_VARIABLE_NAMES from the env file and generates
-    corresponding --secret flags for podman run.
+    Mirrors the quadlet's two-file ``EnvironmentFile=`` layering (see
+    :func:`rots.quadlet.get_env_files_section`): the baseline env file is added
+    when present, and the optional host override
+    ``/etc/default/onetimesecret.local`` is appended only when it exists on the
+    target. This keeps ad-hoc ``podman run`` paths (production run, boot-test
+    shell, migration transforms) resolving the *same* environment the
+    systemd-managed quadlet does, so verification faithfully matches production.
+
+    Secrets are resolved from these files (the single source of truth); no
+    ``--secret`` injection from the podman secret store is used.
 
     Args:
-        env_file: Path to environment file (e.g., /etc/default/onetimesecret)
-        executor: Optional executor for remote file access
+        base_env_file: Baseline environment file (e.g. /etc/default/onetimesecret)
+        executor: Optional executor for remote file existence checks
 
     Returns:
-        List of command arguments: ["--secret", "name,type=env,target=VAR", ...]
+        List of command arguments, e.g. ["--env-file", "/etc/default/onetimesecret"]
     """
-    if _is_remote(executor):
-        result = executor.run(["test", "-f", str(env_file)])
-        if not result.ok:
-            return []
-    elif not env_file.exists():
-        return []
+    from rots.quadlet import LOCAL_ENV_FILE
 
-    secret_specs = get_secrets_from_env_file(env_file, executor=executor)
     args: list[str] = []
-    for spec in secret_specs:
-        args.extend(
-            [
-                "--secret",
-                f"{spec.secret_name},type=env,target={spec.env_var_name}",
-            ]
-        )
+    for path in (base_env_file, LOCAL_ENV_FILE):
+        if _is_remote(executor):
+            exists = executor.run(["test", "-f", str(path)]).ok
+        else:
+            exists = path.exists()
+        if exists:
+            args.extend(["--env-file", str(path)])
     return args
 
 

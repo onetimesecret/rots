@@ -128,31 +128,31 @@ class TestShellCommand:
         assert "ots-migration-upgrade-v024:/app/data" in volume_arg
         assert "--tmpfs" not in cmd
 
-    def test_shell_includes_secrets_from_env_file(self, mocker, tmp_path):
-        """shell should include secrets when env file exists."""
-        from rots.environment_file import SecretSpec
+    def test_shell_layers_env_files_no_secret_injection(self, mocker, tmp_path):
+        """shell resolves secrets from layered env files, never via --secret.
 
+        Secrets now live in the merged base + .local env files (the single
+        source of truth the quadlet loads). The boot-test shell must layer the
+        same --env-file args and must NOT inject --secret from the podman store.
+        """
         env_file = tmp_path / "onetimesecret"
         env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY\n")
+        local_file = tmp_path / "onetimesecret.local"
+        local_file.write_text("AUTH_SECRET=from-local\n")
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", local_file)
 
         _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path, env_file=env_file)
-
-        mock_secrets = [
-            SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
-            SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
-        ]
-        mocker.patch(
-            "rots.commands.instance._helpers.get_secrets_from_env_file",
-            return_value=mock_secrets,
-        )
 
         instance.shell(quiet=True)
 
         cmd = _get_cmd_from_executor(mock_executor, interactive=True)
         cmd_str = " ".join(cmd)
-        assert "--secret" in cmd_str
-        assert "ots_hmac_secret" in cmd_str
-        assert "ots_api_key" in cmd_str
+        assert "--secret" not in cmd_str
+        # Base file layered first, .local override second (later file wins).
+        assert cmd.count("--env-file") == 2
+        assert str(env_file) in cmd
+        assert str(local_file) in cmd
+        assert cmd.index(str(local_file)) > cmd.index(str(env_file))
 
     def test_shell_includes_env_file(self, mocker, tmp_path):
         """shell should include --env-file when file exists."""
@@ -496,60 +496,65 @@ class TestShellHelp:
         assert "tmpfs" in captured.out.lower() or "ephemeral" in captured.out.lower()
 
 
-class TestBuildSecretArgs:
-    """Test build_secret_args helper function."""
+class TestBuildEnvFileArgs:
+    """Test build_env_file_args helper (replaces deleted build_secret_args).
 
-    def test_build_secret_args_returns_empty_for_missing_file(self, tmp_path):
-        """build_secret_args should return empty list for missing file."""
-        from rots.commands.instance._helpers import build_secret_args
+    Ad-hoc podman runs now layer the baseline env file plus an optional
+    /etc/default/onetimesecret.local override as --env-file args, matching the
+    quadlet's EnvironmentFile= layering. Secrets resolve from these files, so
+    no --secret injection is emitted.
+    """
 
-        missing_file = tmp_path / "nonexistent"
-        result = build_secret_args(missing_file)
+    def test_returns_empty_when_no_files_exist(self, mocker, tmp_path):
+        """No base and no .local -> no args at all."""
+        from rots.commands.instance._helpers import build_env_file_args
+
+        missing_base = tmp_path / "nonexistent"
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", tmp_path / "nonexistent.local")
+
+        result = build_env_file_args(missing_base)
         assert result == []
+        assert "--secret" not in result
 
-    def test_build_secret_args_returns_secret_flags(self, mocker, tmp_path):
-        """build_secret_args should return --secret flags."""
-        from rots.commands.instance._helpers import build_secret_args
-        from rots.environment_file import SecretSpec
+    def test_emits_base_env_file_only(self, mocker, tmp_path):
+        """Base present, .local absent -> single --env-file for the base."""
+        from rots.commands.instance._helpers import build_env_file_args
 
-        env_file = tmp_path / "env"
-        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")
+        base = tmp_path / "onetimesecret"
+        base.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=x\n")
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", tmp_path / "missing.local")
 
-        mock_secrets = [
-            SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
-        ]
-        mocker.patch(
-            "rots.commands.instance._helpers.get_secrets_from_env_file",
-            return_value=mock_secrets,
-        )
+        result = build_env_file_args(base)
+        assert result == ["--env-file", str(base)]
+        assert "--secret" not in result
 
-        result = build_secret_args(env_file)
-        assert result == [
-            "--secret",
-            "ots_hmac_secret,type=env,target=AUTH_SECRET",
-        ]
+    def test_layers_base_then_local_when_local_exists(self, mocker, tmp_path):
+        """Base + .local present -> both layered, base first, .local second."""
+        from rots.commands.instance._helpers import build_env_file_args
 
-    def test_build_secret_args_handles_multiple_secrets(self, mocker, tmp_path):
-        """build_secret_args should handle multiple secrets."""
-        from rots.commands.instance._helpers import build_secret_args
-        from rots.environment_file import SecretSpec
+        base = tmp_path / "onetimesecret"
+        base.write_text("AUTH_SECRET=base\n")
+        local = tmp_path / "onetimesecret.local"
+        local.write_text("AUTH_SECRET=override\n")
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", local)
 
-        env_file = tmp_path / "env"
-        env_file.write_text("SECRET_VARIABLE_NAMES=A,B,C\n")
+        result = build_env_file_args(base)
+        assert result == ["--env-file", str(base), "--env-file", str(local)]
+        assert "--secret" not in result
 
-        mock_secrets = [
-            SecretSpec(env_var_name="A", secret_name="ots_a"),
-            SecretSpec(env_var_name="B", secret_name="ots_b"),
-            SecretSpec(env_var_name="C", secret_name="ots_c"),
-        ]
-        mocker.patch(
-            "rots.commands.instance._helpers.get_secrets_from_env_file",
-            return_value=mock_secrets,
-        )
+    def test_uses_executor_for_remote_existence_checks(self, mocker, tmp_path):
+        """Remote runs test -f via the executor rather than touching local fs."""
+        from rots.commands.instance._helpers import build_env_file_args
 
-        result = build_secret_args(env_file)
-        assert len(result) == 6  # 3 secrets * 2 args each (--secret, value)
-        assert result[0] == "--secret"
-        assert "ots_a" in result[1]
-        assert result[2] == "--secret"
-        assert "ots_b" in result[3]
+        base = tmp_path / "onetimesecret"
+        local = tmp_path / "onetimesecret.local"
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", local)
+
+        mock_ex = mocker.MagicMock()  # not a LocalExecutor -> _is_remote() True
+        mock_ex.run.return_value.ok = True
+
+        result = build_env_file_args(base, executor=mock_ex)
+        assert result == ["--env-file", str(base), "--env-file", str(local)]
+        assert "--secret" not in result
+        mock_ex.run.assert_any_call(["test", "-f", str(base)])
+        mock_ex.run.assert_any_call(["test", "-f", str(local)])

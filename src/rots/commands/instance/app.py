@@ -30,7 +30,7 @@ from ..common import (
 )
 from ._helpers import (
     apply_quiet,
-    build_secret_args,
+    build_env_file_args,
     deploy_lock,
     flush_output,
     for_each_instance,
@@ -351,31 +351,15 @@ def run(
         if local_env.exists():
             cmd.extend(["--env-file", str(local_env)])
 
-    # Production mode: add env file, secrets, and volumes
+    # Production mode: add env file(s) and volumes
     if production:
-        from ots_shared.ssh import LocalExecutor
-
-        from rots.environment_file import get_secrets_from_env_file
-
         env_file = quadlet.DEFAULT_ENV_FILE
 
-        # Environment file
-        if not isinstance(ex, LocalExecutor):
-            env_exists = ex.run(["test", "-f", str(env_file)]).ok
-        else:
-            env_exists = env_file.exists()
-        if env_exists:
-            cmd.extend(["--env-file", str(env_file)])
-
-            # Secrets
-            secret_specs = get_secrets_from_env_file(env_file, executor=ex)
-            for spec in secret_specs:
-                cmd.extend(
-                    [
-                        "--secret",
-                        f"{spec.secret_name},type=env,target={spec.env_var_name}",
-                    ]
-                )
+        # Environment files: baseline + optional .local host override, matching
+        # the quadlet's layered EnvironmentFile= set (the single source of
+        # truth). Secrets are resolved from these files, not injected via
+        # --secret from the podman secret store.
+        cmd.extend(build_env_file_args(env_file, executor=ex))
 
         # Config overrides (per-file)
         config_files = cfg.get_existing_config_files(executor=ex)
@@ -872,8 +856,14 @@ def deploy(
     deploy_results: list[dict] = []
 
     with deploy_lock(executor=ex):
+        # Fail loud when any SECRET_VARIABLE_NAMES entry is missing/empty in the
+        # merged /etc/default/onetimesecret[.local] set. Raises SystemExit and
+        # names every unresolved secret; --force downgrades this to a warning.
+        from rots.environment_file import check_secrets_resolvable
+
+        check_secrets_resolvable(force=force, executor=ex)
+
         # Write appropriate quadlet template.
-        # Raises SystemExit(1) if env file or secrets are missing (unless force=True).
         if itype == InstanceType.WEB:
             assets.update(cfg, create_volume=True, executor=ex)
             logger.info(f"Writing quadlet files to {cfg.web_template_path.parent}")
@@ -1316,9 +1306,14 @@ def redeploy(
     redeploy_results: list[dict] = []
 
     with deploy_lock(executor=ex):
+        # Fail loud when any SECRET_VARIABLE_NAMES entry is missing/empty in the
+        # merged /etc/default/onetimesecret[.local] set. Raises SystemExit and
+        # names every unresolved secret; --force downgrades this to a warning.
+        from rots.environment_file import check_secrets_resolvable
+
+        check_secrets_resolvable(force=force, executor=ex)
+
         # Write quadlet templates for each type being redeployed.
-        # Raises SystemExit(1) if env file or secrets are missing.
-        # Redeploy always enforces secrets check (no --force override for secrets here).
         if InstanceType.WEB in instances:
             assets.update(cfg, create_volume=force, executor=ex)
             logger.info(f"Writing quadlet files to {cfg.web_template_path.parent}")
@@ -2139,17 +2134,13 @@ def shell(
 
     cmd.append("--network=host")
 
-    # Environment file and secrets
+    # Environment files: baseline + optional .local host override, matching the
+    # quadlet's layered EnvironmentFile= set. Secrets resolve from these files,
+    # not from --secret injection, so boot-test matches the production quadlet.
     env_file = quadlet.DEFAULT_ENV_FILE
     from ots_shared.ssh import LocalExecutor
 
-    if not isinstance(ex, LocalExecutor):
-        env_exists = ex.run(["test", "-f", str(env_file)]).ok
-    else:
-        env_exists = env_file.exists()
-    if env_exists:
-        cmd.extend(["--env-file", str(env_file)])
-        cmd.extend(build_secret_args(env_file, executor=ex))
+    cmd.extend(build_env_file_args(env_file, executor=ex))
 
     # Data volume: bind-mount, persistent named volume, or tmpfs (default)
     if volume:
@@ -2337,13 +2328,10 @@ def config_transform(
         env_file = quadlet.DEFAULT_ENV_FILE
         cmd = ["podman", "run", "--rm", "--network=host"]
 
-        if is_remote:
-            env_exists = ex.run(["test", "-f", str(env_file)]).ok
-        else:
-            env_exists = env_file.exists()
-        if env_exists:
-            cmd.extend(["--env-file", str(env_file)])
-            cmd.extend(build_secret_args(env_file, executor=ex))
+        # Environment files: baseline + optional .local host override, matching
+        # the quadlet's layered EnvironmentFile= set. Secrets resolve from these
+        # files, not from --secret injection.
+        cmd.extend(build_env_file_args(env_file, executor=ex))
 
         cmd.extend(["-v", f"{volume_name}:/app/data"])
         # Resolve symlinks for podman VM compatibility (macOS, local only)
@@ -2362,8 +2350,8 @@ def config_transform(
 
         if not result.ok:
             # Show migration command output for operator debugging.
-            # No secrets here: env vars are passed via podman secrets,
-            # not visible in command stdout/stderr.
+            # Secrets live in the container environment (loaded from --env-file),
+            # not on the command line, so stdout/stderr are safe to surface.
             logger.error(f"Migration command failed (exit {result.returncode})")
             if result.stderr:
                 print(result.stderr)
