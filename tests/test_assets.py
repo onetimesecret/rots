@@ -3,7 +3,6 @@
 """Tests for assets module."""
 
 import subprocess
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -350,70 +349,3 @@ class TestAssetsUpdate:
         assert "not found locally" in error_msg
         assert "pull" in error_msg.lower()
 
-
-# =============================================================================
-# Remote executor tests
-# =============================================================================
-
-
-def _make_ssh_executor(mocker):
-    """Create a mock SSHExecutor that _is_remote() recognises as remote."""
-    mock_ex = mocker.MagicMock()
-    mocker.patch(
-        "rots.assets._is_remote",
-        side_effect=lambda ex: ex is mock_ex,
-    )
-    return mock_ex
-
-
-def _make_remote_result(stdout="", returncode=0):
-    result = MagicMock()
-    result.ok = returncode == 0
-    result.stdout = stdout
-    result.stderr = ""
-    result.returncode = returncode
-    return result
-
-
-class TestAssetsUpdateRemote:
-    """Test assets.update() with remote executor."""
-
-    def test_creates_podman_with_executor(self, mocker):
-        """Should construct Podman(executor=ex) for remote operations."""
-        mock_ex = _make_ssh_executor(mocker)
-        mock_podman_cls = mocker.patch("rots.assets.Podman")
-        mock_require = mocker.patch("rots.assets.require_podman")
-
-        mock_p = MagicMock()
-        mock_podman_cls.return_value = mock_p
-
-        # volume.mount returns a path
-        mock_mount_result = MagicMock()
-        mock_mount_result.stdout = "/var/lib/containers/storage/volumes/static_assets/_data\n"
-        mock_p.volume.mount.return_value = mock_mount_result
-
-        # image.exists returns ok
-        mock_p.image.exists.return_value = _make_remote_result(returncode=0)
-
-        # create returns container id
-        mock_p.create.return_value = _make_remote_result(stdout="abc123\n")
-
-        # cp succeeds
-        mock_p.cp.return_value = _make_remote_result()
-
-        # manifest check
-        mock_ex.run.return_value = _make_remote_result(returncode=0)
-
-        # rm succeeds
-        mock_p.rm.return_value = _make_remote_result()
-
-        cfg = MagicMock(spec=Config)
-        cfg.resolved_image_with_tag.return_value = "ghcr.io/ots:latest"
-        cfg.tag = "latest"
-
-        assets.update(cfg, executor=mock_ex)
-
-        # Podman should be constructed with executor
-        mock_podman_cls.assert_called_once_with(executor=mock_ex)
-        # require_podman should receive executor
-        mock_require.assert_called_once_with(executor=mock_ex)

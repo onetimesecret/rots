@@ -2788,11 +2788,11 @@ class TestMetricsCommand:
         assert entry["mem_usage"] == "n/a"
 
 
-class TestRemoteExecutorPropagation:
+class TestExecutorPropagation:
     """Tests verifying executor is threaded through deploy/redeploy/rollback.
 
     These override the autouse _mock_get_executor fixture to return a mock
-    SSHExecutor and verify that systemd/db calls receive it.
+    executor and verify that systemd/db calls receive it.
     """
 
     def _make_mock_config(self, mocker, tmp_path):
@@ -3431,27 +3431,6 @@ class TestDeployRender:
         nets["write_worker_template"].assert_not_called()
         nets["write_scheduler_template"].assert_not_called()
 
-    def test_render_with_host_raises(self, mocker, tmp_path):
-        """`--render --host some-host` must raise rather than silently ignore --host.
-
-        Mixing a remote target with local-only render is a user mistake; the
-        command must surface that conflict rather than render and exit cleanly.
-        """
-        self._patch_render_safety_nets(mocker)
-
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
-
-        # context.host_var is the canonical channel for --host on the global app.
-        from rots import context
-
-        token = context.host_var.set("some-host.example.com")
-        try:
-            with pytest.raises(SystemExit):
-                instance.deploy(web="7043", render=out_dir)
-        finally:
-            context.host_var.reset(token)
-
     def test_render_defaults_config_source_to_confexts_web(self, mocker, monkeypatch, tmp_path):
         """When config_source=None, deploy --render uses __base__/etc default.
 
@@ -3820,27 +3799,6 @@ class TestInstanceRenderCommand:
 
         nets["record_deployment"].assert_not_called()
 
-    def test_render_with_host_raises(self, mocker, tmp_path):
-        """`--host some-host` while invoking `render` must raise.
-
-        `render` is local-only by design; mixing it with --host is a user
-        mistake that must be surfaced rather than silently ignored.
-        """
-        self._patch_render_safety_nets(mocker)
-
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
-
-        from rots import context
-        from rots.commands.instance.app import render as render_cmd
-
-        token = context.host_var.set("some-host.example.com")
-        try:
-            with pytest.raises(SystemExit):
-                render_cmd(out_dir=out_dir)
-        finally:
-            context.host_var.reset(token)
-
     def test_render_failure_exits_nonzero_with_stderr(self, mocker, capsys, tmp_path):
         """When a template renderer raises, render exits nonzero and writes a clear stderr message.
 
@@ -4139,8 +4097,6 @@ class TestInstanceRenderCommand:
 #                                              survey for deployments.db
 #   Item 2  TestRenderItem2NoPartialOutput   — config-source validation runs
 #                                              before any output tree creation
-#   Item 3  TestRenderItem3HostStillRejected — --host + valid out_dir still
-#                                              rejected after positional cleanup
 #   Item 4  TestRenderItem4AtomicityExtras   — in-place rerun byte-stability +
 #                                              no stray .tmp files
 
@@ -4360,69 +4316,6 @@ class TestRenderItem2NoPartialOutput:
 
         web = (out_dir / "etc" / "containers" / "systemd" / "onetime-web@.container").read_text()
         assert "/app/etc/" not in web
-
-
-class TestRenderItem3HostStillRejected:
-    """Item 3, regression guard — ``--host`` rejection must survive the positional cleanup.
-
-    The positional-disambiguation rewrite runs before the host check is
-    re-validated. Lock in that ``--host`` combined with a perfectly valid
-    ``out_dir`` still raises, even though the disambiguation logic doesn't
-    need to fall back.
-    """
-
-    @pytest.fixture(autouse=True)
-    def _clear_env(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("IMAGE", raising=False)
-        monkeypatch.delenv("OTS_REGISTRY", raising=False)
-        monkeypatch.setenv("TAG", "v0.24.0")
-        _stage_default_confexts(monkeypatch, tmp_path)
-
-    def _patch_safety_nets(self, mocker):
-        mocker.patch.object(Config, "get_executor")
-        mocker.patch("rots.commands.instance.app.deploy_lock")
-        mocker.patch(
-            "rots.commands.instance.app.systemd.daemon_reload",
-            create=True,
-        )
-
-    def test_host_with_valid_out_dir_still_rejected(self, mocker, tmp_path):
-        """`--host` together with a valid ``out_dir`` is still a usage error."""
-        self._patch_safety_nets(mocker)
-
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
-
-        from rots import context
-        from rots.commands.instance.app import render as render_cmd
-
-        token = context.host_var.set("some-host.example.com")
-        try:
-            with pytest.raises(SystemExit) as excinfo:
-                render_cmd(out_dir=out_dir)
-            msg = str(excinfo.value).lower()
-            assert "host" in msg
-        finally:
-            context.host_var.reset(token)
-
-    def test_host_with_two_positionals_still_rejected(self, mocker, tmp_path):
-        """`--host` plus both positionals is also rejected — host check runs first."""
-        self._patch_safety_nets(mocker)
-
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
-
-        from rots import context
-        from rots.commands.instance.app import render as render_cmd
-
-        token = context.host_var.set("some-host.example.com")
-        try:
-            with pytest.raises(SystemExit) as excinfo:
-                render_cmd(reference="ghcr.io/org/img:v1", out_dir=out_dir)
-            msg = str(excinfo.value).lower()
-            assert "host" in msg
-        finally:
-            context.host_var.reset(token)
 
 
 class TestRenderItem4AtomicityExtras:
