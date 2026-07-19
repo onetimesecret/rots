@@ -16,8 +16,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ots_shared.ssh import is_remote as _is_remote
-
 from . import systemd
 from .config import CONFIG_FILES, Config, join_image_tag
 
@@ -177,12 +175,7 @@ def get_env_files_section(
         )
         return "\n".join(lines)
 
-    from ots_shared.ssh import is_remote
-
-    if is_remote(executor):
-        exists = executor.run(["test", "-f", str(LOCAL_ENV_FILE)]).ok
-    else:
-        exists = LOCAL_ENV_FILE.exists()
+    exists = LOCAL_ENV_FILE.exists()
 
     if exists:
         lines.append(f"EnvironmentFile={LOCAL_ENV_FILE}")
@@ -458,12 +451,8 @@ def _write_template(
         cfg, env_file_path, force=force, extra_vars=extra_vars, executor=executor
     )
     content = template.format(**fmt_vars)
-    if executor is not None and _is_remote(executor):
-        executor.run(["mkdir", "-p", str(path.parent)])
-        executor.run(["tee", str(path)], input=content)
-    else:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
     systemd.daemon_reload(executor=executor)
 
 
@@ -729,12 +718,8 @@ def write_image_template(
     """
     content = render_image_template(cfg, executor=executor)
     path = cfg.image_template_path
-    if executor is not None and _is_remote(executor):
-        executor.run(["mkdir", "-p", str(path.parent)])
-        executor.run(["tee", str(path)], input=content)
-    else:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
     systemd.daemon_reload(executor=executor)
 
 

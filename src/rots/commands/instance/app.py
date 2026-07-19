@@ -12,7 +12,7 @@ from typing import Annotated
 
 import cyclopts
 
-from rots import assets, context, db, quadlet, systemd
+from rots import assets, db, quadlet, systemd
 from rots.config import Config, join_image_tag, parse_image_reference
 from rots.podman import Podman
 
@@ -66,7 +66,7 @@ def _list_instances_impl(
 ):
     """Shared implementation for listing instances."""
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     instances = resolve_identifiers(identifiers, instance_type, running_only=False, executor=ex)
 
     if not instances:
@@ -213,7 +213,7 @@ def ps(
     """
     itype, _ids = resolve_instance_type(instance_type, web, worker, scheduler)
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
 
     if itype is not None:
@@ -321,7 +321,7 @@ def run(
             _image_explicit=bool(ref_image) or cfg._image_explicit,
         )
 
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
 
     # Resolve image/tag (handles @current/@rollback aliases)
     full_image = cfg.resolved_image_with_tag(executor=ex)
@@ -744,13 +744,7 @@ def deploy(
         ots instances deploy --web 7043 --render ./out  # Emit Quadlet files locally
     """
     # --render short-circuits before any deploy-specific validation.
-    # `--host` + `--render` is a usage error: render mode performs no host I/O,
-    # so accepting --host would silently mask a misconfiguration. Fail fast.
     if render is not None:
-        if context.host_var.get(None) is not None:
-            raise SystemExit(
-                "--host cannot be combined with --render; render mode performs no host I/O."
-            )
         cfg = _build_render_cfg(reference=reference, tag=tag)
         _render_quadlets(
             cfg,
@@ -793,7 +787,7 @@ def deploy(
             _image_explicit=bool(ref_image) or cfg._image_explicit,
         )
 
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
 
     # Resolve image/tag (handles @current/@rollback aliases)
     image, resolved_tag = cfg.resolve_image_tag(executor=ex)
@@ -1043,9 +1037,8 @@ def render(
 
     ``--web`` is accepted for forward-compatibility but does not affect the
     rendered output (the templates are port-agnostic). The deploy-only flags
-    (``--host``, ``--pre-hook``, ``--post-hook``, ``--wait``, ``--wait-timeout``,
-    ``--force``, ``--delay``, ``--dry-run``) are not accepted here. Combining
-    ``--host`` with this command raises an error.
+    (``--pre-hook``, ``--post-hook``, ``--wait``, ``--wait-timeout``,
+    ``--force``, ``--delay``, ``--dry-run``) are not accepted here.
 
     Examples:
         ots instance render ./out                          # Render to ./out
@@ -1053,12 +1046,6 @@ def render(
         ots instance render ghcr.io/org/image:v1 ./out     # Explicit image reference
         ots instance render ./out --config-source ./cfg    # Custom config probe dir
     """
-    if context.host_var.get(None) is not None:
-        raise SystemExit(
-            "--host cannot be combined with `instance render`; "
-            "render produces local files only and performs no host I/O."
-        )
-
     # Disambiguate the single-positional case. The signature is
     # `<reference> <out_dir>`; with one positional, users invoking
     # `ots instance render ./out` want it bound to out_dir, not reference.
@@ -1215,7 +1202,7 @@ def redeploy(
             _image_explicit=bool(ref_image) or cfg._image_explicit,
         )
 
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
     apply_quiet(quiet)
@@ -1511,7 +1498,7 @@ def undeploy(
     import json as json_mod
 
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
@@ -1645,7 +1632,7 @@ def start(
         ots instances start --scheduler main        # Start specific scheduler
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
@@ -1684,7 +1671,7 @@ def stop(
         ots instances stop --scheduler              # Stop scheduler instances
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
@@ -1722,7 +1709,7 @@ def restart(
         ots instances restart --delay 10            # Longer wait between restarts
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
@@ -1756,7 +1743,7 @@ def enable(
         ots instances enable --scheduler main       # Enable specific scheduler
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
@@ -1794,7 +1781,7 @@ def disable(
         ots instances disable --scheduler main -y   # Disable specific scheduler
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
@@ -1843,7 +1830,7 @@ def status(
     import json as json_mod
 
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
@@ -1898,7 +1885,7 @@ def logs(
         ots instances logs -n 100                   # Last 100 lines
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
@@ -1949,7 +1936,7 @@ def show_env():
         ots instances show-env
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
 
     env_path = "/etc/default/onetimesecret"
     print(f"=== {env_path} ===")
@@ -2021,7 +2008,7 @@ def exec_shell(
     import os
 
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     instances = resolve_identifiers(identifiers, itype, running_only=True, executor=ex)
 
@@ -2118,7 +2105,7 @@ def shell(
     # Obtain executor early for remote env file checks
     from rots.systemd import _get_executor
 
-    ex = _get_executor(cfg.get_executor(host=context.host_var.get(None)))
+    ex = _get_executor(cfg.get_executor())
 
     # Check for unresolved sentinel tags before proceeding
     _canonical_image, resolved_tag = cfg.resolve_image_tag(executor=ex)
@@ -2286,12 +2273,8 @@ def config_transform(
             _image_explicit=bool(ref_image) or cfg._image_explicit,
         )
 
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
-
-    from ots_shared.ssh import LocalExecutor
-
-    is_remote = not isinstance(ex, LocalExecutor)
 
     # Validate: prevent path traversal
     if ".." in file or file.startswith("/"):
@@ -2299,10 +2282,7 @@ def config_transform(
 
     # Check config file exists
     config_path = cfg.config_dir / file
-    if is_remote:
-        if not ex.run(["test", "-f", str(config_path)]).ok:
-            raise SystemExit(f"Config file not found: {config_path}")
-    elif not config_path.exists():
+    if not config_path.exists():
         raise SystemExit(f"Config file not found: {config_path}")
 
     # Resolve image/tag (handles @current/@rollback aliases, applies registry prefix)
@@ -2318,7 +2298,7 @@ def config_transform(
 
         # Copy config file to volume using a helper container
         # Resolve symlinks for podman VM compatibility (macOS, local only)
-        config_path_str = str(config_path.resolve()) if not is_remote else str(config_path)
+        config_path_str = str(config_path.resolve())
         p.run(
             "--rm",
             "-v",
@@ -2337,17 +2317,14 @@ def config_transform(
         env_file = quadlet.DEFAULT_ENV_FILE
         cmd = ["podman", "run", "--rm", "--network=host"]
 
-        if is_remote:
-            env_exists = ex.run(["test", "-f", str(env_file)]).ok
-        else:
-            env_exists = env_file.exists()
+        env_exists = env_file.exists()
         if env_exists:
             cmd.extend(["--env-file", str(env_file)])
             cmd.extend(build_secret_args(env_file, executor=ex))
 
         cmd.extend(["-v", f"{volume_name}:/app/data"])
         # Resolve symlinks for podman VM compatibility (macOS, local only)
-        config_dir_str = str(cfg.config_dir.resolve()) if not is_remote else str(cfg.config_dir)
+        config_dir_str = str(cfg.config_dir.resolve())
         cmd.extend(["-v", f"{config_dir_str}:/app/etc:ro"])
         cmd.extend(cfg.podman_auth_args(executor=ex))
         cmd.append(full_image)
@@ -2393,11 +2370,7 @@ def config_transform(
         new_content = read_result.stdout
 
         # Read original config content
-        if is_remote:
-            orig_result = ex.run(["cat", str(config_path)])
-            original_content = orig_result.stdout
-        else:
-            original_content = config_path.read_text()
+        original_content = config_path.read_text()
 
         # Show unified diff of proposed config changes. This is the primary
         # output of dry-run mode — config files contain app settings, not secrets.
@@ -2425,31 +2398,24 @@ def config_transform(
         backup_time = time.strftime("%Y%m%d-%H%M%S")
         backup_path = Path(f"{config_path}.bak.{backup_time}")
 
-        if is_remote:
-            # Remote: use cp for backup, tee for write
-            ex.run(["cp", "-p", str(config_path), str(backup_path)], check=True)
-            logger.info(f"Backup created: {backup_path}")
-            ex.run(["tee", str(config_path)], input=new_content)
-            logger.info(f"Config updated: {config_path}")
-        else:
-            # Handle numbered backups if timestamp backup exists
-            if backup_path.exists():
-                counter = 1
-                while True:
-                    numbered_backup = Path(f"{config_path}.bak.{backup_time}.{counter}")
-                    if not numbered_backup.exists():
-                        backup_path = numbered_backup
-                        break
-                    counter += 1
+        # Handle numbered backups if timestamp backup exists
+        if backup_path.exists():
+            counter = 1
+            while True:
+                numbered_backup = Path(f"{config_path}.bak.{backup_time}.{counter}")
+                if not numbered_backup.exists():
+                    backup_path = numbered_backup
+                    break
+                counter += 1
 
-            # Create backup and apply
-            import shutil
+        # Create backup and apply
+        import shutil
 
-            shutil.copy2(config_path, backup_path)
-            logger.info(f"Backup created: {backup_path}")
+        shutil.copy2(config_path, backup_path)
+        logger.info(f"Backup created: {backup_path}")
 
-            config_path.write_text(new_content)
-            logger.info(f"Config updated: {config_path}")
+        config_path.write_text(new_content)
+        logger.info(f"Config updated: {config_path}")
 
     finally:
         # Cleanup: remove temporary volume
@@ -2486,7 +2452,7 @@ def cleanup(
             return
 
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
 
     try:
@@ -2556,7 +2522,7 @@ def metrics(
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
 
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
 
     instances = resolve_identifiers(identifiers, itype, running_only=False, executor=ex)
 
@@ -2680,7 +2646,7 @@ def rollback(
 
     itype, identifiers = resolve_instance_type(instance_type, web, worker, scheduler)
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
 
     # Determine rollback target from the deployment timeline
     previous = db.get_previous_tags(cfg.get_db_path(ex), limit=5, executor=ex)

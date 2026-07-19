@@ -28,8 +28,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ots_shared.ssh import is_remote as _is_remote
-
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -95,27 +93,7 @@ def render_template(template_path: Path, *, executor: Executor | None = None) ->
     Raises:
         ProxyError: If envsubst fails or template not found.
 
-    Note:
-        On remote hosts, envsubst uses the remote host's environment
-        variables — not the local operator's. This is intentional:
-        proxy config needs HOST-specific values (domain, ports, etc.).
     """
-    if _is_remote(executor):
-        # Read template from remote filesystem
-        result = executor.run(["test", "-f", str(template_path)])
-        if not result.ok:
-            raise ProxyError(f"Template not found: {template_path}")
-        result = executor.run(["cat", str(template_path)])
-        if not result.ok:
-            raise ProxyError(f"Failed to read template: {result.stderr}")
-        template_content = result.stdout
-        # Pipe through envsubst on the remote host
-        result = executor.run(["envsubst"], input=template_content, timeout=30)
-        if not result.ok:
-            raise ProxyError(f"envsubst failed: {result.stderr}")
-        return result.stdout
-
-    # Local execution
     if not template_path.exists():
         raise ProxyError(f"Template not found: {template_path}")
 
@@ -235,39 +213,7 @@ def validate_caddy_config(
     Raises:
         ProxyError: If validation fails.
     """
-    if _is_remote(executor):
-        # Create unique temp file on remote host (CWE-377: avoid predictable paths).
-        # When source_dir is provided, create the temp file there so Caddy can
-        # resolve relative ``import`` paths from the same directory.
-        if source_dir:
-            mktemp_template = f"{source_dir}/ots-caddy-validate.XXXXXXXXXX"
-        else:
-            mktemp_template = "/tmp/ots-caddy-validate.XXXXXXXXXX"
-        mktemp_result = executor.run(
-            ["mktemp", mktemp_template],
-            timeout=10,
-        )
-        if not mktemp_result.ok:
-            raise ProxyError(f"Failed to create temp file on remote: {mktemp_result.stderr}")
-        tmp_remote = mktemp_result.stdout.strip()
-        if not tmp_remote:
-            raise ProxyError("mktemp returned empty path")
-
-        result = executor.run(["tee", tmp_remote], input=content)
-        if not result.ok:
-            raise ProxyError(f"Failed to write temp file on remote: {result.stderr}")
-        try:
-            result = executor.run(
-                ["caddy", "validate", "--config", tmp_remote, "--adapter", "caddyfile"],
-                timeout=30,
-            )
-            if not result.ok:
-                raise ProxyError(f"Caddy validation failed:\n{result.stderr}")
-        finally:
-            executor.run(["rm", "-f", tmp_remote], timeout=10)
-        return
-
-    # Local execution — write temp file into source_dir so relative imports resolve
+    # Write temp file into source_dir so relative imports resolve
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".Caddyfile", dir=source_dir, delete=False
     ) as f:
@@ -310,24 +256,15 @@ def adapt_to_json(config_path: Path, *, executor: Executor | None = None) -> str
     """
     cmd = ["caddy", "adapt", "--config", str(config_path), "--adapter", "caddyfile"]
 
-    if _is_remote(executor):
-        result = executor.run(["test", "-f", str(config_path)])
-        if not result.ok:
-            raise ProxyError(f"Config file not found: {config_path}")
-        result = executor.run(cmd, timeout=30)
-        if not result.ok:
-            raise ProxyError(f"caddy adapt failed for {config_path}:\n{result.stderr}")
-        raw = result.stdout
-    else:
-        if not config_path.exists():
-            raise ProxyError(f"Config file not found: {config_path}")
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True)
-            if proc.returncode != 0:
-                raise ProxyError(f"caddy adapt failed for {config_path}:\n{proc.stderr}")
-            raw = proc.stdout
-        except FileNotFoundError as e:
-            raise ProxyError("caddy not found in PATH") from e
+    if not config_path.exists():
+        raise ProxyError(f"Config file not found: {config_path}")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise ProxyError(f"caddy adapt failed for {config_path}:\n{proc.stderr}")
+        raw = proc.stdout
+    except FileNotFoundError as e:
+        raise ProxyError("caddy not found in PATH") from e
 
     import json
 
@@ -348,21 +285,13 @@ def reload_caddy(*, executor: Executor | None = None) -> None:
     Raises:
         ProxyError: If reload fails.
     """
-    if _is_remote(executor):
-        from ots_shared.ssh.executor import CommandError
-
-        try:
-            executor.run(["systemctl", "reload", "caddy"], sudo=True, timeout=30, check=True)
-        except CommandError as e:
-            raise ProxyError(f"Failed to reload caddy: {e}") from e
-    else:
-        try:
-            subprocess.run(
-                ["sudo", "systemctl", "reload", "caddy"],
-                check=True,
-            )
-        except subprocess.CalledProcessError as e:
-            raise ProxyError(f"Failed to reload caddy: {e}") from e
+    try:
+        subprocess.run(
+            ["sudo", "systemctl", "reload", "caddy"],
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise ProxyError(f"Failed to reload caddy: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -861,12 +790,6 @@ def run_probe(
 
     # Give subprocess a bit more than curl's --max-time to avoid racing
     subprocess_timeout = timeout + 5
-
-    if _is_remote(executor):
-        result = executor.run(cmd, timeout=subprocess_timeout)
-        if not result.ok:
-            raise ProxyError(f"curl failed (exit {result.returncode}): {result.stderr}")
-        return parse_curl_output(result.stdout)
 
     try:
         proc = subprocess.run(

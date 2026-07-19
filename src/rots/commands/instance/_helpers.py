@@ -7,17 +7,13 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import logging
-import os
 import shlex
-import socket
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-from ots_shared.ssh import is_remote as _is_remote
 
 from rots import systemd
 from rots.environment_file import get_secrets_from_env_file
@@ -42,19 +38,14 @@ def deploy_lock(
 ):
     """Exclusive advisory lock to serialise concurrent deploy/redeploy operations.
 
-    **Local deploys** use ``fcntl.LOCK_EX | fcntl.LOCK_NB`` so a second caller
-    gets an immediate ``BlockingIOError`` rather than hanging indefinitely.
-
-    **Remote deploys** (via SSHExecutor) use an advisory lock file on the remote
-    host.  The file is created atomically with shell ``noclobber`` (``set -C``),
-    preventing TOCTOU races between operators.  A staleness window (default 30
-    minutes) auto-expires abandoned locks from crashed sessions.
+    Uses ``fcntl.LOCK_EX | fcntl.LOCK_NB`` so a second caller gets an immediate
+    ``BlockingIOError`` rather than hanging indefinitely.
 
     Args:
         lock_path: Path to the lock file.  Created (including parent dirs) if
                    it does not exist.  Falls back to a tempfile when the
                    standard path is not writable (e.g. macOS dev environment).
-        executor: Optional executor for remote command dispatch.
+        executor: Unused; retained for call-site compatibility.
 
     Raises:
         SystemExit(1): If the lock is already held by another process/operator.
@@ -64,14 +55,6 @@ def deploy_lock(
         with deploy_lock(executor=executor):
             systemd.start(unit)
     """
-    if _is_remote(executor):
-        _remote_lock_acquire(lock_path, executor)
-        try:
-            yield
-        finally:
-            _remote_lock_release(lock_path, executor)
-        return
-
     # --- Local locking (fcntl) ---
     resolved = _resolve_lock_path(lock_path)
 
@@ -99,98 +82,6 @@ def deploy_lock(
     finally:
         fcntl.flock(fh, fcntl.LOCK_UN)
         fh.close()
-
-
-#: Seconds before a remote lock file is considered stale and can be broken.
-REMOTE_LOCK_STALE_SECONDS = 1800  # 30 minutes
-
-
-def _remote_lock_acquire(
-    lock_path: Path,
-    executor: Executor,
-    *,
-    stale_seconds: int = REMOTE_LOCK_STALE_SECONDS,
-) -> None:
-    """Acquire an advisory deploy lock on a remote host.
-
-    Uses shell ``noclobber`` (``set -C``) for atomic file creation to prevent
-    TOCTOU races between concurrent operators.
-
-    If the lock file already exists and is older than *stale_seconds*, it is
-    automatically broken (with a warning) on the assumption that the holder
-    crashed without cleanup.
-    """
-    lock_str = shlex.quote(str(lock_path))
-    identity = f"{socket.gethostname()}:{os.getpid()}"
-
-    # Ensure parent directory exists
-    executor.run(["mkdir", "-p", str(lock_path.parent)], sudo=True, timeout=15)
-
-    # Atomic create via noclobber — fails if the file already exists
-    result = executor.run(
-        ["/bin/sh", "-c", f"set -C; echo {shlex.quote(identity)} > {lock_str}"],
-        sudo=True,
-    )
-
-    if result.ok:
-        logger.debug(f"Remote deploy lock acquired: {lock_path}")
-        return
-
-    # Lock file exists — check staleness
-    stat_result = executor.run(
-        ["/bin/sh", "-c", f"stat -c %Y {lock_str} 2>/dev/null || echo 0"],
-        sudo=True,
-    )
-    try:
-        mtime = int(stat_result.stdout.strip())
-    except ValueError:
-        mtime = 0
-
-    if mtime > 0:
-        age_result = executor.run(["date", "+%s"])
-        try:
-            now = int(age_result.stdout.strip())
-        except ValueError:
-            now = 0
-        age = now - mtime if now > mtime else 0
-
-        if age > stale_seconds:
-            # Stale lock — break it
-            cat = executor.run(["cat", str(lock_path)], sudo=True)
-            holder = cat.stdout.strip() if cat.ok else "unknown"
-            logger.warning(
-                f"Breaking stale remote deploy lock"
-                f" (held by {holder}, age {age}s > {stale_seconds}s)"
-            )
-            executor.run(["rm", "-f", str(lock_path)], sudo=True)
-            # Retry once
-            retry = executor.run(
-                ["/bin/sh", "-c", f"set -C; echo {shlex.quote(identity)} > {lock_str}"],
-                sudo=True,
-            )
-            if retry.ok:
-                return
-
-    # Lock is actively held — report and exit
-    cat = executor.run(["cat", str(lock_path)], sudo=True)
-    holder = cat.stdout.strip() if cat.ok else "unknown"
-    logger.error(
-        f"another deploy is already in progress on the remote host.\n"
-        f"  Lock file: {lock_path}\n"
-        f"  Held by: {holder}\n"
-        f"Wait for it to finish, or remove the lock if it is stale:\n"
-        f"  ssh <host> sudo rm {lock_path}"
-    )
-    raise SystemExit(1)
-
-
-def _remote_lock_release(lock_path: Path, executor: Executor) -> None:
-    """Release advisory deploy lock on a remote host."""
-    result = executor.run(["rm", "-f", str(lock_path)], sudo=True)
-    if not result.ok:
-        logger.warning(f"Failed to remove remote deploy lock: {result.stderr}")
-    else:
-        logger.debug(f"Remote deploy lock released: {lock_path}")
 
 
 def _resolve_lock_path(lock_path: Path) -> Path:
@@ -278,11 +169,7 @@ def build_secret_args(env_file: Path, *, executor: Executor | None = None) -> li
     Returns:
         List of command arguments: ["--secret", "name,type=env,target=VAR", ...]
     """
-    if _is_remote(executor):
-        result = executor.run(["test", "-f", str(env_file)])
-        if not result.ok:
-            return []
-    elif not env_file.exists():
+    if not env_file.exists():
         return []
 
     secret_specs = get_secrets_from_env_file(env_file, executor=executor)

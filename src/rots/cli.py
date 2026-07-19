@@ -42,7 +42,6 @@ app.command("rots.commands.instance:app", name="instance")
 app.command("rots.commands.image:app", name="image")
 app.command("rots.commands.assets:app", name="assets")
 app.command("rots.commands.proxy:app", name="proxy")
-app.command("rots.commands.host:app", name="host")
 app.command("rots.commands.service:app", name="service")
 app.command("rots.commands.dns:app", name="dns")
 app.command("rots.commands.env:app", name="env")
@@ -97,13 +96,6 @@ def _meta(
             help="Enable debug logging",
         ),
     ] = False,
-    host: Annotated[
-        str | None,
-        cyclopts.Parameter(
-            name=["--host", "-H"],
-            help="Target host for remote execution (overrides OTS_HOST and .otsinfra.env)",
-        ),
-    ] = None,
     backend: Annotated[
         str | None,
         cyclopts.Parameter(
@@ -118,8 +110,6 @@ def _meta(
     from . import context
 
     _configure_logging(verbose)
-    if host is not None:
-        context.host_var.set(host)
     if backend is not None:
         if backend not in ("dbus", "cli"):
             print(f"Error: --backend must be 'dbus' or 'cli', got '{backend}'", file=sys.stderr)
@@ -138,12 +128,11 @@ def _default():
 @app.command
 def ps():
     """Show running OTS containers (podman view)."""
-    from . import context
     from .config import Config
     from .podman import Podman
 
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
     p.ps(
         filter="name=onetime",
@@ -182,27 +171,19 @@ def doctor():
     RabbitMQ, and required directories.  Prints a pass/fail line for each
     check so operators can quickly identify what needs to be fixed.
 
-    When ``--host`` is set, runs checks on the remote host via the executor.
-
     Returns exit code 0 when all checks pass, 1 when any fail.
 
     Examples:
         ots doctor
-        ots --host eu1.example.com doctor
     """
     import shutil
 
-    from . import context
     from .config import Config
     from .environment_file import EnvFile, secret_exists
     from .quadlet import DEFAULT_ENV_FILE
 
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
-
-    from ots_shared.ssh import LocalExecutor
-
-    is_local = isinstance(ex, LocalExecutor)
+    ex = cfg.get_executor()
 
     checks: list[tuple[str, bool, str]] = []  # (label, ok, detail)
 
@@ -210,31 +191,22 @@ def doctor():
         checks.append((label, ok, detail))
 
     def _has_command(name: str) -> bool:
-        """Check whether *name* is on PATH (local or remote)."""
-        if is_local:
-            return bool(shutil.which(name))
-        result = ex.run(["which", name], timeout=10)
-        return result.ok
+        """Check whether *name* is on PATH."""
+        return bool(shutil.which(name))
 
     def _path_exists(path: str) -> bool:
-        """Check whether *path* exists (local or remote)."""
-        if is_local:
-            from pathlib import Path
+        """Check whether *path* exists."""
+        from pathlib import Path
 
-            return Path(path).exists()
-        result = ex.run(["test", "-e", path], timeout=10)
-        return result.ok
+        return Path(path).exists()
 
     def _path_writable(path: str) -> bool:
-        """Check whether *path* is a writable directory (local or remote)."""
-        if is_local:
-            import os
-            from pathlib import Path
+        """Check whether *path* is a writable directory."""
+        import os
+        from pathlib import Path
 
-            p = Path(path)
-            return p.exists() and os.access(p, os.W_OK)
-        result = ex.run(["test", "-w", path], timeout=10)
-        return result.ok
+        p = Path(path)
+        return p.exists() and os.access(p, os.W_OK)
 
     # 1. systemctl available
     _check("systemctl available", _has_command("systemctl"), "install systemd")
@@ -275,11 +247,10 @@ def doctor():
     )
 
     # 7. Env file has SECRET_VARIABLE_NAMES and they are processed
-    #    Local: parse env file and verify each declared secret exists in podman
-    #    Remote: check for ots_* secrets via podman secret ls
+    #    Parse env file and verify each declared secret exists in podman
     secrets_ok = False
     secrets_detail = "run: sudo ots env process"
-    if env_file_ok and is_local:
+    if env_file_ok:
         try:
             parsed = EnvFile.parse(DEFAULT_ENV_FILE)
             if parsed.secret_variable_names:
@@ -294,12 +265,6 @@ def doctor():
                 secrets_detail = "set SECRET_VARIABLE_NAMES in env file"
         except Exception as exc:
             secrets_detail = f"parse error: {exc}"
-    elif env_file_ok and not is_local:
-        # Remote: check via podman secret ls
-        result = ex.run(["podman", "secret", "ls", "--format", "{{.Name}}"], timeout=10)
-        if result.ok and result.stdout.strip():
-            secrets_ok = any(line.startswith("ots_") for line in result.stdout.splitlines())
-        secrets_detail = "run: sudo ots env process (on remote host)" if not secrets_ok else ""
     _check("podman secrets configured", secrets_ok, secrets_detail)
 
     # 8. Web quadlet template exists

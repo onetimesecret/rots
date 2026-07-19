@@ -11,15 +11,13 @@ This ensures:
 - Full audit trail of all deployments
 - CURRENT and ROLLBACK aliases are tracked in the database
 
-Remote execution: When an executor (SSHExecutor) is provided, database
-operations are dispatched via the ``sqlite3`` CLI on the remote host instead
-of using the Python sqlite3 module.  The remote ``sqlite3`` must be >= 3.33
-(``-json`` output flag).  Debian 12 ships 3.40, Ubuntu 22.04 ships 3.37.
+All database operations run against the local filesystem using the Python
+sqlite3 module.  The ``executor`` keyword argument is accepted for call-site
+compatibility but is unused.
 """
 
 from __future__ import annotations
 
-import json as _json
 import logging
 import sqlite3
 from collections.abc import Iterator
@@ -27,8 +25,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-from ots_shared.ssh import is_remote as _is_remote
 
 if TYPE_CHECKING:
     from ots_shared.ssh.executor import Executor
@@ -143,97 +139,8 @@ CREATE INDEX IF NOT EXISTS idx_dns_current_provider ON dns_current(provider);
 """
 
 
-def _escape_sql_string(value: str) -> str:
-    """Escape a string for use in a sqlite3 CLI SQL literal.
-
-    SQLite uses doubled single-quotes for escaping:  O'Brien -> 'O''Brien'
-    """
-    return value.replace("'", "''")
-
-
-def _remote_query(
-    db_path: Path,
-    sql: str,
-    params: tuple = (),
-    *,
-    executor: Executor,
-) -> list[dict]:
-    """Execute a SELECT query on a remote host via the sqlite3 CLI.
-
-    Uses ``sqlite3 -json`` (requires sqlite3 >= 3.33) for structured output.
-    Returns a list of dicts (one per row).
-    """
-    formatted_sql = _interpolate_params(sql, params)
-    result = executor.run(
-        ["sqlite3", "-json", str(db_path), formatted_sql],
-        timeout=15,
-    )
-    if not result.ok:
-        logger.warning(f"Remote sqlite3 query failed: {result.stderr.strip()}")
-        return []
-    stdout = result.stdout.strip()
-    if not stdout:
-        return []
-    return _json.loads(stdout)
-
-
-def _remote_execute(
-    db_path: Path,
-    sql: str,
-    params: tuple = (),
-    *,
-    executor: Executor,
-) -> None:
-    """Execute a write (INSERT/UPDATE/DELETE) on a remote host via sqlite3 CLI."""
-    formatted_sql = _interpolate_params(sql, params)
-    result = executor.run(
-        ["sqlite3", str(db_path), formatted_sql],
-        timeout=15,
-    )
-    if not result.ok:
-        logger.warning(f"Remote sqlite3 execute failed: {result.stderr.strip()}")
-
-
-def _interpolate_params(sql: str, params: tuple) -> str:
-    """Replace ``?`` placeholders with properly escaped literal values.
-
-    Only supports int, str, and None — which covers all our query parameters.
-    """
-    parts: list[str] = []
-    param_idx = 0
-    for char in sql:
-        if char == "?" and param_idx < len(params):
-            val = params[param_idx]
-            if val is None:
-                parts.append("NULL")
-            elif isinstance(val, int):
-                parts.append(str(val))
-            elif isinstance(val, str):
-                parts.append(f"'{_escape_sql_string(val)}'")
-            else:
-                parts.append(f"'{_escape_sql_string(str(val))}'")
-            param_idx += 1
-        else:
-            parts.append(char)
-    return "".join(parts)
-
-
-def _remote_init_db(db_path: Path, *, executor: Executor) -> None:
-    """Ensure the remote database exists and has the schema applied."""
-    # Use a single sqlite3 invocation with the full schema
-    result = executor.run(
-        ["sqlite3", str(db_path), SCHEMA],
-        timeout=15,
-    )
-    if not result.ok:
-        logger.warning(f"Remote init_db failed: {result.stderr.strip()}")
-
-
 def init_db(db_path: Path, *, executor: Executor | None = None) -> None:
     """Initialize the database with schema. Idempotent."""
-    if _is_remote(executor):
-        _remote_init_db(db_path, executor=executor)
-        return
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
         conn.executescript(SCHEMA)
@@ -245,20 +152,7 @@ def get_connection(
     *,
     executor: Executor | None = None,
 ) -> Iterator[sqlite3.Connection]:
-    """Get a local database connection, initializing if needed.
-
-    For remote execution paths, callers should use ``_remote_query`` /
-    ``_remote_execute`` directly instead of opening a connection.
-
-    Raises:
-        ValueError: If called with a remote executor (the Python sqlite3
-            module cannot open a database on a remote host).
-    """
-    if _is_remote(executor):
-        raise ValueError(
-            "get_connection() cannot be used with a remote executor. "
-            "Use _remote_query() / _remote_execute() directly."
-        )
+    """Get a local database connection, initializing if needed."""
     if not db_path.exists():
         init_db(db_path)
     conn = sqlite3.connect(db_path)
@@ -286,9 +180,6 @@ def record_deployment(
         VALUES (?, ?, ?, ?, ?, ?)
     """
     params = (port, image, tag, action, 1 if success else 0, notes)
-    if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)
-        return 0  # Remote doesn't return lastrowid
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)
         conn.commit()
@@ -338,22 +229,6 @@ def get_deployments(
     """
     params.append(limit)
 
-    if _is_remote(executor):
-        rows = _remote_query(db_path, query, tuple(params), executor=executor)
-        return [
-            Deployment(
-                id=row["id"],
-                timestamp=row["timestamp"],
-                port=row.get("port"),
-                image=row["image"],
-                tag=row["tag"],
-                action=row["action"],
-                success=bool(row["success"]),
-                notes=row.get("notes"),
-            )
-            for row in rows
-        ]
-
     with get_connection(db_path) as conn:
         rows = conn.execute(query, params).fetchall()
         return [
@@ -389,9 +264,6 @@ def set_alias(
             set_at = datetime('now')
     """
     params = (alias.upper(), image, tag)
-    if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)
-        return
     with get_connection(db_path) as conn:
         conn.execute(sql, params)
         conn.commit()
@@ -406,17 +278,6 @@ def get_alias(
     """Get an image alias."""
     sql = "SELECT alias, image, tag, set_at FROM image_aliases WHERE alias = ?"
     params = (alias.upper(),)
-    if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)
-        if rows:
-            row = rows[0]
-            return ImageAlias(
-                alias=row["alias"],
-                image=row["image"],
-                tag=row["tag"],
-                set_at=row["set_at"],
-            )
-        return None
     with get_connection(db_path) as conn:
         row = conn.execute(sql, params).fetchone()
         if row:
@@ -436,17 +297,6 @@ def get_all_aliases(
 ) -> list[ImageAlias]:
     """Get all image aliases."""
     sql = "SELECT alias, image, tag, set_at FROM image_aliases ORDER BY alias"
-    if _is_remote(executor):
-        rows = _remote_query(db_path, sql, executor=executor)
-        return [
-            ImageAlias(
-                alias=row["alias"],
-                image=row["image"],
-                tag=row["tag"],
-                set_at=row["set_at"],
-            )
-            for row in rows
-        ]
     with get_connection(db_path) as conn:
         rows = conn.execute(sql).fetchall()
         return [
@@ -544,11 +394,8 @@ def rollback(
         LIMIT 2
     """
 
-    if _is_remote(executor):
-        rows = _remote_query(db_path, sql, executor=executor)
-    else:
-        with get_connection(db_path) as conn:
-            rows = [dict(r) for r in conn.execute(sql).fetchall()]
+    with get_connection(db_path) as conn:
+        rows = [dict(r) for r in conn.execute(sql).fetchall()]
 
     if len(rows) < 2:
         return None
@@ -600,10 +447,6 @@ def get_previous_tags(
         LIMIT ?
     """
     params = (limit,)
-
-    if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)
-        return [(row["image"], row["tag"], row["last_used"]) for row in rows]
 
     with get_connection(db_path) as conn:
         rows = conn.execute(sql, params).fetchall()
@@ -667,9 +510,6 @@ def record_service_instance(
             updated_at = datetime('now')
     """
     params = (package, instance, config_file, data_dir, port, notes)
-    if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)
-        return 0  # Remote doesn't return lastrowid
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)
         conn.commit()
@@ -690,22 +530,6 @@ def get_service_instance(
         WHERE package = ? AND instance = ?
     """
     params = (package, instance)
-    if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)
-        if rows:
-            row = rows[0]
-            return ServiceInstance(
-                id=row["id"],
-                package=row["package"],
-                instance=row["instance"],
-                config_file=row["config_file"],
-                data_dir=row["data_dir"],
-                port=row.get("port"),
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
-                notes=row.get("notes"),
-            )
-        return None
     with get_connection(db_path) as conn:
         row = conn.execute(sql, params).fetchone()
         if row:
@@ -748,23 +572,6 @@ def get_service_instances(
         """
         params = ()
 
-    if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)
-        return [
-            ServiceInstance(
-                id=row["id"],
-                package=row["package"],
-                instance=row["instance"],
-                config_file=row["config_file"],
-                data_dir=row["data_dir"],
-                port=row.get("port"),
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
-                notes=row.get("notes"),
-            )
-            for row in rows
-        ]
-
     with get_connection(db_path) as conn:
         rows = conn.execute(sql, params).fetchall()
         return [
@@ -793,16 +600,6 @@ def delete_service_instance(
     """Delete a service instance record. Returns True if deleted."""
     sql = "DELETE FROM service_instances WHERE package = ? AND instance = ?"
     params = (package, instance)
-    if _is_remote(executor):
-        # Check existence first since remote execute doesn't return rowcount
-        check_sql = (
-            "SELECT COUNT(*) as cnt FROM service_instances WHERE package = ? AND instance = ?"
-        )
-        rows = _remote_query(db_path, check_sql, params, executor=executor)
-        if not rows or rows[0].get("cnt", 0) == 0:
-            return False
-        _remote_execute(db_path, sql, params, executor=executor)
-        return True
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)
         conn.commit()
@@ -825,9 +622,6 @@ def record_service_action(
         VALUES (?, ?, ?, ?, ?)
     """
     params = (package, instance, action, 1 if success else 0, notes)
-    if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)
-        return 0  # Remote doesn't return lastrowid
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)
         conn.commit()
@@ -862,21 +656,6 @@ def get_service_actions(
         LIMIT ?
     """
     params.append(limit)
-
-    if _is_remote(executor):
-        rows = _remote_query(db_path, sql, tuple(params), executor=executor)
-        return [
-            ServiceAction(
-                id=row["id"],
-                timestamp=row["timestamp"],
-                package=row["package"],
-                instance=row["instance"],
-                action=row["action"],
-                success=bool(row["success"]),
-                notes=row.get("notes"),
-            )
-            for row in rows
-        ]
 
     with get_connection(db_path) as conn:
         rows = conn.execute(sql, params).fetchall()
@@ -947,9 +726,6 @@ def record_dns_action(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """
     params = (hostname, record_type, value, ttl, provider, action, 1 if success else 0, notes)
-    if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)
-        return 0  # Remote doesn't return lastrowid
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)
         conn.commit()
@@ -978,9 +754,6 @@ def upsert_dns_current(
             updated_at = datetime('now')
     """
     params = (hostname, record_type, value, ttl, provider)
-    if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)
-        return
     with get_connection(db_path) as conn:
         conn.execute(sql, params)
         conn.commit()
@@ -999,19 +772,6 @@ def get_dns_current(
         WHERE hostname = ?
     """
     params = (hostname,)
-    if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)
-        if rows:
-            row = rows[0]
-            return DnsCurrent(
-                hostname=row["hostname"],
-                record_type=row["record_type"],
-                value=row["value"],
-                ttl=row.get("ttl"),
-                provider=row["provider"],
-                updated_at=row["updated_at"],
-            )
-        return None
     with get_connection(db_path) as conn:
         row = conn.execute(sql, params).fetchone()
         if row:
@@ -1037,19 +797,6 @@ def get_all_dns_current(
         FROM dns_current
         ORDER BY hostname
     """
-    if _is_remote(executor):
-        rows = _remote_query(db_path, sql, executor=executor)
-        return [
-            DnsCurrent(
-                hostname=row["hostname"],
-                record_type=row["record_type"],
-                value=row["value"],
-                ttl=row.get("ttl"),
-                provider=row["provider"],
-                updated_at=row["updated_at"],
-            )
-            for row in rows
-        ]
     with get_connection(db_path) as conn:
         rows = conn.execute(sql).fetchall()
         return [
@@ -1081,23 +828,6 @@ def get_dns_history(
         LIMIT ?
     """
     params = (hostname, limit)
-    if _is_remote(executor):
-        rows = _remote_query(db_path, sql, params, executor=executor)
-        return [
-            DnsRecord(
-                id=row["id"],
-                timestamp=row["timestamp"],
-                hostname=row["hostname"],
-                record_type=row["record_type"],
-                value=row["value"],
-                ttl=row.get("ttl"),
-                provider=row["provider"],
-                action=row["action"],
-                success=bool(row["success"]),
-                notes=row.get("notes"),
-            )
-            for row in rows
-        ]
     with get_connection(db_path) as conn:
         rows = conn.execute(sql, params).fetchall()
         return [
@@ -1126,9 +856,6 @@ def delete_dns_current(
     """Delete a DNS current record. Returns True if deleted."""
     sql = "DELETE FROM dns_current WHERE hostname = ?"
     params = (hostname,)
-    if _is_remote(executor):
-        _remote_execute(db_path, sql, params, executor=executor)
-        return True
     with get_connection(db_path) as conn:
         cursor = conn.execute(sql, params)
         conn.commit()

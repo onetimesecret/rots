@@ -71,15 +71,8 @@ Provider = Annotated[
 
 
 def _get_executor():
-    """Resolve executor from context. Returns None for local."""
-    from rots import context
-    from rots.config import Config
-
-    cfg = Config()
-    host = context.host_var.get(None)
-    if host is None:
-        return None
-    return cfg.get_executor(host=host)
+    """Executor for local execution (None means local)."""
+    return None
 
 
 def _db_path():

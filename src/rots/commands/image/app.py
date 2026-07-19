@@ -23,7 +23,7 @@ from typing import Annotated
 
 import cyclopts
 
-from rots import context, db
+from rots import db
 from rots.config import (
     Config,
     _strip_registry_prefix,
@@ -102,7 +102,7 @@ def pull(
     """
     apply_quiet(quiet)
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
 
     # Parse positional reference into image/tag components
@@ -237,7 +237,7 @@ def ls(
         ots image list --json
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
 
     if json_output:
@@ -398,7 +398,7 @@ def set_current(
         ots image set-current latest --image docker.io/onetimesecret/onetimesecret
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
 
     resolved_image = image or cfg.image
@@ -484,7 +484,7 @@ def rollback(
         ots image rollback --apply --delay 10  # Longer delay between instances
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
 
     # Show current state
@@ -564,7 +564,7 @@ def history(
         ots image history --json
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
 
     deployments = db.get_deployments(cfg.db_path, limit=limit, port=port, executor=ex)
 
@@ -629,7 +629,7 @@ def aliases(json_output: JsonOutput = False):
         ots image aliases --json
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
 
     aliases_list = db.get_all_aliases(cfg.db_path, executor=ex)
 
@@ -723,7 +723,7 @@ def login(
     import sys
 
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
 
     # Resolve registry from arg or config
@@ -808,7 +808,7 @@ def push(
     """
     apply_quiet(quiet)
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
 
     # Resolve registry from arg or config
@@ -888,7 +888,7 @@ def logout(
         OTS_REGISTRY=registry.example.com ots image logout
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
 
     # Resolve registry from arg or config
@@ -946,7 +946,7 @@ def rm(
             return
 
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
 
     for tag in tags:
@@ -1011,7 +1011,7 @@ def prune(
             return
 
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     p = Podman(executor=ex)
 
     try:

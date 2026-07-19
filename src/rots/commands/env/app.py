@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Annotated
 
 import cyclopts
 
-from rots import context
 from rots.config import Config
 from rots.environment_file import (
     EnvFile,
@@ -42,12 +41,7 @@ app.command(_server_init_app)
 
 
 def _file_exists(path: Path, executor: Executor) -> bool:
-    """Check if a file exists, locally or remotely via executor."""
-    from ots_shared.ssh import is_remote
-
-    if is_remote(executor):
-        result = executor.run(["test", "-f", str(path)])
-        return result.ok
+    """Check if a file exists."""
     return path.exists()
 
 
@@ -85,7 +79,7 @@ def process(
         ots env process -f /path/to/envfile -n
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     path = env_file or DEFAULT_ENV_FILE
 
     if not _file_exists(path, ex):
@@ -170,7 +164,7 @@ def show(
         ots env show --json
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     path = env_file or DEFAULT_ENV_FILE
 
     if not _file_exists(path, ex):
@@ -292,7 +286,7 @@ def quadlet_lines(
         ots env quadlet-lines -f /path/to/envfile
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     path = env_file or DEFAULT_ENV_FILE
 
     if not _file_exists(path, ex):
@@ -343,7 +337,7 @@ def verify(
         ots env verify -f /path/to/envfile
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     path = env_file or DEFAULT_ENV_FILE
 
     if not _file_exists(path, ex):
@@ -417,16 +411,13 @@ def push(
         ots --host eu-web-01 env push .env.secrets --dest /etc/default/onetimesecret --process
         ots --host eu-web-01 env push .env -n
     """
-    from ots_shared.ssh import is_remote
-
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     remote_path = dest or DEFAULT_ENV_FILE
 
-    if not is_remote(ex):
-        logger.error("push requires a remote host. Use --host to specify one.")
-        logger.info("For local env file processing, use 'ots env process' directly.")
-        raise SystemExit(1)
+    logger.error("push requires a remote host, which is no longer supported.")
+    logger.info("For local env file processing, use 'ots env process' directly.")
+    raise SystemExit(1)
 
     if not source.exists():
         logger.error(f"Local file not found: {source}")

@@ -30,34 +30,20 @@ def _default_backup_path(db_path: Path) -> Path:
 
 
 def _get_executor_and_db():
-    """Resolve executor from context and return (executor, db_path)."""
-    from rots import context
-
+    """Resolve the executor and return (executor, db_path)."""
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     db_path = cfg.get_db_path(ex)
     return ex, db_path
 
 
 def _db_exists(db_path: Path, executor) -> bool:
-    """Check whether the database file exists (local or remote)."""
-    from ots_shared.ssh import is_remote
-
-    if is_remote(executor):
-        result = executor.run(["test", "-f", str(db_path)])
-        return result.ok
+    """Check whether the database file exists."""
     return db_path.exists()
 
 
 def _db_size(db_path: Path, executor) -> int:
-    """Get database file size in bytes (local or remote)."""
-    from ots_shared.ssh import is_remote
-
-    if is_remote(executor):
-        result = executor.run(["stat", "--printf=%s", str(db_path)])
-        if result.ok:
-            return int(result.stdout.strip())
-        return 0
+    """Get database file size in bytes."""
     return db_path.stat().st_size
 
 
@@ -79,17 +65,12 @@ def backup(
     Creates a safe SQLite backup using the API (not a raw file copy) so the
     backup is always consistent even if a write is in progress.
 
-    For remote hosts, the backup is created on the remote host using the
-    sqlite3 CLI ``.backup`` command.
-
     Examples:
         ots db backup
         ots db backup /var/backups/deployments.db
         ots db backup --json
     """
     import json as json_mod
-
-    from ots_shared.ssh import is_remote
 
     ex, db_path = _get_executor_and_db()
 
@@ -103,39 +84,23 @@ def backup(
 
     target = dest or _default_backup_path(db_path)
 
-    if is_remote(ex):
-        # Remote: use sqlite3 CLI .backup command on the remote host
-        result = ex.run(
-            ["sqlite3", str(db_path), f".backup {target}"],
-            timeout=30,
-        )
-        if not result.ok:
-            msg = f"Backup failed: {result.stderr.strip()}"
-            if json_output:
-                print(json_mod.dumps({"success": False, "error": msg}))
-            else:
-                logger.error(f"{msg}")
-            raise SystemExit(1)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # Use SQLite backup API for a consistent snapshot
+    try:
+        src_conn = sqlite3.connect(db_path)
+        dst_conn = sqlite3.connect(target)
+        src_conn.backup(dst_conn)
+        src_conn.close()
+        dst_conn.close()
+    except sqlite3.Error as exc:
+        msg = f"Backup failed: {exc}"
+        if json_output:
+            print(json_mod.dumps({"success": False, "error": msg}))
+        else:
+            logger.error(f"{msg}")
+        raise SystemExit(1)
 
-        size = _db_size(target, ex)
-    else:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        # Use SQLite backup API for a consistent snapshot
-        try:
-            src_conn = sqlite3.connect(db_path)
-            dst_conn = sqlite3.connect(target)
-            src_conn.backup(dst_conn)
-            src_conn.close()
-            dst_conn.close()
-        except sqlite3.Error as exc:
-            msg = f"Backup failed: {exc}"
-            if json_output:
-                print(json_mod.dumps({"success": False, "error": msg}))
-            else:
-                logger.error(f"{msg}")
-            raise SystemExit(1)
-
-        size = target.stat().st_size
+    size = target.stat().st_size
 
     result_data = {
         "success": True,
@@ -176,16 +141,11 @@ def restore(
     A pre-restore backup of the current database is automatically created
     alongside the live database before the restore proceeds.
 
-    For remote hosts, the source file must be accessible locally. The
-    validated backup is pushed to the remote host via the executor.
-
     Examples:
         ots db restore /var/backups/deployments.db
         ots db restore /var/backups/deployments.db --yes
     """
     import json as json_mod
-
-    from ots_shared.ssh import is_remote
 
     if not src.exists():
         msg = f"Backup file not found: {src}"
@@ -235,66 +195,34 @@ def restore(
             print("Aborted")
             return
 
-    if is_remote(ex):
-        # Remote restore: pre-backup on remote, then push local file via SQL dump
-        pre_restore_backup: Path | None = None
-        if _db_exists(live_db, ex):
-            pre_restore_backup = _default_backup_path(live_db)
-            ex.run(
-                ["sqlite3", str(live_db), f".backup {pre_restore_backup}"],
-                timeout=30,
-            )
-
-        # Dump local backup to SQL, execute on remote.
-        # NOTE: iterdump() loads the entire DB as SQL text in memory. Fine for
-        # deployment-metadata-sized databases; for large DBs, consider SFTP
-        # transfer of the file followed by a remote .backup instead.
-        dump_conn = sqlite3.connect(src)
-        sql_dump = "\n".join(dump_conn.iterdump())
-        dump_conn.close()
-
-        # Drop existing tables and restore from dump
-        result = ex.run(
-            ["sqlite3", str(live_db)],
-            input=sql_dump,
-            timeout=60,
-        )
-        if not result.ok:
-            msg = f"Restore failed: {result.stderr.strip()}"
-            if json_output:
-                print(json_mod.dumps({"success": False, "error": msg}))
-            else:
-                logger.error(f"{msg}")
-            raise SystemExit(1)
-    else:
-        # Local restore
-        pre_restore_backup = None
-        if live_db.exists():
-            pre_restore_backup = _default_backup_path(live_db)
-            try:
-                src_conn = sqlite3.connect(live_db)
-                dst_conn = sqlite3.connect(pre_restore_backup)
-                src_conn.backup(dst_conn)
-                src_conn.close()
-                dst_conn.close()
-            except sqlite3.Error:
-                pre_restore_backup = None  # Non-fatal; proceed with restore
-
-        # Perform the restore using SQLite backup API
-        live_db.parent.mkdir(parents=True, exist_ok=True)
+    # Local restore
+    pre_restore_backup: Path | None = None
+    if live_db.exists():
+        pre_restore_backup = _default_backup_path(live_db)
         try:
-            backup_conn = sqlite3.connect(src)
-            live_conn = sqlite3.connect(live_db)
-            backup_conn.backup(live_conn)
-            backup_conn.close()
-            live_conn.close()
-        except sqlite3.Error as exc:
-            msg = f"Restore failed: {exc}"
-            if json_output:
-                print(json_mod.dumps({"success": False, "error": msg}))
-            else:
-                logger.error(f"{msg}")
-            raise SystemExit(1)
+            src_conn = sqlite3.connect(live_db)
+            dst_conn = sqlite3.connect(pre_restore_backup)
+            src_conn.backup(dst_conn)
+            src_conn.close()
+            dst_conn.close()
+        except sqlite3.Error:
+            pre_restore_backup = None  # Non-fatal; proceed with restore
+
+    # Perform the restore using SQLite backup API
+    live_db.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        backup_conn = sqlite3.connect(src)
+        live_conn = sqlite3.connect(live_db)
+        backup_conn.backup(live_conn)
+        backup_conn.close()
+        live_conn.close()
+    except sqlite3.Error as exc:
+        msg = f"Restore failed: {exc}"
+        if json_output:
+            print(json_mod.dumps({"success": False, "error": msg}))
+        else:
+            logger.error(f"{msg}")
+        raise SystemExit(1)
 
     result_data = {
         "success": True,
@@ -429,19 +357,9 @@ def info(
     size = _db_size(db_path, ex)
     aliases = db_module.get_all_aliases(db_path, executor=ex)
 
-    # Get total deployment count via the executor-aware path
-    from ots_shared.ssh import is_remote
-
-    if is_remote(ex):
-        rows = db_module._remote_query(
-            db_path,
-            "SELECT COUNT(*) as cnt FROM deployments",
-            executor=ex,
-        )
-        total = rows[0]["cnt"] if rows else 0
-    else:
-        with db_module.get_connection(db_path) as conn:
-            total = conn.execute("SELECT COUNT(*) FROM deployments").fetchone()[0]
+    # Get total deployment count
+    with db_module.get_connection(db_path) as conn:
+        total = conn.execute("SELECT COUNT(*) FROM deployments").fetchone()[0]
 
     result = {
         "db_path": str(db_path),
