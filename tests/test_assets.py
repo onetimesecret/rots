@@ -348,4 +348,3 @@ class TestAssetsUpdate:
         error_msg = str(exc_info.value)
         assert "not found locally" in error_msg
         assert "pull" in error_msg.lower()
-

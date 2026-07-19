@@ -57,3 +57,29 @@ def _reset_logging_handlers():
     for h in old_handlers:
         root.addHandler(h)
     root.setLevel(old_level)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_deploy_lock(tmp_path):
+    """Point the deploy lock at a per-test path.
+
+    On dev machines ``/var/lib/onetimesecret`` is not writable, so
+    ``_resolve_lock_path`` falls back to a single fixed file
+    (``$TMPDIR/ots-deploy.lock``).  Integration deploy tests that enter the
+    real ``deploy_lock()`` therefore share one advisory lock and collide under
+    parallel (``pytest -n auto``) execution.  Rebinding the default lock_path
+    to a unique tmp_path isolates each test.  Tests that pass an explicit
+    lock_path (test_helpers) or mock ``deploy_lock`` are unaffected, since
+    neither uses this default.
+    """
+    from rots.commands.instance import _helpers
+
+    # deploy_lock is @contextmanager-decorated, so its real default lives on
+    # the wrapped generator function, not the wrapper.
+    wrapped = _helpers.deploy_lock.__wrapped__
+    original = wrapped.__defaults__
+    wrapped.__defaults__ = (tmp_path / "deploy.lock",)
+    try:
+        yield
+    finally:
+        wrapped.__defaults__ = original

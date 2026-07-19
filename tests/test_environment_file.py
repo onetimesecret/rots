@@ -472,4 +472,3 @@ class TestGetSecretsFromEnvFile:
         assert len(secrets) == 1
         assert secrets[0].env_var_name == "API_KEY"
         assert env_file.read_text() == original  # File unchanged
-
