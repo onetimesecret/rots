@@ -844,6 +844,33 @@ class TestCheckSecretsResolvable:
 
         check_secrets_resolvable(base_path=base, local_path=local)
 
+    def test_raises_when_base_file_missing(self, tmp_path):
+        """Absent base file is rejected: the quadlet requires it as EnvironmentFile."""
+        from rots.environment_file import check_secrets_resolvable
+
+        base = tmp_path / "onetimesecret"  # never created
+        local = tmp_path / "onetimesecret.local"
+
+        with pytest.raises(SystemExit) as exc:
+            check_secrets_resolvable(base_path=base, local_path=local)
+
+        msg = str(exc.value)
+        assert str(base) in msg
+        assert "missing or unreadable" in msg
+
+    def test_force_warns_when_base_file_missing(self, tmp_path, capsys):
+        """force=True downgrades the missing-base-file error to a stderr warning."""
+        from rots.environment_file import check_secrets_resolvable
+
+        base = tmp_path / "onetimesecret"  # never created
+        local = tmp_path / "onetimesecret.local"
+
+        check_secrets_resolvable(force=True, base_path=base, local_path=local)
+
+        captured = capsys.readouterr()
+        assert str(base) in captured.err
+        assert "--force" in captured.err
+
     def test_defaults_to_quadlet_paths(self, mocker, tmp_path):
         """When paths omitted, defaults come from quadlet.DEFAULT/LOCAL_ENV_FILE."""
         import rots.quadlet as quadlet

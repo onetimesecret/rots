@@ -17,6 +17,7 @@ Convention:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -471,6 +472,17 @@ def generate_quadlet_secret_lines(secrets: list[SecretSpec]) -> str:
     return "\n".join(lines)
 
 
+def _readable_file(path: Path | str, *, executor: Executor | None = None) -> bool:
+    """Return True if ``path`` exists and is a readable regular file.
+
+    Executor-aware: uses ``test -r`` on remote hosts and ``os.access`` locally.
+    """
+    path = Path(path)
+    if _is_remote(executor):
+        return executor.run(["test", "-r", str(path)]).ok
+    return path.is_file() and os.access(path, os.R_OK)
+
+
 def parse_merged_env_files(
     base_path: Path | str,
     local_path: Path | str | None = None,
@@ -529,6 +541,30 @@ def check_secrets_resolvable(
 
         base_path = DEFAULT_ENV_FILE if base_path is None else base_path
         local_path = LOCAL_ENV_FILE if local_path is None else local_path
+
+    # The quadlet emits the base ``EnvironmentFile=`` with no optional ("-")
+    # syntax, so Podman refuses to start the container if the base file is
+    # missing or unreadable. Reject the deployment here rather than letting it
+    # write units that crash-loop at start. A missing base also silently yields
+    # an empty merged dict, which would make the secret check below a no-op.
+    if not _readable_file(base_path, executor=executor):
+        detail = (
+            f"Base env file {base_path} is missing or unreadable. The quadlet "
+            f"requires it as an EnvironmentFile, so the container will fail to "
+            f"start."
+        )
+        if force:
+            # User-facing CLI warning: goes to stderr, not the logging
+            # framework. Only the file path is interpolated, never secrets.
+            print(
+                f"WARNING: {detail} Proceeding anyway because --force was given.",
+                file=sys.stderr,
+            )
+        else:
+            raise SystemExit(
+                f"{detail}\n"
+                "Create the file, or pass --force to deploy anyway."
+            )
 
     merged = parse_merged_env_files(base_path, local_path, executor=executor)
     secret_names = parse_secret_variable_names(merged.get(SECRET_NAMES_KEY, ""))
