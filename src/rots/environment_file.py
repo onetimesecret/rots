@@ -470,6 +470,90 @@ def generate_quadlet_secret_lines(secrets: list[SecretSpec]) -> str:
     return "\n".join(lines)
 
 
+def parse_merged_env_files(
+    base_path: Path | str,
+    local_path: Path | str | None = None,
+    *,
+    executor: Executor | None = None,
+) -> dict[str, str]:
+    """Parse the base env file and optional local override into one merged dict.
+
+    Values from ``local_path`` (when present) take precedence over
+    ``base_path``, mirroring the layered ``EnvironmentFile=`` directives the
+    quadlet emits (base first, ``.local`` second, later file wins).
+
+    Only real ``KEY=VALUE`` variables are merged; comments and blank lines are
+    ignored. Missing files contribute nothing (never an error), consistent with
+    :meth:`EnvFile.parse`. Executor-aware for local and remote hosts.
+    """
+    merged: dict[str, str] = {}
+    base = EnvFile.parse(base_path, executor=executor)
+    for key, value in base.iter_variables():
+        merged[key] = value
+    if local_path is not None:
+        local = EnvFile.parse(local_path, executor=executor)
+        for key, value in local.iter_variables():
+            merged[key] = value
+    return merged
+
+
+def check_secrets_resolvable(
+    *,
+    force: bool = False,
+    base_path: Path | str | None = None,
+    local_path: Path | str | None = None,
+    executor: Executor | None = None,
+) -> None:
+    """Verify every SECRET_VARIABLE_NAMES entry resolves to a non-empty value.
+
+    Reads the merged base + ``.local`` EnvironmentFile set -- the single source
+    of truth the quadlet loads at container start -- and raises ``SystemExit``
+    naming *every* secret variable that is absent or empty (not just the first).
+
+    When ``force`` is True the check is downgraded to a logged warning and the
+    deployment is allowed to proceed even though the container will start
+    without the required secrets.
+
+    Args:
+        force: If True, warn instead of raising.
+        base_path: Base env file. Defaults to ``quadlet.DEFAULT_ENV_FILE``.
+        local_path: Optional override. Defaults to ``quadlet.LOCAL_ENV_FILE``.
+        executor: Optional executor for remote hosts.
+
+    Raises:
+        SystemExit: If any declared secret is unresolved and ``force`` is False.
+    """
+    if base_path is None or local_path is None:
+        from .quadlet import DEFAULT_ENV_FILE, LOCAL_ENV_FILE
+
+        base_path = DEFAULT_ENV_FILE if base_path is None else base_path
+        local_path = LOCAL_ENV_FILE if local_path is None else local_path
+
+    merged = parse_merged_env_files(base_path, local_path, executor=executor)
+    secret_names = parse_secret_variable_names(merged.get(SECRET_NAMES_KEY, ""))
+
+    # Preserve declaration order for deterministic, reproducible messages.
+    missing = [name for name in secret_names if not merged.get(name, "").strip()]
+    if not missing:
+        return
+
+    detail = (
+        f"Unresolved secrets: {', '.join(missing)}. "
+        f"Every name in {SECRET_NAMES_KEY} must resolve to a non-empty value in "
+        f"{base_path} or {local_path}."
+    )
+
+    if force:
+        logger.warning("%s Proceeding anyway because --force was given.", detail)
+        return
+
+    raise SystemExit(
+        f"{detail}\n"
+        "Set the value(s) in the env file(s) above, or pass --force to deploy "
+        "anyway (the application will likely fail at runtime without them)."
+    )
+
+
 def get_secrets_from_env_file(
     path: Path | str, *, executor: Executor | None = None
 ) -> list[SecretSpec]:
@@ -489,16 +573,20 @@ ENV_FILE_TEMPLATE = """\
 #
 # OneTime Secret - Environment Variables
 #
-# This file is sourced by the systemd quadlet container.
-# Secret values listed in SECRET_VARIABLE_NAMES are stored
-# in podman secrets (not in this file).
+# This file is the single source of truth for instance configuration.
+# It is layered onto the container as an EnvironmentFile, together with
+# an optional /etc/default/onetimesecret.local override. The instance
+# deploy/run paths read secret values directly from these files.
 #
-# Usage:
-#   1. Set SECRET_VARIABLE_NAMES with your secret env var names
-#   2. Add secret values as regular entries (STRIPE_API_KEY=sk_live_xxx)
-#   3. Run: ots env process
-#   4. Secret values are moved to podman secrets
-#   5. This file is updated: _STRIPE_API_KEY=ots_stripe_api_key
+# Usage (default):
+#   1. Add real KEY=value entries here (STRIPE_API_KEY=sk_live_xxx).
+#   2. List which names must resolve in SECRET_VARIABLE_NAMES.
+#   3. Deploy checks that every listed name has a non-empty value.
+#
+# Optional podman-secrets flow (opt-in, not the default):
+#   Run `ots env process` / `ots env push` to move the listed values
+#   into podman secrets and rewrite them as _KEY=ots_key placeholders.
+#   Only these commands perform the placeholder transform.
 #
 
 # Secret variable names (comma, space, or colon separated)
