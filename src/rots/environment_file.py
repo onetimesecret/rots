@@ -544,10 +544,7 @@ def check_secrets_resolvable(
     )
 
     if force:
-        # `detail` names the unresolved secret *variables* (keys) and file
-        # paths only -- secret values are never interpolated. CodeQL taints
-        # this because `missing` is filtered against the merged env dict, but
-        # the logged strings are variable names, not their values.
+        # codeql suppression: logs secret variable names, never their values.
         logger.warning(  # codeql[py/clear-text-logging-sensitive-data]
             "%s Proceeding anyway because --force was given.", detail
         )
