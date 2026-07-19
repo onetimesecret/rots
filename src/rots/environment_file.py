@@ -561,10 +561,7 @@ def check_secrets_resolvable(
                 file=sys.stderr,
             )
         else:
-            raise SystemExit(
-                f"{detail}\n"
-                "Create the file, or pass --force to deploy anyway."
-            )
+            raise SystemExit(f"{detail}\nCreate the file, or pass --force to deploy anyway.")
 
     merged = parse_merged_env_files(base_path, local_path, executor=executor)
     secret_names = parse_secret_variable_names(merged.get(SECRET_NAMES_KEY, ""))
