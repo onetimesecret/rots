@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -544,9 +545,12 @@ def check_secrets_resolvable(
     )
 
     if force:
-        # codeql suppression: logs secret variable names, never their values.
-        logger.warning(  # codeql[py/clear-text-logging-sensitive-data]
-            "%s Proceeding anyway because --force was given.", detail
+        # User-facing CLI warning: goes to stderr, not the logging framework.
+        # `detail` names the unresolved secret *variables* and file paths only
+        # -- values are never interpolated.
+        print(
+            f"WARNING: {detail} Proceeding anyway because --force was given.",
+            file=sys.stderr,
         )
         return
 
@@ -586,10 +590,13 @@ ENV_FILE_TEMPLATE = """\
 #   2. List which names must resolve in SECRET_VARIABLE_NAMES.
 #   3. Deploy checks that every listed name has a non-empty value.
 #
-# Optional podman-secrets flow (opt-in, not the default):
-#   Run `ots env process` / `ots env push` to move the listed values
-#   into podman secrets and rewrite them as _KEY=ots_key placeholders.
-#   Only these commands perform the placeholder transform.
+# Legacy podman-secrets flow (opt-in, NOT compatible with the default deploy):
+#   `ots env process` / `ots env push` move the listed values into podman
+#   secrets and rewrite them as _KEY=ots_key placeholders. After that, the
+#   literal values are gone from this file, so the deploy-time resolvability
+#   check reports every SECRET_VARIABLE_NAMES entry as unresolved and refuses
+#   to deploy (use --force to override). Keep literal KEY=value entries here
+#   unless you have migrated the whole host to the podman-secrets model.
 #
 
 # Secret variable names (comma, space, or colon separated)

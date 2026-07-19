@@ -810,20 +810,19 @@ class TestCheckSecretsResolvable:
         # Must not raise: .local supplies the non-empty value.
         check_secrets_resolvable(base_path=base, local_path=local)
 
-    def test_force_warns_instead_of_raising(self, tmp_path, caplog):
-        """force=True downgrades to a warning even with missing secrets."""
-        import logging
-
+    def test_force_warns_instead_of_raising(self, tmp_path, capsys):
+        """force=True downgrades to a stderr warning even with missing secrets."""
         from rots.environment_file import check_secrets_resolvable
 
         base = tmp_path / "onetimesecret"
         base.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")  # AUTH_SECRET absent
         local = tmp_path / "onetimesecret.local"
 
-        with caplog.at_level(logging.WARNING, logger="rots.environment_file"):
-            check_secrets_resolvable(force=True, base_path=base, local_path=local)
+        check_secrets_resolvable(force=True, base_path=base, local_path=local)
 
-        assert any("AUTH_SECRET" in r.message for r in caplog.records)
+        captured = capsys.readouterr()
+        assert "AUTH_SECRET" in captured.err
+        assert "--force" in captured.err
 
     def test_passes_when_secret_names_absent(self, tmp_path):
         """No SECRET_VARIABLE_NAMES -> silent pass."""
