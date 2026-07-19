@@ -65,49 +65,6 @@ class TestFileExists:
         f = tmp_path / "nonexistent"
         assert _file_exists(f, LocalExecutor()) is False
 
-    def test_remote_existing_file_returns_true(self):
-        """_file_exists should run 'test -f' on remote executor and return True when ok."""
-        from unittest.mock import MagicMock
-
-        try:
-            import paramiko
-        except ImportError:
-            pytest.skip("paramiko not installed")
-
-        from ots_shared.ssh import SSHExecutor
-        from ots_shared.ssh.executor import Result
-
-        from rots.commands.env.app import _file_exists
-
-        client = MagicMock(spec=paramiko.SSHClient)
-        ex = SSHExecutor(client)
-        ex.run = MagicMock(return_value=Result(command="test", returncode=0, stdout="", stderr=""))
-
-        result = _file_exists(Path("/etc/default/onetimesecret"), ex)
-        assert result is True
-        ex.run.assert_called_once_with(["test", "-f", "/etc/default/onetimesecret"])
-
-    def test_remote_missing_file_returns_false(self):
-        """_file_exists should run 'test -f' on remote executor and return False when not ok."""
-        from unittest.mock import MagicMock
-
-        try:
-            import paramiko
-        except ImportError:
-            pytest.skip("paramiko not installed")
-
-        from ots_shared.ssh import SSHExecutor
-        from ots_shared.ssh.executor import Result
-
-        from rots.commands.env.app import _file_exists
-
-        client = MagicMock(spec=paramiko.SSHClient)
-        ex = SSHExecutor(client)
-        ex.run = MagicMock(return_value=Result(command="test", returncode=1, stdout="", stderr=""))
-
-        result = _file_exists(Path("/etc/default/nonexistent"), ex)
-        assert result is False
-
 
 # ---------------------------------------------------------------------------
 # Executor wiring in env commands

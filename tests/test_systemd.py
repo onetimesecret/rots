@@ -1376,15 +1376,14 @@ class TestBackendOverride:
         assert "--backend=dbus requested but D-Bus is not available" in caplog.text
 
     def test_dbus_override_still_requires_local_executor(self, mocker):
-        """--backend=dbus cannot enable D-Bus for remote executors."""
+        """--backend=dbus cannot enable D-Bus for a non-local executor."""
         from rots import context, systemd
 
         mocker.patch("rots.systemd._dbus_is_available", return_value=True)
-        remote_exec = mocker.Mock()
-        remote_exec.__class__.__name__ = "SSHExecutor"
+        nonlocal_exec = mocker.Mock()
         mocker.patch("rots.systemd._is_local", return_value=False)
         context.backend_var.set("dbus")
-        assert systemd._use_dbus(remote_exec) is False
+        assert systemd._use_dbus(nonlocal_exec) is False
 
     def test_no_override_uses_auto_detect(self, mocker):
         """Without --backend, auto-detection is used (default behavior)."""

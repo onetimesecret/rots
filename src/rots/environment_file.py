@@ -22,8 +22,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ots_shared.ssh import is_remote as _is_remote
-
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -127,18 +125,9 @@ class EnvFile:
         entries: list[EnvEntry] = []
         variables: dict[str, str] = {}
 
-        if _is_remote(executor):
-            result = executor.run(["test", "-f", str(path)])
-            if not result.ok:
-                return cls(path=path, entries=entries, _variables=variables)
-            result = executor.run(["cat", str(path)])
-            if not result.ok:
-                return cls(path=path, entries=entries, _variables=variables)
-            text = result.stdout
-        else:
-            if not path.exists():
-                return cls(path=path, entries=entries, _variables=variables)
-            text = path.read_text()
+        if not path.exists():
+            return cls(path=path, entries=entries, _variables=variables)
+        text = path.read_text()
 
         for line in text.splitlines():
             raw_line = line
@@ -277,10 +266,7 @@ class EnvFile:
                 lines.append(f"{entry.key}={value}")
 
         content = "\n".join(lines) + "\n"
-        if _is_remote(executor):
-            executor.run(["tee", str(path)], input=content)
-        else:
-            path.write_text(content)
+        path.write_text(content)
 
 
 @dataclass

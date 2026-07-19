@@ -61,15 +61,8 @@ OptInstance = Annotated[
 
 
 def _get_executor() -> Executor | None:
-    """Resolve executor from context. Returns None for local."""
-    from rots import context
-    from rots.config import Config
-
-    cfg = Config()
-    host = context.host_var.get(None)
-    if host is None:
-        return None
-    return cfg.get_executor(host=host)
+    """Executor for local execution (None means local)."""
+    return None
 
 
 def _resolve_unit(pkg: ServicePackage, instance: str | None) -> str:
@@ -559,9 +552,7 @@ def logs(
         ots service logs valkey 6379 -n 100
         ots service logs rabbitmq
     """
-    from ots_shared.ssh import is_remote
-
-    ex = _get_executor()
+    _get_executor()
     pkg = get_package(package)
     unit = _resolve_unit(pkg, instance)
 
@@ -569,13 +560,9 @@ def logs(
     if follow:
         cmd.append("-f")
 
-    if is_remote(ex):
-        # Stream logs from remote host
-        ex.run_stream(cmd)
-    else:
-        import subprocess
+    import subprocess
 
-        subprocess.run(cmd)
+    subprocess.run(cmd)
 
 
 def _extract_instance_from_filename(pkg: ServicePackage, filename: str) -> str:
@@ -603,74 +590,39 @@ def _discover_config_files(
     When *active_units* is provided, uses the pre-built lookup instead of
     calling ``is_service_active`` per unit (avoids N+1 systemctl calls).
     """
-    from ots_shared.ssh import is_remote
-
     if pkg.singleton:
         logger.debug("Skipping config scan for singleton package %s", pkg.name)
         return []
 
     config_dir = pkg.instances_dir if pkg.use_instances_subdir else pkg.config_dir
-    logger.debug(
-        "Scanning config directory %s for %s (remote=%s)",
-        config_dir,
-        pkg.name,
-        is_remote(executor),
-    )
+    logger.debug("Scanning config directory %s for %s", config_dir, pkg.name)
 
     configs: list[dict] = []
 
-    if is_remote(executor):
-        result = executor.run(["ls", str(config_dir)], timeout=10)
-        if result.ok and result.stdout.strip():
-            for filename in sorted(result.stdout.strip().splitlines()):
-                if filename.endswith(".conf"):
-                    instance = _extract_instance_from_filename(pkg, filename)
-                    unit = pkg.instance_unit(instance)
-                    active = (
-                        unit in active_units
-                        if active_units is not None
-                        else is_service_active(unit, executor=executor)
-                    )
-                    logger.debug(
-                        "Remote config %s -> %s",
-                        filename,
-                        "active" if active else "inactive",
-                    )
-                    configs.append(
-                        {
-                            "filename": filename,
-                            "instance": instance,
-                            "unit": unit,
-                            "active": active,
-                        }
-                    )
-        else:
-            logger.debug("No config files found in remote %s", config_dir)
+    if config_dir.exists():
+        for conf in sorted(config_dir.glob("*.conf")):
+            instance = _extract_instance_from_filename(pkg, conf.name)
+            unit = pkg.instance_unit(instance)
+            active = (
+                unit in active_units
+                if active_units is not None
+                else is_service_active(unit, executor=executor)
+            )
+            logger.debug(
+                "Local config %s -> %s",
+                conf.name,
+                "active" if active else "inactive",
+            )
+            configs.append(
+                {
+                    "filename": conf.name,
+                    "instance": instance,
+                    "unit": unit,
+                    "active": active,
+                }
+            )
     else:
-        if config_dir.exists():
-            for conf in sorted(config_dir.glob("*.conf")):
-                instance = _extract_instance_from_filename(pkg, conf.name)
-                unit = pkg.instance_unit(instance)
-                active = (
-                    unit in active_units
-                    if active_units is not None
-                    else is_service_active(unit, executor=executor)
-                )
-                logger.debug(
-                    "Local config %s -> %s",
-                    conf.name,
-                    "active" if active else "inactive",
-                )
-                configs.append(
-                    {
-                        "filename": conf.name,
-                        "instance": instance,
-                        "unit": unit,
-                        "active": active,
-                    }
-                )
-        else:
-            logger.debug("Config directory %s does not exist", config_dir)
+        logger.debug("Config directory %s does not exist", config_dir)
 
     logger.debug("Discovered %d config file(s) for %s", len(configs), pkg.name)
     return configs

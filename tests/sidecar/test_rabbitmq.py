@@ -382,7 +382,19 @@ class TestRabbitMQConfigFromEnvironment:
 
         missing_file = tmp_path / "nonexistent.env"
 
-        with patch("rots.sidecar.rabbitmq.DEFAULT_ENV_FILE", missing_file):
+        # from_env_file's default arg is bound at import time, so patching
+        # DEFAULT_ENV_FILE alone won't redirect step 3 of from_environment().
+        # Redirect from_env_file at the missing path to keep this test hermetic
+        # regardless of any real /etc/default/onetimesecret on the host.
+        original_from_env_file = RabbitMQConfig.from_env_file
+
+        def _from_missing(path=missing_file, host_id=None):
+            return original_from_env_file(missing_file, host_id=host_id)
+
+        with (
+            patch("rots.sidecar.rabbitmq.DEFAULT_ENV_FILE", missing_file),
+            patch.object(RabbitMQConfig, "from_env_file", staticmethod(_from_missing)),
+        ):
             config = RabbitMQConfig.from_environment()
 
         assert config.host == "127.0.0.1"

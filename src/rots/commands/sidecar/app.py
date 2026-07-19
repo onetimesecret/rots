@@ -121,15 +121,8 @@ def _resolve_rots_path(explicit_path: str | None = None) -> str:
 
 
 def _get_executor() -> Executor | None:
-    """Resolve executor from context. Returns None for local."""
-    from rots import context
-    from rots.config import Config
-
-    cfg = Config()
-    host = context.host_var.get(None)
-    if host is None:
-        return None
-    return cfg.get_executor(host=host)
+    """Executor for local execution (None means local)."""
+    return None
 
 
 def _run_systemctl(
@@ -790,18 +783,11 @@ def publish(
         publish_command,
     )
 
-    from ... import context
-
     # Resolve target host
     target_host: str | None = None
     if not broadcast:
-        # 1. Check global --host flag first
-        host_flag = context.host_var.get(None)
-        if host_flag:
-            target_host = host_flag
-        else:
-            # 2. Fall back to get_host_id() for .otsinfra.env discovery
-            target_host = get_host_id()
+        # Fall back to get_host_id() for .otsinfra.env discovery
+        target_host = get_host_id()
 
     # Parse command: try JSON first, then key=value args
     command_name: str

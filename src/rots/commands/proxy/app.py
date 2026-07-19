@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Annotated
 
 import cyclopts
 
-from rots import context
 from rots.config import Config
 
 if TYPE_CHECKING:
@@ -90,7 +89,7 @@ def render(
         ots --host eu-web-01 proxy render
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     tpl = template or cfg.proxy_template
     out = output or cfg.proxy_config
 
@@ -102,21 +101,12 @@ def render(
             return
 
         # Validate before writing — pass source_dir so relative imports resolve
-        from ots_shared.ssh import is_remote
-
         source_dir = tpl.parent
         validate_caddy_config(rendered, executor=ex, source_dir=source_dir)
 
         # Write to output path
-
-        if is_remote(ex):
-            ex.run(["mkdir", "-p", str(out.parent)], timeout=15)
-            result = ex.run(["tee", str(out)], input=rendered, timeout=15)
-            if not result.ok:
-                raise ProxyError(f"Failed to write {out}: {result.stderr}")
-        else:
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(rendered)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(rendered)
 
         logger.info(f"[ok] Rendered {tpl} -> {out}")
 
@@ -174,13 +164,10 @@ def push(
         ots --host eu-web-01 proxy push caddy/ --template Caddyfile.template
         ots --host eu-web-01 proxy push caddy/ --no-render
     """
-    from ots_shared.ssh import is_remote
-
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
 
-    if not is_remote(ex):
-        raise SystemExit("proxy push requires a remote host. Use --host to specify one.")
+    raise SystemExit("proxy push requires a remote host, which is no longer supported.")
 
     if not source.exists():
         raise SystemExit(f"Local source not found: {source}")
@@ -318,7 +305,7 @@ def reload() -> None:
         ots --host eu-web-01 proxy reload
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     try:
         reload_caddy(executor=ex)
         logger.info("[ok] Caddy reloaded")
@@ -337,7 +324,7 @@ def status() -> None:
         ots --host eu-web-01 proxy status
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     try:
         result = ex.run(
             ["systemctl", "status", "caddy", "--no-pager"],
@@ -369,31 +356,17 @@ def validate(
         ots --host eu-web-01 proxy validate
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
     file_path = config_file or cfg.proxy_config
 
-    from ots_shared.ssh import is_remote
-
     # Check file existence
-    if is_remote(ex):
-        result = ex.run(["test", "-f", str(file_path)])
-        if not result.ok:
-            raise SystemExit(f"Config file not found: {file_path}")
-    else:
-        if not file_path.exists():
-            raise SystemExit(f"Config file not found: {file_path}")
+    if not file_path.exists():
+        raise SystemExit(f"Config file not found: {file_path}")
 
     try:
         # Read the file content, then validate via the helper
-        if is_remote(ex):
-            result = ex.run(["cat", str(file_path)])
-            if not result.ok:
-                raise SystemExit(f"Failed to read {file_path}: {result.stderr}")
-            content = result.stdout
-            source_dir = None
-        else:
-            content = file_path.read_text()
-            source_dir = file_path.parent
+        content = file_path.read_text()
+        source_dir = file_path.parent
 
         validate_caddy_config(content, executor=ex, source_dir=source_dir)
         logger.info(f"[ok] {file_path} is valid")
@@ -434,7 +407,7 @@ def diff(
     import difflib
 
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
 
     try:
         old_json = adapt_to_json(old, executor=ex)
@@ -527,13 +500,8 @@ def trace(
     import urllib.error
     import urllib.request
 
-    from ots_shared.ssh import is_remote
-
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
-
-    if is_remote(ex):
-        raise SystemExit("proxy trace is local-only. Do not use --host.")
+    ex = cfg.get_executor()
 
     if not config_file.exists():
         raise SystemExit(f"Config file not found: {config_file}")
@@ -740,7 +708,7 @@ def probe(
         rots --host eu-web-01 proxy probe https://localhost:7043/health
     """
     cfg = Config()
-    ex = cfg.get_executor(host=context.host_var.get(None))
+    ex = cfg.get_executor()
 
     try:
         parse_trace_url(url)

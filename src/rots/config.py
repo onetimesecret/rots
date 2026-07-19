@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import atexit
 import logging
 import os
 import re
@@ -111,25 +110,6 @@ def _strip_registry_prefix(image: str) -> str:
     if "." in first_component or ":" in first_component or first_component == "localhost":
         return image[slash + 1 :]
     return image
-
-
-# Session-scoped SSH connection cache: hostname -> paramiko.SSHClient.
-# Avoids creating a new connection per get_executor() call within one CLI
-# invocation.  Connections are closed automatically at interpreter exit.
-_ssh_cache: dict[str, object] = {}
-
-
-def _close_ssh_cache() -> None:
-    """Close all cached SSH connections. Registered via atexit."""
-    for hostname, client in list(_ssh_cache.items()):
-        try:
-            client.close()  # type: ignore[union-attr]
-        except Exception:
-            pass
-    _ssh_cache.clear()
-
-
-atexit.register(_close_ssh_cache)
 
 
 def parse_image_reference(ref: str) -> tuple[str, str | None]:
@@ -312,50 +292,20 @@ class Config:
     def get_registry_auth_file(
         self, executor: Executor | None = None, *, exists_only: bool = False
     ) -> Path | None:
-        """Remote-aware registry auth file resolution.
+        """Registry auth file resolution.
 
-        When *executor* is None or a LocalExecutor, delegates to the
-        :attr:`registry_auth_file` property (local filesystem probing).
-        For remote executors, probes the remote filesystem and uses
-        remote-appropriate defaults (always Linux, always root on production).
+        Delegates to the :attr:`registry_auth_file` property (local
+        filesystem probing).
 
         Args:
-            executor: Optional executor for remote filesystem probing.
+            executor: Unused; retained for call-site compatibility.
             exists_only: When True, return None if no auth file exists
                 (instead of returning a fallback path that may not exist).
         """
-        from ots_shared.ssh import is_remote
-
-        if not is_remote(executor):
-            path = self.registry_auth_file
-            if exists_only and not path.exists():
-                return None
-            return path
-
-        # Explicit override
-        if self._registry_auth_file:
-            return self._registry_auth_file
-
-        # Environment variable (local CLI environment, but still useful)
-        env_path = os.environ.get("REGISTRY_AUTH_FILE")
-        if env_path:
-            return Path(env_path)
-
-        # On remote production hosts: check XDG_RUNTIME_DIR pattern
-        # then /etc/containers/auth.json (root on Linux)
-        for candidate in [
-            Path("/run/containers/0/auth.json"),  # rootless podman on systemd
-            Path("/etc/containers/auth.json"),  # root on Linux
-        ]:
-            result = executor.run(["test", "-f", str(candidate)])
-            if result.ok:
-                return candidate
-
-        if exists_only:
+        path = self.registry_auth_file
+        if exists_only and not path.exists():
             return None
-
-        # Default to system path (root on Linux production)
-        return Path("/etc/containers/auth.json")
+        return path
 
     @property
     def private_image(self) -> str | None:
@@ -418,18 +368,12 @@ class Config:
     def get_db_path(self, executor: Executor | None = None) -> Path:
         """Return the correct database path for the given execution context.
 
-        When *executor* is a remote (SSH) executor, returns ``system_db_path``
-        unconditionally -- remote hosts are production Linux servers where
-        /var/lib/onetimesecret/ is always writable.
+        Falls back to the ``db_path`` property which probes the local
+        filesystem.
 
-        When *executor* is None or a LocalExecutor, falls back to the
-        ``db_path`` property which probes the local filesystem.
+        Args:
+            executor: Unused; retained for call-site compatibility.
         """
-        if executor is not None:
-            from ots_shared.ssh import LocalExecutor
-
-            if not isinstance(executor, LocalExecutor):
-                return self.system_db_path
         return self.db_path
 
     @property
@@ -444,24 +388,14 @@ class Config:
         return [self.config_dir / f for f in CONFIG_FILES if (self.config_dir / f).exists()]
 
     def get_existing_config_files(self, executor: Executor | None = None) -> list[Path]:
-        """Remote-aware check for host config files.
+        """Check for host config files.
 
-        When *executor* is None or a LocalExecutor, delegates to the
-        :attr:`existing_config_files` property.  For remote executors,
-        probes the remote filesystem via ``test -f``.
+        Delegates to the :attr:`existing_config_files` property.
+
+        Args:
+            executor: Unused; retained for call-site compatibility.
         """
-        from ots_shared.ssh import is_remote
-
-        if not is_remote(executor):
-            return self.existing_config_files
-
-        files: list[Path] = []
-        for fname in CONFIG_FILES:
-            fpath = self.config_dir / fname
-            result = executor.run(["test", "-f", str(fpath)])
-            if result.ok:
-                files.append(fpath)
-        return files
+        return self.existing_config_files
 
     @property
     def has_custom_config(self) -> bool:
@@ -534,60 +468,14 @@ class Config:
                 "no shell metacharacters or whitespace)."
             )
 
-    def get_executor(self, host: str | None = None):
-        """Return an Executor for the given host, or LocalExecutor if None.
+    def get_executor(self):
+        """Return a LocalExecutor.
 
-        Uses the host resolution chain: explicit host > OTS_HOST env >
-        .otsinfra.env > None (local). When a host is resolved, connects
-        via SSH and returns an SSHExecutor.  SSH connections are cached
-        per hostname for the lifetime of the process so repeated calls
-        within one CLI invocation reuse the same transport.
+        rots executes exclusively against the local host.
         """
-        from ots_shared.ssh import LocalExecutor, SSHExecutor, resolve_host, ssh_connect
+        from ots_shared.ssh import LocalExecutor
 
-        resolved = resolve_host(host_flag=host)
-        if resolved is None:
-            return LocalExecutor()
-
-        if resolved not in _ssh_cache:
-            logger.info("Connecting to %s...", resolved)
-            try:
-                _ssh_cache[resolved] = ssh_connect(resolved)
-            except ImportError:
-                raise SystemExit(
-                    "paramiko is required for SSH connections. "
-                    "Install it with: pip install ots-shared[ssh]"
-                )
-            except TimeoutError:
-                raise SystemExit(
-                    f"SSH to {resolved} failed: Connection timed out. "
-                    "Check that the host is reachable and accepting SSH connections."
-                )
-            except OSError as exc:
-                # Catch connection-refused, network-unreachable, etc.
-                # paramiko.ssh_exception.NoValidConnectionsError is an OSError subclass.
-                raise SystemExit(f"SSH to {resolved} failed: {exc}")
-            except Exception as exc:
-                # Catch paramiko-specific exceptions with isinstance() via
-                # lazy import, falling back to re-raise if paramiko isn't
-                # available (shouldn't happen since we just used it above).
-                try:
-                    from paramiko import AuthenticationException, SSHException
-                except ImportError:
-                    raise exc
-                if isinstance(exc, AuthenticationException):
-                    raise SystemExit(
-                        f"SSH to {resolved} failed: Authentication failed. "
-                        "Check your SSH key and that the remote user is correct."
-                    )
-                if isinstance(exc, SSHException):
-                    raise SystemExit(
-                        f"SSH to {resolved} failed: {exc}. "
-                        "Check your SSH configuration (~/.ssh/config) and known_hosts."
-                    )
-                raise
-            logger.info("Connected.")
-        return SSHExecutor(_ssh_cache[resolved])
+        return LocalExecutor()
 
     def resolve_image_tag(self, *, executor: Executor | None = None) -> tuple[str, str]:
         """Resolve image and tag, checking database aliases if tag is an alias.

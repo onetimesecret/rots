@@ -811,11 +811,7 @@ def wait_for_http_healthy(
     Useful for web instances where systemd may report active before the
     application is ready to serve requests.
 
-    When *executor* is a :class:`LocalExecutor` (or ``None``), the check uses
-    ``urllib`` directly — no external process needed.  When the executor is
-    remote (e.g. :class:`SSHExecutor`), the check runs
-    ``curl -sf http://localhost:{port}/health`` on the remote host so that
-    ``localhost`` resolves to the correct machine.
+    The check uses ``urllib`` directly — no external process needed.
 
     Args:
         port: The port to check (e.g., 7043 for onetime-web@7043).

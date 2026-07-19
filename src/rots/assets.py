@@ -6,8 +6,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ots_shared.ssh import is_remote as _is_remote
-
 from .config import Config
 from .podman import Podman
 from .systemd import require_podman
@@ -84,16 +82,9 @@ def update(cfg: Config, create_volume: bool = True, *, executor: Executor | None
     try:
         p.cp(f"{container_id}:/app/public/.", str(assets_dir), check=True)
         manifest = assets_dir / "web/dist/.vite/manifest.json"
-        if _is_remote(executor):
-            check_result = executor.run(["test", "-f", str(manifest)])
-            if check_result.ok:
-                logger.info(f"Manifest found: {manifest}")
-            else:
-                logger.warning(f"manifest not found at {manifest}")
+        if manifest.exists():
+            logger.info(f"Manifest found: {manifest}")
         else:
-            if manifest.exists():
-                logger.info(f"Manifest found: {manifest}")
-            else:
-                logger.warning(f"manifest not found at {manifest}")
+            logger.warning(f"manifest not found at {manifest}")
     finally:
         p.rm(container_id, check=True)

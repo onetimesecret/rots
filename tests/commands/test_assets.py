@@ -70,38 +70,20 @@ class TestAssetsSyncCommand:
         mock_update.assert_called_once_with(mock_config, create_volume=True, executor=ANY)
 
 
-class TestAssetsSyncHostContext:
-    """Verify that assets sync passes host_var through to get_executor."""
+class TestAssetsSyncExecutor:
+    """Verify that assets sync obtains a local executor."""
 
-    def test_sync_passes_host_var_to_get_executor(self, mocker):
-        """sync should read context.host_var and pass it to get_executor(host=...)."""
-        from rots import context
+    def test_sync_uses_local_executor(self, mocker):
+        """sync should call get_executor() with no arguments."""
         from rots.commands import assets
 
         mock_config = mocker.MagicMock()
         mocker.patch("rots.commands.assets.Config", return_value=mock_config)
         mocker.patch("rots.commands.assets.assets_module.update")
 
-        # Simulate --host flag having set a hostname in the context var
-        token = context.host_var.set("eu1.example.com")
-        try:
-            assets.sync()
-            mock_config.get_executor.assert_called_once_with(host="eu1.example.com")
-        finally:
-            context.host_var.reset(token)
-
-    def test_sync_passes_none_host_when_no_host_flag(self, mocker):
-        """sync should pass host=None when no --host flag was given."""
-        from rots.commands import assets
-
-        mock_config = mocker.MagicMock()
-        mocker.patch("rots.commands.assets.Config", return_value=mock_config)
-        mocker.patch("rots.commands.assets.assets_module.update")
-
-        # Default: no --host flag, host_var default is None
         assets.sync()
 
-        mock_config.get_executor.assert_called_once_with(host=None)
+        mock_config.get_executor.assert_called_once_with()
 
 
 class TestAssetsSyncHelp:

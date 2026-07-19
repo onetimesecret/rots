@@ -9,8 +9,6 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ots_shared.ssh import is_remote as _is_remote
-
 from .packages import ServicePackage
 
 if TYPE_CHECKING:
@@ -29,63 +27,42 @@ def _get_executor(executor: Executor | None = None) -> Executor:
 
 
 # ---------------------------------------------------------------------------
-# Remote-aware file operation primitives
+# File operation primitives
 # ---------------------------------------------------------------------------
 
 
 def _file_exists(path: Path, executor: Executor | None) -> bool:
-    """Check if a file exists (local or remote)."""
-    if _is_remote(executor):
-        result = executor.run(["test", "-f", str(path)])
-        return result.ok
+    """Check if a file exists."""
     return path.exists()
 
 
 def _dir_exists(path: Path, executor: Executor | None) -> bool:
-    """Check if a directory exists (local or remote)."""
-    if _is_remote(executor):
-        result = executor.run(["test", "-d", str(path)])
-        return result.ok
+    """Check if a directory exists."""
     return path.is_dir()
 
 
 def _read_text(path: Path, executor: Executor | None) -> str:
-    """Read text content from a file (local or remote)."""
-    if _is_remote(executor):
-        result = executor.run(["cat", str(path)], timeout=10)
-        return result.stdout
+    """Read text content from a file."""
     return path.read_text()
 
 
 def _write_text(path: Path, content: str, executor: Executor | None) -> None:
-    """Write text content to a file (local or remote)."""
-    if _is_remote(executor):
-        executor.run(["tee", str(path)], input=content, timeout=10)
-        return
+    """Write text content to a file."""
     path.write_text(content)
 
 
 def _mkdir_p(path: Path, mode: int, executor: Executor | None) -> None:
-    """Create directory with parents (local or remote)."""
-    if _is_remote(executor):
-        executor.run(["mkdir", "-p", "-m", f"{mode:o}", str(path)])
-        return
+    """Create directory with parents."""
     path.mkdir(parents=True, mode=mode, exist_ok=True)
 
 
 def _copy_file(src: Path, dest: Path, executor: Executor | None) -> None:
-    """Copy a file preserving attributes (local or remote)."""
-    if _is_remote(executor):
-        executor.run(["cp", "-p", str(src), str(dest)])
-        return
+    """Copy a file preserving attributes."""
     shutil.copy2(src, dest)
 
 
 def _chmod(path: Path, mode: int, executor: Executor | None) -> None:
-    """Set file permissions (local or remote)."""
-    if _is_remote(executor):
-        executor.run(["chmod", f"{mode:o}", str(path)])
-        return
+    """Set file permissions."""
     path.chmod(mode)
 
 
@@ -95,12 +72,8 @@ def _chown(
     group: str | None,
     executor: Executor | None,
 ) -> None:
-    """Set file ownership (local or remote). Best-effort — silences errors."""
+    """Set file ownership. Best-effort — silences errors."""
     if not user:
-        return
-    owner = f"{user}:{group}" if group else user
-    if _is_remote(executor):
-        executor.run(["chown", owner, str(path)])
         return
     try:
         shutil.chown(path, user=user, group=group)
@@ -109,10 +82,7 @@ def _chown(
 
 
 def _unlink(path: Path, executor: Executor | None) -> None:
-    """Remove a file (local or remote)."""
-    if _is_remote(executor):
-        executor.run(["rm", "-f", str(path)])
-        return
+    """Remove a file."""
     import os
 
     os.unlink(path)

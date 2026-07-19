@@ -22,10 +22,8 @@ class TestConfigTransformCommand:
         assert hasattr(instance, "config_transform")
         assert callable(instance.config_transform)
 
-    def test_config_transform_passes_host_to_get_executor(self, mocker, tmp_path):
-        """config_transform should pass host from context to get_executor."""
-        from rots import context
-
+    def test_config_transform_uses_local_executor(self, mocker, tmp_path):
+        """config_transform should obtain a local executor via get_executor()."""
         mock_config = mocker.MagicMock()
         mock_config.get_executor.return_value = LocalExecutor()
         mock_config.tag = "current"
@@ -61,15 +59,10 @@ class TestConfigTransformCommand:
 
         mocker.patch("subprocess.run", side_effect=mock_run_side_effect)
 
-        # Set host context var to simulate --host flag
-        token = context.host_var.set("web1.example.com")
-        try:
-            instance.config_transform(command="echo test", quiet=True)
-        finally:
-            context.host_var.reset(token)
+        instance.config_transform(command="echo test", quiet=True)
 
-        # Verify get_executor was called with the host argument
-        mock_config.get_executor.assert_called_once_with(host="web1.example.com")
+        # Verify get_executor was called with no arguments (local-only)
+        mock_config.get_executor.assert_called_once_with()
 
     def test_config_transform_rejects_path_traversal(self, mocker, tmp_path):
         """config_transform should reject path traversal attempts."""
@@ -719,183 +712,6 @@ class TestConfigTransformHelp:
         assert "command" in captured.out.lower()
         assert "apply" in captured.out.lower()
         assert "file" in captured.out.lower()
-
-
-class TestConfigTransformRemote:
-    """Test config-transform command with remote executor.
-
-    The config_transform command uses isinstance(ex, LocalExecutor) to
-    detect remote mode. When remote, it uses executor.run() for file
-    existence checks, content reads, backups, and writes instead of
-    local Path operations.
-    """
-
-    def _make_remote_executor(self, mocker):
-        """Create a mock executor that is NOT a LocalExecutor (triggers remote mode)."""
-        from unittest.mock import MagicMock
-
-        mock_ex = MagicMock()
-        # Not a LocalExecutor -> is_remote = True
-        mock_ex.__class__ = type("SSHExecutor", (), {})
-        return mock_ex
-
-    def test_config_transform_remote_checks_file_via_executor(self, mocker, tmp_path):
-        """config_transform remote should use executor 'test -f' to check file exists."""
-        from unittest.mock import MagicMock
-
-        mock_config = mocker.MagicMock()
-        mock_ex = self._make_remote_executor(mocker)
-        mock_config.get_executor.return_value = mock_ex
-        mock_config.tag = "current"
-        mock_config.image = "ghcr.io/onetimesecret/onetimesecret"
-        mock_config.resolve_image_tag.return_value = (
-            "ghcr.io/onetimesecret/onetimesecret",
-            "current",
-        )
-        mock_config.resolved_image_with_tag.return_value = (
-            "ghcr.io/onetimesecret/onetimesecret:current"
-        )
-        mock_config.podman_auth_args.return_value = []
-        mock_config.config_dir = tmp_path / "etc"
-        mock_config.config_dir.mkdir()
-        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
-
-        # Simulate file not found on remote
-        test_result = MagicMock()
-        test_result.ok = False
-        mock_ex.run.return_value = test_result
-
-        with pytest.raises(SystemExit) as exc_info:
-            instance.config_transform(command="echo test", quiet=True)
-
-        assert "not found" in str(exc_info.value).lower()
-        # Verify 'test -f' was called
-        first_call = mock_ex.run.call_args_list[0]
-        cmd = first_call[0][0]
-        assert cmd[0] == "test"
-        assert cmd[1] == "-f"
-
-    def test_config_transform_remote_reads_original_via_cat(self, mocker, tmp_path):
-        """config_transform remote should read original config via 'cat'."""
-        from unittest.mock import MagicMock
-
-        mock_config = mocker.MagicMock()
-        mock_ex = self._make_remote_executor(mocker)
-        mock_config.get_executor.return_value = mock_ex
-        mock_config.tag = "current"
-        mock_config.image = "ghcr.io/test/img"
-        mock_config.resolve_image_tag.return_value = ("ghcr.io/test/img", "current")
-        mock_config.resolved_image_with_tag.return_value = "ghcr.io/test/img:current"
-        mock_config.podman_auth_args.return_value = []
-        mock_config.config_dir = tmp_path / "etc"
-        mock_config.config_dir.mkdir()
-        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch(
-            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
-            tmp_path / "nonexistent",
-        )
-
-        call_log = []
-
-        def mock_run(cmd, **kwargs):
-            call_log.append(cmd)
-            result = MagicMock()
-            # 'test -f' succeeds
-            if cmd[0] == "test":
-                result.ok = True
-                return result
-            # env file check fails
-            if cmd[0] == "test" and "-f" in cmd:
-                result.ok = False
-                return result
-            # podman volume create
-            if "volume" in cmd and "create" in cmd:
-                result.ok = True
-                result.returncode = 0
-                return result
-            # podman run (copy, transform, read)
-            if "podman" in cmd:
-                result.ok = True
-                result.returncode = 0
-                if "/bin/cat" in cmd:
-                    result.stdout = "key: new_value\n"
-                else:
-                    result.stdout = ""
-                result.stderr = ""
-                return result
-            # cat for original content
-            if cmd[0] == "cat":
-                result.ok = True
-                result.stdout = "key: new_value\n"  # same content = no diff
-                result.returncode = 0
-                return result
-            result.ok = True
-            result.returncode = 0
-            result.stdout = ""
-            result.stderr = ""
-            return result
-
-        mock_ex.run.side_effect = mock_run
-
-        instance.config_transform(command="echo test", quiet=True)
-
-        # Verify 'cat' was used to read original content (remote path)
-        cat_calls = [c for c in call_log if c and c[0] == "cat"]
-        assert len(cat_calls) >= 1
-
-    def test_config_transform_remote_apply_uses_cp_and_tee(self, mocker, tmp_path, capsys):
-        """config_transform remote --apply should use cp for backup and tee for write."""
-        from unittest.mock import MagicMock
-
-        mock_config = mocker.MagicMock()
-        mock_ex = self._make_remote_executor(mocker)
-        mock_config.get_executor.return_value = mock_ex
-        mock_config.tag = "current"
-        mock_config.image = "ghcr.io/test/img"
-        mock_config.resolve_image_tag.return_value = ("ghcr.io/test/img", "current")
-        mock_config.resolved_image_with_tag.return_value = "ghcr.io/test/img:current"
-        mock_config.podman_auth_args.return_value = []
-        mock_config.config_dir = tmp_path / "etc"
-        mock_config.config_dir.mkdir()
-        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
-        mocker.patch(
-            "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
-            tmp_path / "nonexistent",
-        )
-
-        call_log = []
-
-        def mock_run(cmd, **kwargs):
-            call_log.append((cmd, kwargs))
-            result = MagicMock()
-            result.ok = True
-            result.returncode = 0
-            result.stdout = ""
-            result.stderr = ""
-            if cmd[0] == "test":
-                return result
-            if "podman" in cmd:
-                if "/bin/cat" in cmd:
-                    result.stdout = "key: new_value\n"
-                return result
-            if cmd[0] == "cat":
-                result.stdout = "key: old_value\n"
-                return result
-            return result
-
-        mock_ex.run.side_effect = mock_run
-
-        instance.config_transform(command="echo test", apply=True, quiet=True)
-
-        # Verify 'cp -p' was used for backup (remote path)
-        cp_calls = [c for c, kw in call_log if c and c[0] == "cp"]
-        assert len(cp_calls) >= 1
-        assert "-p" in cp_calls[0]
-
-        # Verify 'tee' was used to write new content (remote path)
-        tee_calls = [c for c, kw in call_log if c and c[0] == "tee"]
-        assert len(tee_calls) >= 1
-
 
 class TestConfigTransformPositionalReference:
     """config_transform() accepts positional image reference."""
