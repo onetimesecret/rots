@@ -705,3 +705,157 @@ class TestProcessEnvFileRemote:
 
         mock_ensure.assert_called_once_with("ots_api_key", "secret_value", executor=mock_ex)
         mock_write.assert_called_once_with(executor=mock_ex)
+
+
+# =============================================================================
+# Merged env file parsing (base + .local override)
+# =============================================================================
+
+
+class TestParseMergedEnvFiles:
+    """Test parse_merged_env_files() merge precedence and missing-file handling."""
+
+    def test_local_overrides_base(self, tmp_path):
+        """Values in .local win over the base file (later file wins)."""
+        from rots.environment_file import parse_merged_env_files
+
+        base = tmp_path / "onetimesecret"
+        base.write_text("AUTH_SECRET=from-base\nREDIS_URL=redis://base\n")
+        local = tmp_path / "onetimesecret.local"
+        local.write_text("AUTH_SECRET=from-local\n")
+
+        merged = parse_merged_env_files(base, local)
+
+        assert merged["AUTH_SECRET"] == "from-local"  # override wins
+        assert merged["REDIS_URL"] == "redis://base"  # base-only preserved
+
+    def test_missing_local_returns_base_only(self, tmp_path):
+        """A missing .local contributes nothing (never an error)."""
+        from rots.environment_file import parse_merged_env_files
+
+        base = tmp_path / "onetimesecret"
+        base.write_text("AUTH_SECRET=x\n")
+        missing_local = tmp_path / "onetimesecret.local"  # not created
+
+        merged = parse_merged_env_files(base, missing_local)
+
+        assert merged == {"AUTH_SECRET": "x"}
+
+    def test_none_local_returns_base_only(self, tmp_path):
+        """local_path=None parses only the base file."""
+        from rots.environment_file import parse_merged_env_files
+
+        base = tmp_path / "onetimesecret"
+        base.write_text("A=1\nB=2\n")
+
+        merged = parse_merged_env_files(base)
+
+        assert merged == {"A": "1", "B": "2"}
+
+    def test_missing_base_still_merges_local(self, tmp_path):
+        """A missing base contributes nothing; .local values still merge."""
+        from rots.environment_file import parse_merged_env_files
+
+        missing_base = tmp_path / "onetimesecret"  # not created
+        local = tmp_path / "onetimesecret.local"
+        local.write_text("AUTH_SECRET=only-local\n")
+
+        merged = parse_merged_env_files(missing_base, local)
+
+        assert merged == {"AUTH_SECRET": "only-local"}
+
+    def test_both_missing_returns_empty(self, tmp_path):
+        """Neither file present -> empty dict, no error."""
+        from rots.environment_file import parse_merged_env_files
+
+        merged = parse_merged_env_files(
+            tmp_path / "onetimesecret", tmp_path / "onetimesecret.local"
+        )
+        assert merged == {}
+
+
+class TestCheckSecretsResolvable:
+    """Test check_secrets_resolvable() deploy-time secret gating."""
+
+    def test_raises_naming_every_missing_secret(self, tmp_path):
+        """Fails loudly, naming ALL unresolved secrets (not just the first)."""
+        from rots.environment_file import check_secrets_resolvable
+
+        base = tmp_path / "onetimesecret"
+        base.write_text(
+            "SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY,SESSION_SECRET\n"
+            "AUTH_SECRET=present\n"
+            "API_KEY=\n"  # empty -> unresolved
+            # SESSION_SECRET absent -> unresolved
+        )
+        local = tmp_path / "onetimesecret.local"
+
+        with pytest.raises(SystemExit) as exc:
+            check_secrets_resolvable(base_path=base, local_path=local)
+
+        msg = str(exc.value)
+        assert "API_KEY" in msg
+        assert "SESSION_SECRET" in msg
+        assert "AUTH_SECRET" not in msg  # resolved, must not be named
+
+    def test_passes_when_all_resolve_via_layering(self, tmp_path):
+        """Override precedence resolves an empty base value from .local."""
+        from rots.environment_file import check_secrets_resolvable
+
+        base = tmp_path / "onetimesecret"
+        base.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=\n")  # empty
+        local = tmp_path / "onetimesecret.local"
+        local.write_text("AUTH_SECRET=filled-by-local\n")
+
+        # Must not raise: .local supplies the non-empty value.
+        check_secrets_resolvable(base_path=base, local_path=local)
+
+    def test_force_warns_instead_of_raising(self, tmp_path, caplog):
+        """force=True downgrades to a warning even with missing secrets."""
+        import logging
+
+        from rots.environment_file import check_secrets_resolvable
+
+        base = tmp_path / "onetimesecret"
+        base.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")  # AUTH_SECRET absent
+        local = tmp_path / "onetimesecret.local"
+
+        with caplog.at_level(logging.WARNING, logger="rots.environment_file"):
+            check_secrets_resolvable(force=True, base_path=base, local_path=local)
+
+        assert any("AUTH_SECRET" in r.message for r in caplog.records)
+
+    def test_passes_when_secret_names_absent(self, tmp_path):
+        """No SECRET_VARIABLE_NAMES -> silent pass."""
+        from rots.environment_file import check_secrets_resolvable
+
+        base = tmp_path / "onetimesecret"
+        base.write_text("REDIS_URL=redis://localhost\n")
+        local = tmp_path / "onetimesecret.local"
+
+        check_secrets_resolvable(base_path=base, local_path=local)
+
+    def test_passes_when_secret_names_empty(self, tmp_path):
+        """Empty SECRET_VARIABLE_NAMES -> silent pass."""
+        from rots.environment_file import check_secrets_resolvable
+
+        base = tmp_path / "onetimesecret"
+        base.write_text("SECRET_VARIABLE_NAMES=\n")
+        local = tmp_path / "onetimesecret.local"
+
+        check_secrets_resolvable(base_path=base, local_path=local)
+
+    def test_defaults_to_quadlet_paths(self, mocker, tmp_path):
+        """When paths omitted, defaults come from quadlet.DEFAULT/LOCAL_ENV_FILE."""
+        import rots.quadlet as quadlet
+        from rots.environment_file import check_secrets_resolvable
+
+        base = tmp_path / "onetimesecret"
+        base.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")  # absent -> unresolved
+        mocker.patch.object(quadlet, "DEFAULT_ENV_FILE", base)
+        mocker.patch.object(quadlet, "LOCAL_ENV_FILE", tmp_path / "onetimesecret.local")
+
+        with pytest.raises(SystemExit) as exc:
+            check_secrets_resolvable()
+
+        assert "AUTH_SECRET" in str(exc.value)
