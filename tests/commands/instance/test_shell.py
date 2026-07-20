@@ -81,6 +81,28 @@ def _setup_shell_mocks(mocker, tmp_path, **config_overrides):
     return cfg, mock_executor
 
 
+def _stub_run(mock_executor, host_exists=True, env_ok=False):
+    """Route executor.run() by command so tests are deterministic.
+
+    The mock executor is a plain MagicMock, so isinstance(ex, LocalExecutor)
+    is False and the shell command takes the REMOTE branch: env-file existence
+    uses ``test -f`` and general -v host existence uses ``test -e``. A single
+    shared return_value can't serve both an existing-host mount and a missing
+    env file, so route by the leading command tokens instead.
+    """
+    from types import SimpleNamespace
+
+    def _run(cmd_list, *args, **kwargs):
+        head = list(cmd_list[:2])
+        if head == ["test", "-f"]:
+            return SimpleNamespace(ok=env_ok)
+        if head == ["test", "-e"]:
+            return SimpleNamespace(ok=host_exists)
+        return SimpleNamespace(ok=True)
+
+    mock_executor.run.side_effect = _run
+
+
 def _get_cmd_from_executor(mock_executor, interactive=True):
     """Extract the command list from the executor mock's call args."""
     if interactive:
@@ -481,6 +503,157 @@ class TestShellPrivateRegistry:
         assert f"{DEFAULT_IMAGE}:edge" in cmd
 
 
+class TestShellVolumes:
+    """Test --data-volume and general -v/--volume handling.
+
+    NOTE: the mock executor is a plain MagicMock, so the shell command takes
+    the REMOTE branch (Path used verbatim, remote ``mkdir -p`` for
+    --data-volume, remote ``test -e`` for general -v host existence).
+    """
+
+    def test_data_volume_mounts_app_data_and_mkdirs(self, mocker, tmp_path):
+        """--data-volume bind-mounts at /app/data (rw,U) and mkdirs on remote."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        instance.shell(data_volume="/host/data", quiet=True)
+
+        cmd = _get_cmd_from_executor(mock_executor, interactive=True)
+        assert "/host/data:/app/data:rw,U" in cmd
+        assert "--tmpfs" not in cmd
+        # Remote branch creates the host directory
+        mock_executor.run.assert_any_call(["mkdir", "-p", "/host/data"])
+
+    def test_general_volume_passes_through_verbatim(self, mocker, tmp_path):
+        """-v HOST:CONTAINER[:OPTS] is passed through verbatim (incl :ro)."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+        _stub_run(mock_executor, host_exists=True)
+
+        instance.shell(volume=("/host/certs:/app/etc/tls:ro",), quiet=True)
+
+        cmd = _get_cmd_from_executor(mock_executor, interactive=True)
+        assert "/host/certs:/app/etc/tls:ro" in cmd
+        # No implicit U or rw added
+        assert not any("/app/etc/tls:rw" in part for part in cmd)
+
+    def test_general_volume_repeatable(self, mocker, tmp_path):
+        """Repeatable -v yields one mount arg per spec."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+        _stub_run(mock_executor, host_exists=True)
+
+        instance.shell(volume=("/host/a:/app/x", "/host/b:/app/y"), quiet=True)
+
+        cmd = _get_cmd_from_executor(mock_executor, interactive=True)
+        assert "/host/a:/app/x" in cmd
+        assert "/host/b:/app/y" in cmd
+        # tmpfs default (no -v for data), config none => exactly two -v
+        assert cmd.count("-v") == 2
+
+    def test_general_volume_rejects_relative_target(self, mocker, tmp_path, capsys):
+        """Non-absolute container target is rejected."""
+        _mock_config, _mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(volume=("/host/certs:relative/path",), quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "must be absolute" in capsys.readouterr().err
+
+    def test_general_volume_rejects_bare_form(self, mocker, tmp_path, capsys):
+        """Bare -v ./data (no colon) is rejected with a --data-volume hint."""
+        _mock_config, _mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(volume=("./data",), quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "--data-volume" in capsys.readouterr().err
+
+    def test_general_volume_rejects_app_data_target(self, mocker, tmp_path, capsys):
+        """-v targeting /app/data is rejected in favor of --data-volume."""
+        _mock_config, _mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(volume=("/host/data:/app/data",), quiet=True)
+
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "/app/data" in err
+        assert "--data-volume" in err
+
+    def test_general_volume_missing_host_fails_loud(self, mocker, tmp_path, capsys):
+        """Missing host path fails loud (no mkdir)."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+        _stub_run(mock_executor, host_exists=False)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(volume=("/host/missing:/app/x",), quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "does not exist" in capsys.readouterr().err
+
+    def test_general_volume_rejects_relative_host_on_remote(self, mocker, tmp_path, capsys):
+        """Relative -v host is rejected on remote (would become a named volume)."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+        _stub_run(mock_executor, host_exists=True)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(volume=("./certs:/app/etc/tls:ro",), quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "must be absolute on remote" in capsys.readouterr().err
+
+    def test_data_volume_rejects_relative_host_on_remote(self, mocker, tmp_path, capsys):
+        """Relative --data-volume host is rejected on remote (no mkdir)."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(data_volume="./data", quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "must be absolute on remote" in capsys.readouterr().err
+        # Rejection happens before the remote mkdir side effect
+        mkdir_calls = [
+            c for c in mock_executor.run.call_args_list if list(c.args[0][:2]) == ["mkdir", "-p"]
+        ]
+        assert mkdir_calls == []
+
+    def test_invalid_general_volume_aborts_before_data_volume_mkdir(self, mocker, tmp_path):
+        """An invalid -v aborts before the --data-volume mkdir (validate-before-mutate)."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(data_volume="/host/data", volume=("/bad",), quiet=True)
+
+        assert exc_info.value.code == 1
+        # No mkdir side effect for --data-volume should have run
+        mkdir_calls = [
+            c for c in mock_executor.run.call_args_list if list(c.args[0][:2]) == ["mkdir", "-p"]
+        ]
+        assert mkdir_calls == []
+
+    def test_persistent_and_data_volume_mutually_exclusive(self, mocker, tmp_path, capsys):
+        """--persistent and --data-volume both target /app/data and cannot combine."""
+        _mock_config, _mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(persistent="upgrade-v024", data_volume="/host/data", quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "mutually exclusive" in capsys.readouterr().err
+
+    def test_persistent_allows_general_volume(self, mocker, tmp_path):
+        """--persistent is NOT mutually exclusive with the general -v flag."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+        _stub_run(mock_executor, host_exists=True)
+
+        instance.shell(persistent="upgrade-v024", volume=("/host/x:/app/x",), quiet=True)
+
+        cmd = _get_cmd_from_executor(mock_executor, interactive=True)
+        joined = " ".join(cmd)
+        assert "ots-migration-upgrade-v024:/app/data" in joined
+        assert "/host/x:/app/x" in joined
+
+
 class TestShellHelp:
     """Test shell command help output."""
 
@@ -492,8 +665,11 @@ class TestShellHelp:
             app(["instance", "shell", "--help"])
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
-        assert "persistent" in captured.out.lower()
-        assert "tmpfs" in captured.out.lower() or "ephemeral" in captured.out.lower()
+        out = captured.out.lower()
+        assert "persistent" in out
+        assert "tmpfs" in out or "ephemeral" in out
+        assert "data-volume" in out
+        assert "host:container" in out
 
 
 class TestBuildEnvFileArgs:
