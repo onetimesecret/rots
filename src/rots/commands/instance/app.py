@@ -2048,13 +2048,20 @@ def shell(
             help="Named volume for persistent data (survives exit)",
         ),
     ] = None,
-    volume: Annotated[
+    data_volume: Annotated[
         str | None,
         cyclopts.Parameter(
-            name=["--volume", "-v"],
+            name=["--data-volume"],
             help="Host path to bind-mount at /app/data (rw, user-mapped)",
         ),
     ] = None,
+    volume: Annotated[
+        tuple[str, ...],
+        cyclopts.Parameter(
+            name=["--volume", "-v"],
+            help="Bind-mount HOST:CONTAINER[:OPTS] (absolute target, repeatable)",
+        ),
+    ] = (),
     env: Annotated[
         tuple[str, ...],
         cyclopts.Parameter(
@@ -2076,16 +2083,19 @@ def shell(
 
     By default uses tmpfs at /app/data (data destroyed on exit).
     Use --persistent to create a named volume that survives exit.
-    Use --volume to bind-mount a host directory at /app/data.
-    Config is mounted read-only at /app/etc.
+    Use --data-volume to bind-mount a host directory at /app/data (rw,U).
+    Use --volume/-v to add general HOST:CONTAINER[:OPTS] bind mounts
+    (absolute container target, host path must exist, opts pass through
+    verbatim). Config is mounted read-only at /app/etc.
 
     Examples:
         ots instance shell                              # tmpfs, interactive bash
         ots instance shell --persistent upgrade-v024    # named volume survives exit
         ots instance shell -c "bin/ots migrate"         # run command and exit
         ots instance shell --tag v0.24.0                # specific image tag
-        ots instance shell -v ./data                    # bind-mount ./data at /app/data
-        ots instance shell -v ./data -e REDIS_URL=redis://10.0.0.5:6379/0  # with env
+        ots instance shell --data-volume ./data         # bind-mount ./data at /app/data (rw,U)
+        ots instance shell -v ./certs:/app/etc/tls:ro   # general read-only mount
+        ots instance shell -v ./a:/app/x -v ./b:/app/y  # repeatable
         ots instance shell -e FOO=bar -e BAZ=qux        # multiple env vars, tmpfs default
         ots instance shell ghcr.io/org/image:v0.24.0     # explicit image ref
     """
@@ -2093,8 +2103,8 @@ def shell(
 
     apply_quiet(quiet)
 
-    if persistent and volume:
-        logger.error("--persistent and --volume are mutually exclusive")
+    if persistent and data_volume:
+        logger.error("--persistent and --data-volume are mutually exclusive")
         raise SystemExit(1)
 
     cfg = Config()
@@ -2142,14 +2152,59 @@ def shell(
 
     cmd.extend(build_env_file_args(env_file, executor=ex))
 
+    # General-purpose bind mounts: HOST:CONTAINER[:OPTS] (fail-loud, no mkdir).
+    # Validate and collect every -v spec BEFORE the --data-volume mkdir side
+    # effect so that an invalid -v cannot leave a stray host/remote directory
+    # behind (validate-before-mutate).
+    volume_args: list[str] = []
+    for spec in volume:
+        parts = spec.split(":", 2)
+        if len(parts) < 2 or parts[0] == "" or parts[1] == "":
+            logger.error(
+                f"-v expects HOST:CONTAINER[:OPTS]; did you mean --data-volume? (got '{spec}')"
+            )
+            raise SystemExit(1)
+        host, container = parts[0], parts[1]
+        opts = parts[2] if len(parts) == 3 else None
+        if not container.startswith("/"):
+            logger.error(f"-v container target must be absolute: {container}")
+            raise SystemExit(1)
+        if container == "/app/data":
+            logger.error("-v cannot target /app/data; use --data-volume")
+            raise SystemExit(1)
+        if isinstance(ex, LocalExecutor):
+            host_path = Path(host).resolve()
+            if not host_path.exists():
+                logger.error(f"host path does not exist: {host_path}")
+                raise SystemExit(1)
+        else:
+            # A remote path cannot be resolved locally; a relative source would
+            # be silently treated by podman as a NAMED VOLUME, not a bind mount.
+            # Require an absolute host path and fail loud otherwise.
+            if not host.startswith("/"):
+                logger.error(f"-v host path must be absolute on remote: {host}")
+                raise SystemExit(1)
+            host_path = Path(host)
+            res = ex.run(["test", "-e", str(host_path)])
+            if not getattr(res, "ok", False):
+                logger.error(f"host path does not exist on remote: {host_path}")
+                raise SystemExit(1)
+        volume_args.extend(["-v", f"{host_path}:{container}" + (f":{opts}" if opts else "")])
+
     # Data volume: bind-mount, persistent named volume, or tmpfs (default)
-    if volume:
+    if data_volume:
         if not isinstance(ex, LocalExecutor):
+            # A remote path cannot be resolved locally; a relative source would
+            # be silently treated by podman as a NAMED VOLUME, not a bind mount.
+            # Require an absolute host path and fail loud before the remote mkdir.
+            if not data_volume.startswith("/"):
+                logger.error(f"--data-volume host path must be absolute on remote: {data_volume}")
+                raise SystemExit(1)
             # Remote: create directory on the remote host, use path as-is
-            host_path = Path(volume)
+            host_path = Path(data_volume)
             ex.run(["mkdir", "-p", str(host_path)])
         else:
-            host_path = Path(volume).resolve()
+            host_path = Path(data_volume).resolve()
             host_path.mkdir(parents=True, exist_ok=True)
         cmd.extend(["-v", f"{host_path}:/app/data:rw,U"])
     elif persistent:
@@ -2157,6 +2212,9 @@ def shell(
         cmd.extend(["-v", f"{volume_name}:/app/data"])
     else:
         cmd.extend(["--tmpfs", "/app/data"])
+
+    # Append the validated general-purpose mounts after the data mount.
+    cmd.extend(volume_args)
 
     # Ad-hoc environment variables
     for entry in env:
