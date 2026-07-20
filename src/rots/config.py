@@ -8,7 +8,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from ots_shared.ssh.executor import Executor
@@ -36,6 +36,22 @@ CONFIG_FILES: tuple[str, ...] = (
     "billing.yaml",
     "Caddyfile.template",
     "puma.rb",
+)
+
+
+class ExtraMount(NamedTuple):
+    """A recognized config-dir subdirectory mounted into the container."""
+
+    subpath: str
+    target: str
+    options: str = "ro"
+
+
+# Extra host directories mounted into the container by convention (fixed table,
+# no operator input). Only subdirectories present on the host are mounted.
+EXTRA_MOUNTS: tuple[ExtraMount, ...] = (
+    ExtraMount("branding", "/app/etc/branding"),
+    ExtraMount("tls", "/app/etc/tls"),
 )
 
 # --- Input validation patterns ---
@@ -189,6 +205,8 @@ class Config:
 
     Directory layout:
         /etc/onetimesecret/          - YAML config overrides (per-file mount, optional)
+        /etc/onetimesecret/branding/ - Brand packs branding/<name>/ (mounted at /app/etc/branding)
+        /etc/onetimesecret/tls/      - TLS material (mounted at /app/etc/tls)
         /etc/default/onetimesecret   - Infrastructure env vars (REDIS_URL, etc.)
         /var/lib/onetimesecret/      - Variable runtime data (deployments.db)
         /etc/containers/systemd/     - Quadlet unit files
@@ -462,6 +480,37 @@ class Config:
             if result.ok:
                 files.append(fpath)
         return files
+
+    @property
+    def existing_extra_mounts(self) -> list[ExtraMount]:
+        """Extra mount directories that exist and should be mounted into the container.
+
+        Only subdirectories present on the host are mounted; others are skipped.
+
+        Note: This uses local Path.is_dir(). For remote-aware checks, use
+        :meth:`get_existing_extra_mounts` with an executor argument.
+        """
+        return [m for m in EXTRA_MOUNTS if (self.config_dir / m.subpath).is_dir()]
+
+    def get_existing_extra_mounts(self, executor: Executor | None = None) -> list[ExtraMount]:
+        """Remote-aware check for extra mount directories.
+
+        When *executor* is None or a LocalExecutor, delegates to the
+        :attr:`existing_extra_mounts` property.  For remote executors,
+        probes the remote filesystem via ``test -d``.
+        """
+        from ots_shared.ssh import is_remote
+
+        if not is_remote(executor):
+            return self.existing_extra_mounts
+
+        mounts: list[ExtraMount] = []
+        for m in EXTRA_MOUNTS:
+            mpath = self.config_dir / m.subpath
+            result = executor.run(["test", "-d", str(mpath)])
+            if result.ok:
+                mounts.append(m)
+        return mounts
 
     @property
     def has_custom_config(self) -> bool:

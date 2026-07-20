@@ -280,6 +280,37 @@ class TestConfigFiles:
         assert isinstance(CONFIG_FILES, tuple)
 
 
+class TestExtraMounts:
+    """Test EXTRA_MOUNTS module-level constant."""
+
+    def test_extra_mounts_contains_expected_entries(self):
+        """EXTRA_MOUNTS should map branding/ and tls/ to their container targets."""
+        from rots.config import EXTRA_MOUNTS, ExtraMount
+
+        assert ExtraMount("branding", "/app/etc/branding") in EXTRA_MOUNTS
+        assert ExtraMount("tls", "/app/etc/tls") in EXTRA_MOUNTS
+
+    def test_extra_mounts_length(self):
+        """EXTRA_MOUNTS should contain exactly 2 entries."""
+        from rots.config import EXTRA_MOUNTS
+
+        assert len(EXTRA_MOUNTS) == 2
+
+    def test_extra_mounts_is_tuple(self):
+        """EXTRA_MOUNTS should be a tuple (immutable)."""
+        from rots.config import EXTRA_MOUNTS
+
+        assert isinstance(EXTRA_MOUNTS, tuple)
+
+    def test_extra_mount_options_default_ro(self):
+        """ExtraMount.options should default to read-only, and every entry uses it."""
+        from rots.config import EXTRA_MOUNTS, ExtraMount
+
+        assert ExtraMount("anything", "/app/anything").options == "ro"
+        for mount in EXTRA_MOUNTS:
+            assert mount.options == "ro"
+
+
 class TestExistingConfigFiles:
     """Test Config.existing_config_files property."""
 
@@ -462,6 +493,183 @@ class TestGetExistingConfigFilesRemote:
         assert len(result) == 1
         assert result[0] == Path("/etc/onetimesecret/config.yaml")
         assert ex.run.call_count == 6
+
+
+class TestExistingExtraMounts:
+    """Test Config.existing_extra_mounts property."""
+
+    def test_returns_empty_when_config_dir_missing(self, tmp_path):
+        """Should return empty list when config_dir does not exist."""
+        from rots.config import Config
+
+        cfg = Config(config_dir=tmp_path / "nonexistent_dir")
+        assert cfg.existing_extra_mounts == []
+
+    def test_returns_empty_when_no_subdirs(self, tmp_path):
+        """Should return empty list when config_dir exists but has no recognized subdirs."""
+        from rots.config import Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+
+        cfg = Config(config_dir=config_dir)
+        assert cfg.existing_extra_mounts == []
+
+    def test_returns_only_existing_subdirs(self, tmp_path):
+        """Should return only entries whose subdirectory actually exists on disk."""
+        from rots.config import Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "branding").mkdir()
+        # tls intentionally not created
+
+        cfg = Config(config_dir=config_dir)
+        result = cfg.existing_extra_mounts
+        assert [m.subpath for m in result] == ["branding"]
+
+    def test_returns_all_when_all_exist(self, tmp_path):
+        """Should return both entries when branding/ and tls/ both exist."""
+        from rots.config import EXTRA_MOUNTS, Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "branding").mkdir()
+        (config_dir / "tls").mkdir()
+
+        cfg = Config(config_dir=config_dir)
+        assert cfg.existing_extra_mounts == list(EXTRA_MOUNTS)
+
+    def test_plain_file_named_branding_is_not_matched(self, tmp_path):
+        """A plain FILE named 'branding' must not match (is_dir check, not exists)."""
+        from rots.config import Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "branding").touch()  # file, not a directory
+
+        cfg = Config(config_dir=config_dir)
+        assert cfg.existing_extra_mounts == []
+
+    def test_symlink_to_directory_is_matched(self, tmp_path):
+        """A 'branding' symlink pointing at a real dir IS matched (is_dir follows symlinks).
+
+        Pins current behavior: Path.is_dir() resolves symlinks, so a symlinked
+        subdir is mounted just like a real one. Guards against a silent change
+        to lstat-based detection that would drop symlinked mounts.
+        """
+        from rots.config import Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        real_dir = tmp_path / "real_branding"
+        real_dir.mkdir()
+        (config_dir / "branding").symlink_to(real_dir)
+
+        cfg = Config(config_dir=config_dir)
+        assert [m.subpath for m in cfg.existing_extra_mounts] == ["branding"]
+
+
+class TestGetExistingExtraMountsRemote:
+    """Test Config.get_existing_extra_mounts() with remote executor."""
+
+    def test_delegates_to_property_when_no_executor(self, tmp_path):
+        """Should use local Path.is_dir() when executor is None."""
+        from rots.config import Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "branding").mkdir()
+
+        cfg = Config(config_dir=config_dir)
+        result = cfg.get_existing_extra_mounts(executor=None)
+        assert [m.subpath for m in result] == ["branding"]
+
+    def test_delegates_to_property_for_local_executor(self, tmp_path):
+        """Should use local Path.is_dir() when executor is LocalExecutor."""
+        from ots_shared.ssh import LocalExecutor
+
+        from rots.config import Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "branding").mkdir()
+        (config_dir / "tls").mkdir()
+
+        cfg = Config(config_dir=config_dir)
+        result = cfg.get_existing_extra_mounts(executor=LocalExecutor())
+        assert len(result) == 2
+
+    def test_probes_remote_filesystem_for_ssh_executor(self, tmp_path):
+        """Should use 'test -d' via executor for each extra mount dir on remote hosts."""
+        from unittest.mock import MagicMock
+
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+        from ots_shared.ssh.executor import Result
+
+        from rots.config import EXTRA_MOUNTS, Config
+
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        ex = SSHExecutor(mock_client)
+
+        # branding exists, tls does not
+        ex.run = MagicMock(
+            side_effect=[
+                Result(command="test", returncode=0, stdout="", stderr=""),  # branding
+                Result(command="test", returncode=1, stdout="", stderr=""),  # tls
+            ]
+        )
+
+        config_dir = tmp_path / "etc"  # never touched locally on the remote path
+        cfg = Config(config_dir=config_dir)
+        result = cfg.get_existing_extra_mounts(executor=ex)
+
+        assert [m.subpath for m in result] == ["branding"]
+        assert ex.run.call_count == 2
+        # Probe must be a directory check ('test -d'), one per EXTRA_MOUNTS entry.
+        for call, mount in zip(ex.run.call_args_list, EXTRA_MOUNTS, strict=True):
+            assert call[0][0] == ["test", "-d", str(config_dir / mount.subpath)]
+
+    def test_excludes_mount_when_remote_test_d_not_ok(self, tmp_path):
+        """A subpath whose 'test -d' returns non-ok (result.ok False) is EXCLUDED.
+
+        Covers the remote reject branch: when the remote probe fails for every
+        EXTRA_MOUNTS entry, none are mounted.
+        """
+        from unittest.mock import MagicMock
+
+        try:
+            import paramiko
+        except ImportError:
+            pytest.skip("paramiko not installed")
+
+        from ots_shared.ssh import SSHExecutor
+        from ots_shared.ssh.executor import Result
+
+        from rots.config import EXTRA_MOUNTS, Config
+
+        mock_client = MagicMock(spec=paramiko.SSHClient)
+        ex = SSHExecutor(mock_client)
+
+        # Every probe returns a non-zero exit (result.ok is False) -> all excluded.
+        ex.run = MagicMock(
+            side_effect=[
+                Result(command="test", returncode=1, stdout="", stderr="")
+                for _ in EXTRA_MOUNTS
+            ]
+        )
+
+        config_dir = tmp_path / "etc"
+        cfg = Config(config_dir=config_dir)
+        result = cfg.get_existing_extra_mounts(executor=ex)
+
+        assert result == []
+        assert ex.run.call_count == len(EXTRA_MOUNTS)
 
 
 class TestConfigRegistry:

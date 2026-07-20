@@ -545,6 +545,114 @@ class TestGetConfigVolumesSectionWithConfigSource:
         cfg.get_existing_config_files.assert_called_once_with(executor=executor_sentinel)
 
 
+class TestGetExtraMountsSectionWithConfigSource:
+    """get_extra_mounts_section behaviour under issue #80's config_source contract."""
+
+    def test_branding_dir_emits_host_path_volume_line(self, mocker, tmp_path):
+        """branding/ in config_source -> Volume= left side is the HOST config_dir path."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "branding").mkdir()
+
+        result = quadlet.get_extra_mounts_section(cfg, config_source=src)
+
+        volume_lines = [ln for ln in result.splitlines() if ln.startswith("Volume=")]
+        assert volume_lines == [f"Volume={cfg.config_dir}/branding:/app/etc/branding:ro"]
+        # Left side must be the host path, never the local config_source path.
+        assert str(src) not in result
+
+    def test_both_dirs_emit_both_lines(self, mocker, tmp_path):
+        """branding/ and tls/ in config_source -> one Volume= line each, host paths."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "branding").mkdir()
+        (src / "tls").mkdir()
+
+        result = quadlet.get_extra_mounts_section(cfg, config_source=src)
+
+        volume_lines = [ln for ln in result.splitlines() if ln.startswith("Volume=")]
+        assert volume_lines == [
+            f"Volume={cfg.config_dir}/branding:/app/etc/branding:ro",
+            f"Volume={cfg.config_dir}/tls:/app/etc/tls:ro",
+        ]
+
+    def test_empty_config_source_emits_fallback_comment(self, mocker, tmp_path):
+        """Empty config_source directory -> fallback comment and no Volume= lines."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+
+        result = quadlet.get_extra_mounts_section(cfg, config_source=src)
+
+        assert "No extra host mounts" in result
+        volume_lines = [ln for ln in result.splitlines() if ln.startswith("Volume=")]
+        assert volume_lines == []
+
+    def test_plain_file_named_branding_in_config_source_is_not_matched(self, mocker, tmp_path):
+        """A plain FILE named 'branding' in config_source must not match (is_dir, not exists)."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "branding").touch()  # file, not a directory
+
+        result = quadlet.get_extra_mounts_section(cfg, config_source=src)
+
+        assert "No extra host mounts" in result
+        volume_lines = [ln for ln in result.splitlines() if ln.startswith("Volume=")]
+        assert volume_lines == []
+
+    def test_config_source_set_does_not_probe_host_config_dir(self, mocker, tmp_path):
+        """With config_source set, the host config_dir must never be probed.
+
+        Contract test: cfg.config_dir points at a nonexistent path — render must
+        neither crash nor emit lines derived from probing it, and the host-probing
+        integration point (get_existing_extra_mounts) must not be entered.
+        """
+        from pathlib import Path
+
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        cfg.config_dir = Path("/nonexistent/rots-test-host-config")
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "tls").mkdir()
+
+        result = quadlet.get_extra_mounts_section(cfg, config_source=src)
+
+        # Host path appears only as the emitted left side for dirs found in src.
+        assert "Volume=/nonexistent/rots-test-host-config/tls:/app/etc/tls:ro" in result
+        assert "branding" not in result
+        cfg.get_existing_extra_mounts.assert_not_called()
+
+    def test_nonexistent_host_config_dir_empty_source_no_crash(self, mocker, tmp_path):
+        """Nonexistent host config_dir + empty config_source -> fallback, no lines from it."""
+        from pathlib import Path
+
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        cfg.config_dir = Path("/nonexistent/rots-test-host-config")
+        src = tmp_path / "src"
+        src.mkdir()
+
+        result = quadlet.get_extra_mounts_section(cfg, config_source=src)
+
+        assert "No extra host mounts" in result
+        assert "/nonexistent/rots-test-host-config" not in result
+        cfg.get_existing_extra_mounts.assert_not_called()
+
+
 class TestRenderTemplatesWithConfigSource:
     """render_*_template propagates config_source into the rendered output."""
 
@@ -604,6 +712,44 @@ class TestRenderTemplatesWithConfigSource:
         # Static asset volume mount is unaffected; only host config overrides
         # are gated by config_source.
         assert "/app/etc/" not in result
+
+    def test_extra_mounts_section_in_web_worker_and_scheduler(self, mocker, tmp_path):
+        """branding/ in config_source -> extra-mount Volume= line in all three templates."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "branding").mkdir()
+
+        expected = f"Volume={cfg.config_dir}/branding:/app/etc/branding:ro"
+        for render in (
+            quadlet.render_web_template,
+            quadlet.render_worker_template,
+            quadlet.render_scheduler_template,
+        ):
+            result = render(cfg, force=True, config_source=src)
+            assert expected in result, f"missing extra-mount line in {render.__name__}"
+            # Left side must be the host path, never the local config_source path.
+            assert f"Volume={src}/branding" not in result
+
+    def test_empty_config_source_renders_extra_mounts_fallback(self, mocker, tmp_path):
+        """Empty config_source -> all three templates carry the fallback comment."""
+        from rots import quadlet
+
+        cfg = _make_render_cfg(mocker, tmp_path)
+        src = tmp_path / "src"
+        src.mkdir()
+
+        for render in (
+            quadlet.render_web_template,
+            quadlet.render_worker_template,
+            quadlet.render_scheduler_template,
+        ):
+            result = render(cfg, force=True, config_source=src)
+            assert "No extra host mounts" in result, f"missing fallback in {render.__name__}"
+            assert "/app/etc/branding" not in result
+            assert "/app/etc/tls" not in result
 
     def test_render_mode_rejects_alias_tag_at_current(self, mocker, tmp_path):
         """Render mode must refuse the @current alias rather than touch the DB."""

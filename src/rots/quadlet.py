@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from ots_shared.ssh import is_remote as _is_remote
 
 from . import systemd
-from .config import CONFIG_FILES, Config, join_image_tag
+from .config import CONFIG_FILES, EXTRA_MOUNTS, Config, join_image_tag
 
 if TYPE_CHECKING:
     from ots_shared.ssh import Executor
@@ -58,6 +58,7 @@ WEB_TEMPLATE = """\
 # 2. (Optional) Place config overrides in {config_dir}/:
 #    config.yaml, auth.yaml, logging.yaml
 #    Only files present on host are mounted; others use container defaults.
+#    Subdirectories branding/ and tls/ are also mounted when present.
 #
 # OPERATIONS:
 #   Start:    systemctl start onetime-web@7043
@@ -104,6 +105,9 @@ Environment=PORT=%i
 
 # Host config overrides (per-file, only what exists on host)
 {config_volumes_section}
+
+# Extra host mounts (recognized subdirectories of the config dir)
+{extra_mounts_section}
 
 # Static assets extracted from container image
 Volume=static_assets:/app/public:ro
@@ -226,6 +230,44 @@ def get_config_volumes_section(
     return "\n".join(lines)
 
 
+def get_extra_mounts_section(
+    cfg: Config,
+    *,
+    executor: Executor | None = None,
+    config_source: Path | None = None,
+) -> str:
+    """Generate Volume directives for extra host directory mounts.
+
+    Only mounts the EXTRA_MOUNTS subdirectories that exist on the host.
+    Missing subdirectories are skipped.
+
+    When *config_source* is set (render mode), probe the local directory for the
+    canonical EXTRA_MOUNTS instead of the host. The Volume= left-side path
+    is still the host path (cfg.config_dir / subpath) since the rendered quadlet
+    is intended for deployment to a real host.
+    """
+    if config_source is not None:
+        # Render mode: probe the local config_source directory, but keep host
+        # paths on the left side of Volume= so the unit deploys correctly.
+        lines = []
+        for m in EXTRA_MOUNTS:
+            if (config_source / m.subpath).is_dir():
+                host_path = cfg.config_dir / m.subpath
+                lines.append(f"Volume={host_path}:{m.target}:{m.options}")
+        if not lines:
+            return "# No extra host mounts (no recognized subdirectories present)"
+        return "\n".join(lines)
+
+    mounts = cfg.get_existing_extra_mounts(executor=executor)
+
+    if not mounts:
+        return "# No extra host mounts (no recognized subdirectories present)"
+    lines = []
+    for m in mounts:
+        lines.append(f"Volume={cfg.config_dir / m.subpath}:{m.target}:{m.options}")
+    return "\n".join(lines)
+
+
 def get_resource_limits_section(cfg: Config) -> str:
     """Generate resource limit directives for the [Service] section.
 
@@ -323,6 +365,9 @@ def _build_fmt_vars(
     config_volumes_section = get_config_volumes_section(
         cfg, executor=executor, config_source=config_source
     )
+    extra_mounts_section = get_extra_mounts_section(
+        cfg, executor=executor, config_source=config_source
+    )
     env_files_section = get_env_files_section(cfg, executor=executor, render_mode=render_mode)
 
     if cfg.registry:
@@ -350,6 +395,7 @@ def _build_fmt_vars(
         "config_dir": cfg.config_dir,
         "secrets_section": secrets_section,
         "config_volumes_section": config_volumes_section,
+        "extra_mounts_section": extra_mounts_section,
         "env_files_section": env_files_section,
         "resource_limits_section": get_resource_limits_section(cfg),
     }
@@ -514,6 +560,7 @@ WORKER_TEMPLATE = """\
 # 2. (Optional) Place config overrides in {config_dir}/:
 #    config.yaml, auth.yaml, logging.yaml
 #    Only files present on host are mounted; others use container defaults.
+#    Subdirectories branding/ and tls/ are also mounted when present.
 #
 # OPERATIONS:
 #   Start:    systemctl start onetime-worker@1
@@ -560,6 +607,9 @@ Environment=WORKER_ID=%i
 
 # Host config overrides (per-file, only what exists on host)
 {config_volumes_section}
+
+# Extra host mounts (recognized subdirectories of the config dir)
+{extra_mounts_section}
 
 # Worker entry point - runs Sneakers job processor
 Exec=bin/entrypoint.sh bin/ots worker
@@ -620,6 +670,7 @@ SCHEDULER_TEMPLATE = """\
 # 2. (Optional) Place config overrides in {config_dir}/:
 #    config.yaml, auth.yaml, logging.yaml
 #    Only files present on host are mounted; others use container defaults.
+#    Subdirectories branding/ and tls/ are also mounted when present.
 #
 # OPERATIONS:
 #   Start:    systemctl start onetime-scheduler@main
@@ -666,6 +717,9 @@ Environment=SCHEDULER_ID=%i
 
 # Host config overrides (per-file, only what exists on host)
 {config_volumes_section}
+
+# Extra host mounts (recognized subdirectories of the config dir)
+{extra_mounts_section}
 
 # Scheduler entry point - runs scheduled job processor
 Exec=bin/entrypoint.sh bin/ots scheduler

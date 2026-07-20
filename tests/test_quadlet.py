@@ -144,6 +144,29 @@ class TestContainerTemplate:
         assert f"Volume={config_dir}/logging.yaml:/app/etc/logging.yaml:ro" in content
         assert "Volume=static_assets:/app/public:ro" in content
 
+    def test_write_web_template_includes_extra_mounts(self, mocker, tmp_path):
+        """Container quadlet should mount recognized config-dir subdirectories."""
+        mocker.patch("rots.quadlet.systemd.daemon_reload")
+        from rots import quadlet
+        from rots.config import Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "branding").mkdir()
+        (config_dir / "tls").mkdir()
+
+        cfg = Config(
+            web_template_path=tmp_path / "onetime-web@.container",
+            config_dir=config_dir,
+            var_dir=tmp_path / "var",
+        )
+
+        quadlet.write_web_template(cfg, force=True)
+
+        content = cfg.web_template_path.read_text()
+        assert f"Volume={config_dir}/branding:/app/etc/branding:ro" in content
+        assert f"Volume={config_dir}/tls:/app/etc/tls:ro" in content
+
     def test_write_web_template_secrets_section_comment(self, mocker, tmp_path):
         """Container quadlet should include EnvironmentFile layered pattern comment for secrets."""
         mocker.patch("rots.quadlet.systemd.daemon_reload")
@@ -517,6 +540,29 @@ class TestWorkerTemplate:
         assert f"Volume={config_dir}/auth.yaml:/app/etc/auth.yaml:ro" in content
         assert f"Volume={config_dir}/logging.yaml:/app/etc/logging.yaml:ro" in content
 
+    def test_write_worker_template_includes_extra_mounts(self, mocker, tmp_path):
+        """Worker quadlet should mount recognized config-dir subdirectories."""
+        mocker.patch("rots.quadlet.systemd.daemon_reload")
+        from rots import quadlet
+        from rots.config import Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "branding").mkdir()
+        (config_dir / "tls").mkdir()
+
+        cfg = Config(
+            worker_template_path=tmp_path / "onetime-worker@.container",
+            config_dir=config_dir,
+            var_dir=tmp_path / "var",
+        )
+
+        quadlet.write_worker_template(cfg, force=True)
+
+        content = cfg.worker_template_path.read_text()
+        assert f"Volume={config_dir}/branding:/app/etc/branding:ro" in content
+        assert f"Volume={config_dir}/tls:/app/etc/tls:ro" in content
+
     def test_write_worker_template_secrets_section_comment(self, mocker, tmp_path):
         """Worker quadlet should include EnvironmentFile layered pattern comment for secrets."""
         mocker.patch("rots.quadlet.systemd.daemon_reload")
@@ -781,6 +827,29 @@ class TestSchedulerTemplate:
         assert f"Volume={config_dir}/auth.yaml:/app/etc/auth.yaml:ro" in content
         assert f"Volume={config_dir}/logging.yaml:/app/etc/logging.yaml:ro" in content
 
+    def test_write_scheduler_template_includes_extra_mounts(self, mocker, tmp_path):
+        """Scheduler quadlet should mount recognized config-dir subdirectories."""
+        mocker.patch("rots.quadlet.systemd.daemon_reload")
+        from rots import quadlet
+        from rots.config import Config
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "branding").mkdir()
+        (config_dir / "tls").mkdir()
+
+        cfg = Config(
+            scheduler_template_path=tmp_path / "onetime-scheduler@.container",
+            config_dir=config_dir,
+            var_dir=tmp_path / "var",
+        )
+
+        quadlet.write_scheduler_template(cfg, force=True)
+
+        content = cfg.scheduler_template_path.read_text()
+        assert f"Volume={config_dir}/branding:/app/etc/branding:ro" in content
+        assert f"Volume={config_dir}/tls:/app/etc/tls:ro" in content
+
     def test_write_scheduler_template_secrets_section_comment(self, mocker, tmp_path):
         """Scheduler quadlet should include EnvironmentFile layered pattern comment for secrets."""
         mocker.patch("rots.quadlet.systemd.daemon_reload")
@@ -907,6 +976,90 @@ class TestGetConfigVolumesSection:
         assert f"Volume={config_dir}/config.yaml:/app/etc/config.yaml:ro" in result
         assert f"Volume={config_dir}/auth.yaml:/app/etc/auth.yaml:ro" in result
         assert "logging.yaml" not in result
+
+
+class TestGetExtraMountsSection:
+    """Test get_extra_mounts_section function."""
+
+    def test_no_dirs_returns_fallback_comment(self, tmp_path):
+        """Should return fallback comment when no recognized subdirectories exist."""
+        from rots.config import Config
+        from rots.quadlet import get_extra_mounts_section
+
+        cfg = Config(
+            config_dir=tmp_path / "nonexistent_dir",
+            var_dir=tmp_path / "var",
+        )
+
+        result = get_extra_mounts_section(cfg)
+        assert "No extra host mounts" in result
+        assert "Volume=" not in result
+
+    def test_all_dirs_returns_volume_lines(self, tmp_path):
+        """Should return Volume lines for both branding/ and tls/ when present."""
+        from rots.config import Config
+        from rots.quadlet import get_extra_mounts_section
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "branding").mkdir()
+        (config_dir / "tls").mkdir()
+
+        cfg = Config(
+            config_dir=config_dir,
+            var_dir=tmp_path / "var",
+        )
+
+        result = get_extra_mounts_section(cfg)
+        assert f"Volume={config_dir}/branding:/app/etc/branding:ro" in result
+        assert f"Volume={config_dir}/tls:/app/etc/tls:ro" in result
+
+    def test_subset_of_dirs(self, tmp_path):
+        """Should return Volume lines only for subdirectories that exist."""
+        from rots.config import Config
+        from rots.quadlet import get_extra_mounts_section
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "branding").mkdir()
+        # tls intentionally not created
+
+        cfg = Config(
+            config_dir=config_dir,
+            var_dir=tmp_path / "var",
+        )
+
+        result = get_extra_mounts_section(cfg)
+        assert f"Volume={config_dir}/branding:/app/etc/branding:ro" in result
+        assert "tls" not in result
+
+
+class TestExtraMountsCommentDriftGuard:
+    """Guard: template header comments must document every EXTRA_MOUNTS entry.
+
+    The WEB/WORKER/SCHEDULER quadlet headers hardcode the phrase
+    'Subdirectories branding/ and tls/ are also mounted when present.' Adding a
+    third entry to EXTRA_MOUNTS without updating that comment would leave the
+    docs stale. This asserts each subpath name appears in each template header,
+    so such drift fails CI instead of shipping silently.
+    """
+
+    def test_every_extra_mount_subpath_documented_in_headers(self):
+        from rots.config import EXTRA_MOUNTS
+        from rots.quadlet import SCHEDULER_TEMPLATE, WEB_TEMPLATE, WORKER_TEMPLATE
+
+        templates = {
+            "WEB_TEMPLATE": WEB_TEMPLATE,
+            "WORKER_TEMPLATE": WORKER_TEMPLATE,
+            "SCHEDULER_TEMPLATE": SCHEDULER_TEMPLATE,
+        }
+        for name, template in templates.items():
+            for m in EXTRA_MOUNTS:
+                assert f"{m.subpath}/" in template, (
+                    f"{name} header comment does not mention EXTRA_MOUNTS entry "
+                    f"{m.subpath!r}/ -- update the 'Subdirectories ... are also "
+                    f"mounted when present.' line to match config.EXTRA_MOUNTS."
+                )
 
 
 class TestGetEnvFilesSection:
@@ -1193,6 +1346,56 @@ class TestWriteTemplateRemote:
         mock_reload.assert_called_once_with(executor=mock_ex)
 
 
+class TestWriteTemplateRemoteExtraMounts:
+    """_write_template must propagate the executor into extra-mounts probing.
+
+    Wiring test for issue #80: without executor propagation from
+    _build_fmt_vars to get_extra_mounts_section, remote deploys would
+    silently probe the controller's local filesystem instead of the
+    target host.
+    """
+
+    def test_extra_mounts_probed_via_executor(self, mocker, tmp_path):
+        from pathlib import Path
+
+        from rots import quadlet
+        from rots.config import ExtraMount
+
+        mock_ex = _make_ssh_executor(mocker)
+        mock_ex.run.return_value = _make_remote_result()
+        mocker.patch("rots.quadlet.get_secrets_section", return_value="# no secrets")
+        mocker.patch("rots.quadlet.get_config_volumes_section", return_value="# no config")
+        mocker.patch("rots.quadlet.systemd.daemon_reload")
+
+        cfg = MagicMock()
+        cfg.resolved_image_with_tag.return_value = "ghcr.io/ots:latest"
+        cfg.config_dir = Path("/etc/onetimesecret")
+        cfg.memory_max = None
+        cfg.cpu_quota = None
+        cfg.registry = None
+        # Simulate the REMOTE host having branding/ (the local host's state
+        # must be irrelevant — only the executor-probed result may be used).
+        cfg.get_existing_extra_mounts.return_value = [
+            ExtraMount("branding", "/app/etc/branding"),
+        ]
+
+        path = tmp_path / "onetime-web@.container"
+        quadlet._write_template(
+            "{extra_mounts_section}\n", path, cfg, None, force=True, executor=mock_ex
+        )
+
+        # The executor must be handed to the Config probe (kills the mutation
+        # that drops executor= from the get_extra_mounts_section call).
+        cfg.get_existing_extra_mounts.assert_called_once_with(executor=mock_ex)
+
+        # And the remotely-written content must reflect the remote probe.
+        tee_calls = [c for c in mock_ex.run.call_args_list if c[0][0][0] == "tee"]
+        assert len(tee_calls) == 1
+        content = tee_calls[0][1]["input"]
+        assert "Volume=/etc/onetimesecret/branding:/app/etc/branding:ro" in content
+        assert "tls" not in content
+
+
 class TestGetConfigVolumesSectionRemote:
     """Test get_config_volumes_section() with remote executor."""
 
@@ -1215,6 +1418,30 @@ class TestGetConfigVolumesSectionRemote:
         assert "Volume=/etc/onetimesecret/config.yaml:/app/etc/config.yaml:ro" in result
         assert "auth.yaml" not in result
         cfg.get_existing_config_files.assert_called_once_with(executor=mock_ex)
+
+
+class TestGetExtraMountsSectionRemote:
+    """Test get_extra_mounts_section() with remote executor."""
+
+    def test_delegates_to_config_get_existing_extra_mounts(self, mocker, tmp_path):
+        from rots.config import ExtraMount
+        from rots.quadlet import get_extra_mounts_section
+
+        mock_ex = _make_ssh_executor(mocker)
+
+        config_dir = tmp_path / "etc"
+        cfg = MagicMock()
+        cfg.config_dir = config_dir
+        # Simulate only branding/ existing on remote host
+        cfg.get_existing_extra_mounts.return_value = [
+            ExtraMount("branding", "/app/etc/branding"),
+        ]
+
+        result = get_extra_mounts_section(cfg, executor=mock_ex)
+
+        assert f"Volume={config_dir}/branding:/app/etc/branding:ro" in result
+        assert "tls" not in result
+        cfg.get_existing_extra_mounts.assert_called_once_with(executor=mock_ex)
 
 
 class TestValkeyDependenciesDefenseInDepth:

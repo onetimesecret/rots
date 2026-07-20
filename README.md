@@ -253,7 +253,9 @@ FHS-compliant directory structure:
 /etc/onetimesecret/              # System configuration
 ├── config.yaml                  # Application configuration
 ├── auth.yaml                    # Authentication config
-└── logging.yaml                 # Logging config
+├── logging.yaml                 # Logging config
+├── branding/                    # Brand packs, branding/<name>/ -> /app/etc/branding; activate via BRAND_PACK=<name> (ro)
+└── tls/                         # TLS material -> /app/etc/tls (mounted if present, ro)
 
 /etc/default/onetimesecret       # Environment file (shared by all instances)
 

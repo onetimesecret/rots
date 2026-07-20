@@ -2088,6 +2088,10 @@ def shell(
     (absolute container target, host path must exist, opts pass through
     verbatim). Config is mounted read-only at /app/etc.
 
+    Note: --volume/-v is ephemeral and per-invocation only — it does not
+    affect deployed quadlet units, which pick up extra mounts only via the
+    /etc/onetimesecret convention (branding/, tls/).
+
     Examples:
         ots instance shell                              # tmpfs, interactive bash
         ots instance shell --persistent upgrade-v024    # named volume survives exit
