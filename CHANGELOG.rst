@@ -12,6 +12,87 @@ Versioning <https://semver.org/spec/v2.0.0.html>`__.
 
    <!--scriv-insert-here-->
 
+.. _changelog-0.8.0:
+
+0.8.0 — 2026-07-19
+==================
+
+Added
+-----
+
+- Quadlet units now mount recognized subdirectories of
+  ``/etc/onetimesecret`` into containers by convention:
+  ``branding/`` at ``/app/etc/branding`` and ``tls/`` at
+  ``/app/etc/tls`` (read-only). Only subdirectories present on the
+  host are mounted; the convention table is fixed in code, with no
+  operator-supplied paths (``#80``).
+
+Changed
+-------
+
+- Resolve container secrets from the layered EnvironmentFile set
+  (``/etc/default/onetimesecret`` plus optional
+  ``/etc/default/onetimesecret.local``) as the single source of truth. The
+  ad-hoc ``podman run`` paths (``instance shell``, ``boot-test``, config
+  transform, ``run --production``) now layer those files with ``--env-file``
+  instead of injecting from the podman secret store with ``--secret``, so a
+  passing ``boot-test`` guarantees the quadlet sees the same environment
+  (``#76``).
+
+- Split ``rots instance shell``'s single ``--volume``/``-v`` flag into two
+  distinct flags (#78). ``--data-volume`` (long form only, no short alias)
+  keeps the previous behavior: bind-mount a host directory at the fixed
+  ``/app/data`` target as ``rw,U`` with auto-create of the host path.
+  ``--volume``/``-v`` is now a general-purpose, repeatable bind-mount flag
+  accepting Podman-style ``HOST:CONTAINER[:OPTS]`` specs.
+- **BREAKING:** the old bare form ``-v ./data`` (a value with no colon) is
+  no longer accepted and now errors immediately, suggesting ``--data-volume``.
+- General ``-v`` mounts require an **absolute** container target, reject
+  ``/app/data`` (always occupied by the managed data mount), and **fail loud**
+  when the host path does not exist (no directory is created). ``OPTS`` are
+  passed through **verbatim** — no implicit ``U`` or ``rw`` is added. Relative
+  host paths are still resolved to absolute for local execution.
+- Against a **remote** host, relative host paths for both ``--data-volume`` and
+  ``-v`` are now rejected (they cannot be resolved locally and Podman would
+  silently treat them as named volumes rather than bind mounts). ``-v`` specs
+  are also fully validated before any ``--data-volume`` directory is created, so
+  an invalid ``-v`` no longer leaves a stray directory behind.
+
+Fixed
+-----
+
+- Stop the ad-hoc ``podman run`` paths from reading secrets out of the podman
+  secret store while the quadlet reads only the EnvironmentFiles. On hosts whose
+  secret values lived only in the store (or whose base env file held
+  ``_VAR=ots_var`` placeholders from ``ots env process``), ``boot-test`` passed
+  on store values but the quadlet-managed container crash-looped on a nil
+  secret. Both paths now read the same files (``#76``).
+- ``deploy`` and ``redeploy`` verify secrets before rendering: if any name in
+  ``SECRET_VARIABLE_NAMES`` does not resolve to a non-empty value in the merged
+  EnvironmentFile set, they refuse and name every missing variable rather than
+  producing a silently dead container. ``--force`` downgrades the refusal to a
+  warning (``#76``).
+
+Documentation
+-------------
+
+- Add ``docs/upgrading-0.7.md`` covering the v0.6.x to v0.7.x upgrade for
+  store-sourced hosts: symptom, cause, the per-secret ``.local`` remedy, and the
+  new fail-loud deploy behavior (``#76``).
+
+AI Assistance
+-------------
+
+- Mount-convention design, quadlet and config implementation, and tests
+  developed with AI assistance (``#80``).
+
+- Code trace of the ad-hoc ``podman run`` versus quadlet secret paths, upgrade
+  note, and changelog fragment developed with AI assistance.
+
+- Flag split design, validation rules (fail-loud host existence, absolute
+  target enforcement, ``/app/data`` rejection), implementation, and remote/local
+  branch tests developed with AI assistance.
+
 .. _changelog-0.7.5:
 
 0.7.5 — 2026-06-29
