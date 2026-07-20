@@ -30,7 +30,7 @@ from ..common import (
 )
 from ._helpers import (
     apply_quiet,
-    build_secret_args,
+    build_env_file_args,
     deploy_lock,
     flush_output,
     for_each_instance,
@@ -351,31 +351,15 @@ def run(
         if local_env.exists():
             cmd.extend(["--env-file", str(local_env)])
 
-    # Production mode: add env file, secrets, and volumes
+    # Production mode: add env file(s) and volumes
     if production:
-        from ots_shared.ssh import LocalExecutor
-
-        from rots.environment_file import get_secrets_from_env_file
-
         env_file = quadlet.DEFAULT_ENV_FILE
 
-        # Environment file
-        if not isinstance(ex, LocalExecutor):
-            env_exists = ex.run(["test", "-f", str(env_file)]).ok
-        else:
-            env_exists = env_file.exists()
-        if env_exists:
-            cmd.extend(["--env-file", str(env_file)])
-
-            # Secrets
-            secret_specs = get_secrets_from_env_file(env_file, executor=ex)
-            for spec in secret_specs:
-                cmd.extend(
-                    [
-                        "--secret",
-                        f"{spec.secret_name},type=env,target={spec.env_var_name}",
-                    ]
-                )
+        # Environment files: baseline + optional .local host override, matching
+        # the quadlet's layered EnvironmentFile= set (the single source of
+        # truth). Secrets are resolved from these files, not injected via
+        # --secret from the podman secret store.
+        cmd.extend(build_env_file_args(env_file, executor=ex))
 
         # Config overrides (per-file)
         config_files = cfg.get_existing_config_files(executor=ex)
@@ -872,8 +856,14 @@ def deploy(
     deploy_results: list[dict] = []
 
     with deploy_lock(executor=ex):
+        # Fail loud when any SECRET_VARIABLE_NAMES entry is missing/empty in the
+        # merged /etc/default/onetimesecret[.local] set. Raises SystemExit and
+        # names every unresolved secret; --force downgrades this to a warning.
+        from rots.environment_file import check_secrets_resolvable
+
+        check_secrets_resolvable(force=force, executor=ex)
+
         # Write appropriate quadlet template.
-        # Raises SystemExit(1) if env file or secrets are missing (unless force=True).
         if itype == InstanceType.WEB:
             assets.update(cfg, create_volume=True, executor=ex)
             logger.info(f"Writing quadlet files to {cfg.web_template_path.parent}")
@@ -1316,9 +1306,14 @@ def redeploy(
     redeploy_results: list[dict] = []
 
     with deploy_lock(executor=ex):
+        # Fail loud when any SECRET_VARIABLE_NAMES entry is missing/empty in the
+        # merged /etc/default/onetimesecret[.local] set. Raises SystemExit and
+        # names every unresolved secret; --force downgrades this to a warning.
+        from rots.environment_file import check_secrets_resolvable
+
+        check_secrets_resolvable(force=force, executor=ex)
+
         # Write quadlet templates for each type being redeployed.
-        # Raises SystemExit(1) if env file or secrets are missing.
-        # Redeploy always enforces secrets check (no --force override for secrets here).
         if InstanceType.WEB in instances:
             assets.update(cfg, create_volume=force, executor=ex)
             logger.info(f"Writing quadlet files to {cfg.web_template_path.parent}")
@@ -2053,13 +2048,20 @@ def shell(
             help="Named volume for persistent data (survives exit)",
         ),
     ] = None,
-    volume: Annotated[
+    data_volume: Annotated[
         str | None,
         cyclopts.Parameter(
-            name=["--volume", "-v"],
+            name=["--data-volume"],
             help="Host path to bind-mount at /app/data (rw, user-mapped)",
         ),
     ] = None,
+    volume: Annotated[
+        tuple[str, ...],
+        cyclopts.Parameter(
+            name=["--volume", "-v"],
+            help="Bind-mount HOST:CONTAINER[:OPTS] (absolute target, repeatable)",
+        ),
+    ] = (),
     env: Annotated[
         tuple[str, ...],
         cyclopts.Parameter(
@@ -2081,8 +2083,10 @@ def shell(
 
     By default uses tmpfs at /app/data (data destroyed on exit).
     Use --persistent to create a named volume that survives exit.
-    Use --volume to bind-mount a host directory at /app/data.
-    Config is mounted read-only at /app/etc.
+    Use --data-volume to bind-mount a host directory at /app/data (rw,U).
+    Use --volume/-v to add general HOST:CONTAINER[:OPTS] bind mounts
+    (absolute container target, host path must exist, opts pass through
+    verbatim). Config is mounted read-only at /app/etc.
 
     Note: --volume/-v is ephemeral and per-invocation only — it does not
     affect deployed quadlet units, which pick up extra mounts only via the
@@ -2093,8 +2097,9 @@ def shell(
         ots instance shell --persistent upgrade-v024    # named volume survives exit
         ots instance shell -c "bin/ots migrate"         # run command and exit
         ots instance shell --tag v0.24.0                # specific image tag
-        ots instance shell -v ./data                    # bind-mount ./data at /app/data
-        ots instance shell -v ./data -e REDIS_URL=redis://10.0.0.5:6379/0  # with env
+        ots instance shell --data-volume ./data         # bind-mount ./data at /app/data (rw,U)
+        ots instance shell -v ./certs:/app/etc/tls:ro   # general read-only mount
+        ots instance shell -v ./a:/app/x -v ./b:/app/y  # repeatable
         ots instance shell -e FOO=bar -e BAZ=qux        # multiple env vars, tmpfs default
         ots instance shell ghcr.io/org/image:v0.24.0     # explicit image ref
     """
@@ -2102,8 +2107,8 @@ def shell(
 
     apply_quiet(quiet)
 
-    if persistent and volume:
-        logger.error("--persistent and --volume are mutually exclusive")
+    if persistent and data_volume:
+        logger.error("--persistent and --data-volume are mutually exclusive")
         raise SystemExit(1)
 
     cfg = Config()
@@ -2143,26 +2148,67 @@ def shell(
 
     cmd.append("--network=host")
 
-    # Environment file and secrets
+    # Environment files: baseline + optional .local host override, matching the
+    # quadlet's layered EnvironmentFile= set. Secrets resolve from these files,
+    # not from --secret injection, so boot-test matches the production quadlet.
     env_file = quadlet.DEFAULT_ENV_FILE
     from ots_shared.ssh import LocalExecutor
 
-    if not isinstance(ex, LocalExecutor):
-        env_exists = ex.run(["test", "-f", str(env_file)]).ok
-    else:
-        env_exists = env_file.exists()
-    if env_exists:
-        cmd.extend(["--env-file", str(env_file)])
-        cmd.extend(build_secret_args(env_file, executor=ex))
+    cmd.extend(build_env_file_args(env_file, executor=ex))
+
+    # General-purpose bind mounts: HOST:CONTAINER[:OPTS] (fail-loud, no mkdir).
+    # Validate and collect every -v spec BEFORE the --data-volume mkdir side
+    # effect so that an invalid -v cannot leave a stray host/remote directory
+    # behind (validate-before-mutate).
+    volume_args: list[str] = []
+    for spec in volume:
+        parts = spec.split(":", 2)
+        if len(parts) < 2 or parts[0] == "" or parts[1] == "":
+            logger.error(
+                f"-v expects HOST:CONTAINER[:OPTS]; did you mean --data-volume? (got '{spec}')"
+            )
+            raise SystemExit(1)
+        host, container = parts[0], parts[1]
+        opts = parts[2] if len(parts) == 3 else None
+        if not container.startswith("/"):
+            logger.error(f"-v container target must be absolute: {container}")
+            raise SystemExit(1)
+        if container == "/app/data":
+            logger.error("-v cannot target /app/data; use --data-volume")
+            raise SystemExit(1)
+        if isinstance(ex, LocalExecutor):
+            host_path = Path(host).resolve()
+            if not host_path.exists():
+                logger.error(f"host path does not exist: {host_path}")
+                raise SystemExit(1)
+        else:
+            # A remote path cannot be resolved locally; a relative source would
+            # be silently treated by podman as a NAMED VOLUME, not a bind mount.
+            # Require an absolute host path and fail loud otherwise.
+            if not host.startswith("/"):
+                logger.error(f"-v host path must be absolute on remote: {host}")
+                raise SystemExit(1)
+            host_path = Path(host)
+            res = ex.run(["test", "-e", str(host_path)])
+            if not getattr(res, "ok", False):
+                logger.error(f"host path does not exist on remote: {host_path}")
+                raise SystemExit(1)
+        volume_args.extend(["-v", f"{host_path}:{container}" + (f":{opts}" if opts else "")])
 
     # Data volume: bind-mount, persistent named volume, or tmpfs (default)
-    if volume:
+    if data_volume:
         if not isinstance(ex, LocalExecutor):
+            # A remote path cannot be resolved locally; a relative source would
+            # be silently treated by podman as a NAMED VOLUME, not a bind mount.
+            # Require an absolute host path and fail loud before the remote mkdir.
+            if not data_volume.startswith("/"):
+                logger.error(f"--data-volume host path must be absolute on remote: {data_volume}")
+                raise SystemExit(1)
             # Remote: create directory on the remote host, use path as-is
-            host_path = Path(volume)
+            host_path = Path(data_volume)
             ex.run(["mkdir", "-p", str(host_path)])
         else:
-            host_path = Path(volume).resolve()
+            host_path = Path(data_volume).resolve()
             host_path.mkdir(parents=True, exist_ok=True)
         cmd.extend(["-v", f"{host_path}:/app/data:rw,U"])
     elif persistent:
@@ -2170,6 +2216,9 @@ def shell(
         cmd.extend(["-v", f"{volume_name}:/app/data"])
     else:
         cmd.extend(["--tmpfs", "/app/data"])
+
+    # Append the validated general-purpose mounts after the data mount.
+    cmd.extend(volume_args)
 
     # Ad-hoc environment variables
     for entry in env:
@@ -2341,13 +2390,10 @@ def config_transform(
         env_file = quadlet.DEFAULT_ENV_FILE
         cmd = ["podman", "run", "--rm", "--network=host"]
 
-        if is_remote:
-            env_exists = ex.run(["test", "-f", str(env_file)]).ok
-        else:
-            env_exists = env_file.exists()
-        if env_exists:
-            cmd.extend(["--env-file", str(env_file)])
-            cmd.extend(build_secret_args(env_file, executor=ex))
+        # Environment files: baseline + optional .local host override, matching
+        # the quadlet's layered EnvironmentFile= set. Secrets resolve from these
+        # files, not from --secret injection.
+        cmd.extend(build_env_file_args(env_file, executor=ex))
 
         cmd.extend(["-v", f"{volume_name}:/app/data"])
         # Resolve symlinks for podman VM compatibility (macOS, local only)
@@ -2366,8 +2412,8 @@ def config_transform(
 
         if not result.ok:
             # Show migration command output for operator debugging.
-            # No secrets here: env vars are passed via podman secrets,
-            # not visible in command stdout/stderr.
+            # Secrets live in the container environment (loaded from --env-file),
+            # not on the command line, so stdout/stderr are safe to surface.
             logger.error(f"Migration command failed (exit {result.returncode})")
             if result.stderr:
                 print(result.stderr)

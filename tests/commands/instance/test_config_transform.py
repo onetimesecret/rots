@@ -586,10 +586,12 @@ class TestConfigTransformCommand:
         # Call with custom file
         instance.config_transform(command="transform", file="auth.yaml", quiet=True)
 
-    def test_config_transform_includes_secrets(self, mocker, tmp_path):
-        """config_transform should include secrets from env file."""
-        from rots.environment_file import SecretSpec
+    def test_config_transform_layers_env_files_no_secret(self, mocker, tmp_path):
+        """config_transform resolves secrets from the env file, not --secret.
 
+        The migration/transform podman run must layer the baseline --env-file
+        (secrets' single source of truth) and must not inject --secret.
+        """
         # Mock Config
         mock_config = mocker.MagicMock()
         mock_config.get_executor.return_value = LocalExecutor()
@@ -608,22 +610,15 @@ class TestConfigTransformCommand:
         (mock_config.config_dir / "config.yaml").write_text("key: value\n")
         mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
-        # Create env file with secrets
+        # Create env file with secrets (single source of truth)
         env_file = tmp_path / "onetimesecret"
-        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")
+        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=resolved\n")
         mocker.patch(
             "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             env_file,
         )
-
-        # Mock get_secrets_from_env_file
-        mock_secrets = [
-            SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
-        ]
-        mocker.patch(
-            "rots.commands.instance._helpers.get_secrets_from_env_file",
-            return_value=mock_secrets,
-        )
+        # Point .local at a nonexistent path so only the base layers.
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", tmp_path / "onetimesecret.local")
 
         migration_cmd_args = []
 
@@ -644,10 +639,11 @@ class TestConfigTransformCommand:
 
         instance.config_transform(command="transform", quiet=True)
 
-        # Verify secrets were included in migration command
+        # Verify env file layered, no --secret injection
         cmd_str = " ".join(migration_cmd_args)
-        assert "--secret" in cmd_str
-        assert "ots_hmac_secret" in cmd_str
+        assert "--secret" not in cmd_str
+        assert "--env-file" in migration_cmd_args
+        assert str(env_file) in migration_cmd_args
 
     def test_config_transform_numbered_backup(self, mocker, tmp_path):
         """config_transform should create numbered backups if needed."""

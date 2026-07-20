@@ -81,6 +81,28 @@ def _setup_shell_mocks(mocker, tmp_path, **config_overrides):
     return cfg, mock_executor
 
 
+def _stub_run(mock_executor, host_exists=True, env_ok=False):
+    """Route executor.run() by command so tests are deterministic.
+
+    The mock executor is a plain MagicMock, so isinstance(ex, LocalExecutor)
+    is False and the shell command takes the REMOTE branch: env-file existence
+    uses ``test -f`` and general -v host existence uses ``test -e``. A single
+    shared return_value can't serve both an existing-host mount and a missing
+    env file, so route by the leading command tokens instead.
+    """
+    from types import SimpleNamespace
+
+    def _run(cmd_list, *args, **kwargs):
+        head = list(cmd_list[:2])
+        if head == ["test", "-f"]:
+            return SimpleNamespace(ok=env_ok)
+        if head == ["test", "-e"]:
+            return SimpleNamespace(ok=host_exists)
+        return SimpleNamespace(ok=True)
+
+    mock_executor.run.side_effect = _run
+
+
 def _get_cmd_from_executor(mock_executor, interactive=True):
     """Extract the command list from the executor mock's call args."""
     if interactive:
@@ -128,31 +150,31 @@ class TestShellCommand:
         assert "ots-migration-upgrade-v024:/app/data" in volume_arg
         assert "--tmpfs" not in cmd
 
-    def test_shell_includes_secrets_from_env_file(self, mocker, tmp_path):
-        """shell should include secrets when env file exists."""
-        from rots.environment_file import SecretSpec
+    def test_shell_layers_env_files_no_secret_injection(self, mocker, tmp_path):
+        """shell resolves secrets from layered env files, never via --secret.
 
+        Secrets now live in the merged base + .local env files (the single
+        source of truth the quadlet loads). The boot-test shell must layer the
+        same --env-file args and must NOT inject --secret from the podman store.
+        """
         env_file = tmp_path / "onetimesecret"
         env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY\n")
+        local_file = tmp_path / "onetimesecret.local"
+        local_file.write_text("AUTH_SECRET=from-local\n")
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", local_file)
 
         _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path, env_file=env_file)
-
-        mock_secrets = [
-            SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
-            SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
-        ]
-        mocker.patch(
-            "rots.commands.instance._helpers.get_secrets_from_env_file",
-            return_value=mock_secrets,
-        )
 
         instance.shell(quiet=True)
 
         cmd = _get_cmd_from_executor(mock_executor, interactive=True)
         cmd_str = " ".join(cmd)
-        assert "--secret" in cmd_str
-        assert "ots_hmac_secret" in cmd_str
-        assert "ots_api_key" in cmd_str
+        assert "--secret" not in cmd_str
+        # Base file layered first, .local override second (later file wins).
+        assert cmd.count("--env-file") == 2
+        assert str(env_file) in cmd
+        assert str(local_file) in cmd
+        assert cmd.index(str(local_file)) > cmd.index(str(env_file))
 
     def test_shell_includes_env_file(self, mocker, tmp_path):
         """shell should include --env-file when file exists."""
@@ -481,6 +503,157 @@ class TestShellPrivateRegistry:
         assert f"{DEFAULT_IMAGE}:edge" in cmd
 
 
+class TestShellVolumes:
+    """Test --data-volume and general -v/--volume handling.
+
+    NOTE: the mock executor is a plain MagicMock, so the shell command takes
+    the REMOTE branch (Path used verbatim, remote ``mkdir -p`` for
+    --data-volume, remote ``test -e`` for general -v host existence).
+    """
+
+    def test_data_volume_mounts_app_data_and_mkdirs(self, mocker, tmp_path):
+        """--data-volume bind-mounts at /app/data (rw,U) and mkdirs on remote."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        instance.shell(data_volume="/host/data", quiet=True)
+
+        cmd = _get_cmd_from_executor(mock_executor, interactive=True)
+        assert "/host/data:/app/data:rw,U" in cmd
+        assert "--tmpfs" not in cmd
+        # Remote branch creates the host directory
+        mock_executor.run.assert_any_call(["mkdir", "-p", "/host/data"])
+
+    def test_general_volume_passes_through_verbatim(self, mocker, tmp_path):
+        """-v HOST:CONTAINER[:OPTS] is passed through verbatim (incl :ro)."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+        _stub_run(mock_executor, host_exists=True)
+
+        instance.shell(volume=("/host/certs:/app/etc/tls:ro",), quiet=True)
+
+        cmd = _get_cmd_from_executor(mock_executor, interactive=True)
+        assert "/host/certs:/app/etc/tls:ro" in cmd
+        # No implicit U or rw added
+        assert not any("/app/etc/tls:rw" in part for part in cmd)
+
+    def test_general_volume_repeatable(self, mocker, tmp_path):
+        """Repeatable -v yields one mount arg per spec."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+        _stub_run(mock_executor, host_exists=True)
+
+        instance.shell(volume=("/host/a:/app/x", "/host/b:/app/y"), quiet=True)
+
+        cmd = _get_cmd_from_executor(mock_executor, interactive=True)
+        assert "/host/a:/app/x" in cmd
+        assert "/host/b:/app/y" in cmd
+        # tmpfs default (no -v for data), config none => exactly two -v
+        assert cmd.count("-v") == 2
+
+    def test_general_volume_rejects_relative_target(self, mocker, tmp_path, capsys):
+        """Non-absolute container target is rejected."""
+        _mock_config, _mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(volume=("/host/certs:relative/path",), quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "must be absolute" in capsys.readouterr().err
+
+    def test_general_volume_rejects_bare_form(self, mocker, tmp_path, capsys):
+        """Bare -v ./data (no colon) is rejected with a --data-volume hint."""
+        _mock_config, _mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(volume=("./data",), quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "--data-volume" in capsys.readouterr().err
+
+    def test_general_volume_rejects_app_data_target(self, mocker, tmp_path, capsys):
+        """-v targeting /app/data is rejected in favor of --data-volume."""
+        _mock_config, _mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(volume=("/host/data:/app/data",), quiet=True)
+
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "/app/data" in err
+        assert "--data-volume" in err
+
+    def test_general_volume_missing_host_fails_loud(self, mocker, tmp_path, capsys):
+        """Missing host path fails loud (no mkdir)."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+        _stub_run(mock_executor, host_exists=False)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(volume=("/host/missing:/app/x",), quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "does not exist" in capsys.readouterr().err
+
+    def test_general_volume_rejects_relative_host_on_remote(self, mocker, tmp_path, capsys):
+        """Relative -v host is rejected on remote (would become a named volume)."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+        _stub_run(mock_executor, host_exists=True)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(volume=("./certs:/app/etc/tls:ro",), quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "must be absolute on remote" in capsys.readouterr().err
+
+    def test_data_volume_rejects_relative_host_on_remote(self, mocker, tmp_path, capsys):
+        """Relative --data-volume host is rejected on remote (no mkdir)."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(data_volume="./data", quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "must be absolute on remote" in capsys.readouterr().err
+        # Rejection happens before the remote mkdir side effect
+        mkdir_calls = [
+            c for c in mock_executor.run.call_args_list if list(c.args[0][:2]) == ["mkdir", "-p"]
+        ]
+        assert mkdir_calls == []
+
+    def test_invalid_general_volume_aborts_before_data_volume_mkdir(self, mocker, tmp_path):
+        """An invalid -v aborts before the --data-volume mkdir (validate-before-mutate)."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(data_volume="/host/data", volume=("/bad",), quiet=True)
+
+        assert exc_info.value.code == 1
+        # No mkdir side effect for --data-volume should have run
+        mkdir_calls = [
+            c for c in mock_executor.run.call_args_list if list(c.args[0][:2]) == ["mkdir", "-p"]
+        ]
+        assert mkdir_calls == []
+
+    def test_persistent_and_data_volume_mutually_exclusive(self, mocker, tmp_path, capsys):
+        """--persistent and --data-volume both target /app/data and cannot combine."""
+        _mock_config, _mock_executor = _setup_shell_mocks(mocker, tmp_path)
+
+        with pytest.raises(SystemExit) as exc_info:
+            instance.shell(persistent="upgrade-v024", data_volume="/host/data", quiet=True)
+
+        assert exc_info.value.code == 1
+        assert "mutually exclusive" in capsys.readouterr().err
+
+    def test_persistent_allows_general_volume(self, mocker, tmp_path):
+        """--persistent is NOT mutually exclusive with the general -v flag."""
+        _mock_config, mock_executor = _setup_shell_mocks(mocker, tmp_path)
+        _stub_run(mock_executor, host_exists=True)
+
+        instance.shell(persistent="upgrade-v024", volume=("/host/x:/app/x",), quiet=True)
+
+        cmd = _get_cmd_from_executor(mock_executor, interactive=True)
+        joined = " ".join(cmd)
+        assert "ots-migration-upgrade-v024:/app/data" in joined
+        assert "/host/x:/app/x" in joined
+
+
 class TestShellHelp:
     """Test shell command help output."""
 
@@ -492,64 +665,72 @@ class TestShellHelp:
             app(["instance", "shell", "--help"])
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
-        assert "persistent" in captured.out.lower()
-        assert "tmpfs" in captured.out.lower() or "ephemeral" in captured.out.lower()
+        out = captured.out.lower()
+        assert "persistent" in out
+        assert "tmpfs" in out or "ephemeral" in out
+        assert "data-volume" in out
+        assert "host:container" in out
 
 
-class TestBuildSecretArgs:
-    """Test build_secret_args helper function."""
+class TestBuildEnvFileArgs:
+    """Test build_env_file_args helper (replaces deleted build_secret_args).
 
-    def test_build_secret_args_returns_empty_for_missing_file(self, tmp_path):
-        """build_secret_args should return empty list for missing file."""
-        from rots.commands.instance._helpers import build_secret_args
+    Ad-hoc podman runs now layer the baseline env file plus an optional
+    /etc/default/onetimesecret.local override as --env-file args, matching the
+    quadlet's EnvironmentFile= layering. Secrets resolve from these files, so
+    no --secret injection is emitted.
+    """
 
-        missing_file = tmp_path / "nonexistent"
-        result = build_secret_args(missing_file)
+    def test_returns_empty_when_no_files_exist(self, mocker, tmp_path):
+        """No base and no .local -> no args at all."""
+        from rots.commands.instance._helpers import build_env_file_args
+
+        missing_base = tmp_path / "nonexistent"
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", tmp_path / "nonexistent.local")
+
+        result = build_env_file_args(missing_base)
         assert result == []
+        assert "--secret" not in result
 
-    def test_build_secret_args_returns_secret_flags(self, mocker, tmp_path):
-        """build_secret_args should return --secret flags."""
-        from rots.commands.instance._helpers import build_secret_args
-        from rots.environment_file import SecretSpec
+    def test_emits_base_env_file_only(self, mocker, tmp_path):
+        """Base present, .local absent -> single --env-file for the base."""
+        from rots.commands.instance._helpers import build_env_file_args
 
-        env_file = tmp_path / "env"
-        env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\n")
+        base = tmp_path / "onetimesecret"
+        base.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET\nAUTH_SECRET=x\n")
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", tmp_path / "missing.local")
 
-        mock_secrets = [
-            SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
-        ]
-        mocker.patch(
-            "rots.commands.instance._helpers.get_secrets_from_env_file",
-            return_value=mock_secrets,
-        )
+        result = build_env_file_args(base)
+        assert result == ["--env-file", str(base)]
+        assert "--secret" not in result
 
-        result = build_secret_args(env_file)
-        assert result == [
-            "--secret",
-            "ots_hmac_secret,type=env,target=AUTH_SECRET",
-        ]
+    def test_layers_base_then_local_when_local_exists(self, mocker, tmp_path):
+        """Base + .local present -> both layered, base first, .local second."""
+        from rots.commands.instance._helpers import build_env_file_args
 
-    def test_build_secret_args_handles_multiple_secrets(self, mocker, tmp_path):
-        """build_secret_args should handle multiple secrets."""
-        from rots.commands.instance._helpers import build_secret_args
-        from rots.environment_file import SecretSpec
+        base = tmp_path / "onetimesecret"
+        base.write_text("AUTH_SECRET=base\n")
+        local = tmp_path / "onetimesecret.local"
+        local.write_text("AUTH_SECRET=override\n")
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", local)
 
-        env_file = tmp_path / "env"
-        env_file.write_text("SECRET_VARIABLE_NAMES=A,B,C\n")
+        result = build_env_file_args(base)
+        assert result == ["--env-file", str(base), "--env-file", str(local)]
+        assert "--secret" not in result
 
-        mock_secrets = [
-            SecretSpec(env_var_name="A", secret_name="ots_a"),
-            SecretSpec(env_var_name="B", secret_name="ots_b"),
-            SecretSpec(env_var_name="C", secret_name="ots_c"),
-        ]
-        mocker.patch(
-            "rots.commands.instance._helpers.get_secrets_from_env_file",
-            return_value=mock_secrets,
-        )
+    def test_uses_executor_for_remote_existence_checks(self, mocker, tmp_path):
+        """Remote runs test -f via the executor rather than touching local fs."""
+        from rots.commands.instance._helpers import build_env_file_args
 
-        result = build_secret_args(env_file)
-        assert len(result) == 6  # 3 secrets * 2 args each (--secret, value)
-        assert result[0] == "--secret"
-        assert "ots_a" in result[1]
-        assert result[2] == "--secret"
-        assert "ots_b" in result[3]
+        base = tmp_path / "onetimesecret"
+        local = tmp_path / "onetimesecret.local"
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", local)
+
+        mock_ex = mocker.MagicMock()  # not a LocalExecutor -> _is_remote() True
+        mock_ex.run.return_value.ok = True
+
+        result = build_env_file_args(base, executor=mock_ex)
+        assert result == ["--env-file", str(base), "--env-file", str(local)]
+        assert "--secret" not in result
+        mock_ex.run.assert_any_call(["test", "-f", str(base)])
+        mock_ex.run.assert_any_call(["test", "-f", str(local)])

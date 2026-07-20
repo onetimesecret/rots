@@ -169,8 +169,13 @@ class TestRunCommand:
         assert "7143:7143" in cmd
         assert "onetimesecret:v0.23.0" in cmd
 
-    def test_run_includes_secrets_with_production_flag(self, mocker, tmp_path):
-        """run --production should include secrets from env file."""
+    def test_run_layers_env_files_with_production_flag(self, mocker, tmp_path):
+        """run --production layers env files and does NOT inject --secret.
+
+        Secrets now resolve from the merged base + .local env files (the single
+        source of truth), so the production run must emit --env-file for the
+        baseline and must never pass --secret.
+        """
         from ots_shared.ssh.executor import Result
 
         # Mock Config with executor
@@ -191,34 +196,28 @@ class TestRunCommand:
         mock_config.get_executor.return_value = mock_executor
         mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
 
-        # Create env file with secrets
+        # Create env file with secrets (single source of truth)
         env_file = tmp_path / "onetimesecret"
         env_file.write_text("SECRET_VARIABLE_NAMES=AUTH_SECRET,API_KEY\n")
         mocker.patch(
             "rots.commands.instance.app.quadlet.DEFAULT_ENV_FILE",
             env_file,
         )
-
-        # Mock get_secrets_from_env_file (imported inside run function)
-        from rots.environment_file import SecretSpec
-
-        mock_secrets = [
-            SecretSpec(env_var_name="AUTH_SECRET", secret_name="ots_hmac_secret"),
-            SecretSpec(env_var_name="API_KEY", secret_name="ots_api_key"),
-        ]
-        mocker.patch(
-            "rots.environment_file.get_secrets_from_env_file",
-            return_value=mock_secrets,
-        )
+        # .local override at a distinct path; mock_executor.run returns ok=True
+        # for every test -f, so both files layer.
+        local_file = tmp_path / "onetimesecret.local"
+        mocker.patch("rots.quadlet.LOCAL_ENV_FILE", local_file)
 
         # Call run command with production flag
         instance.run(port=7143, detach=True, quiet=True, production=True)
 
-        # Verify secrets were included
+        # Verify env files layered, no --secret injection
         cmd = mock_executor.run.call_args.args[0]
         cmd_str = " ".join(cmd)
-        assert "--secret" in cmd_str
-        assert "ots_hmac_secret" in cmd_str
+        assert "--secret" not in cmd_str
+        assert "--env-file" in cmd
+        assert str(env_file) in cmd
+        assert str(local_file) in cmd
 
     def test_run_minimal_without_production_flag(self, mocker, tmp_path):
         """run without --production should be minimal (no secrets/volumes)."""
@@ -307,6 +306,53 @@ class TestDeployCommand:
 
         mock_assets.assert_called_once_with(mock_config, create_volume=True, executor=ANY)
         mock_quadlet.assert_called_once_with(mock_config, force=False, executor=ANY)
+
+    def test_deploy_gates_on_secret_resolution(self, mocker, tmp_path):
+        """deploy invokes check_secrets_resolvable inside the deploy lock."""
+        mock_config = mocker.MagicMock()
+        mock_config.config_dir = mocker.MagicMock()
+        mock_config.web_template_path = mocker.MagicMock()
+        mock_config.db_path = tmp_path / "test.db"
+        mock_config.existing_config_files = []
+        mock_config.has_custom_config = False
+        mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
+        # deploy does `from rots.environment_file import check_secrets_resolvable`
+        mock_check = mocker.patch("rots.environment_file.check_secrets_resolvable")
+
+        instance.deploy(web="7143")
+
+        mock_check.assert_called_once()
+        assert mock_check.call_args.kwargs["force"] is False
+
+    def test_deploy_aborts_when_secrets_unresolved(self, mocker, tmp_path):
+        """A SystemExit from the secret gate aborts deploy before writing units."""
+        mock_config = mocker.MagicMock()
+        mock_config.config_dir = mocker.MagicMock()
+        mock_config.web_template_path = mocker.MagicMock()
+        mock_config.db_path = tmp_path / "test.db"
+        mock_config.existing_config_files = []
+        mock_config.has_custom_config = False
+        mock_config.resolve_image_tag.return_value = ("ghcr.io/test/image", "v1.0.0")
+        mocker.patch("rots.commands.instance.app.Config", return_value=mock_config)
+        mock_assets = mocker.patch("rots.commands.instance.app.assets.update")
+        mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
+        mocker.patch("rots.commands.instance.app.systemd.start")
+        mocker.patch("rots.commands.instance.app.db.record_deployment")
+        mocker.patch(
+            "rots.environment_file.check_secrets_resolvable",
+            side_effect=SystemExit("Unresolved secrets: AUTH_SECRET."),
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            instance.deploy(web="7143")
+
+        assert "AUTH_SECRET" in str(exc.value)
+        mock_assets.assert_not_called()  # gate runs before unit writes
 
 
 class TestDeployWorkerCommand:
@@ -1034,6 +1080,7 @@ class TestDeployEnvVarResolution:
             "rots.commands.instance.app.deploy_lock",
             return_value=contextlib.nullcontext(),
         )
+        mocker.patch("rots.environment_file.check_secrets_resolvable")
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.deploy(web="7043")
@@ -1110,6 +1157,7 @@ class TestRedeployEnvVarResolution:
             return_value=True,
         )
         mocker.patch("rots.commands.instance.app.systemd.recreate")
+        mocker.patch("rots.environment_file.check_secrets_resolvable")
         mock_record = mocker.patch("rots.commands.instance.app.db.record_deployment")
 
         instance.redeploy(web="7043")
@@ -1821,6 +1869,7 @@ class TestDeployHooks:
         mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
         mocker.patch("rots.commands.instance.app.systemd.start")
         mocker.patch("rots.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.environment_file.check_secrets_resolvable")
         mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
         instance.deploy(web="7043", pre_hook="./scan.sh")
@@ -1839,6 +1888,7 @@ class TestDeployHooks:
         mocker.patch("rots.commands.instance.app.quadlet.write_web_template")
         mocker.patch("rots.commands.instance.app.systemd.start")
         mocker.patch("rots.commands.instance.app.db.record_deployment")
+        mocker.patch("rots.environment_file.check_secrets_resolvable")
         mock_run_hook = mocker.patch("rots.commands.instance.app.run_hook")
 
         instance.deploy(web="7043", post_hook="./notify.sh")

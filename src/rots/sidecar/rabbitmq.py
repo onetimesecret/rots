@@ -126,14 +126,17 @@ class RabbitMQConfig:
         )
 
     @classmethod
-    def from_env_file(
-        cls, path: Path = DEFAULT_ENV_FILE, host_id: str | None = None
-    ) -> RabbitMQConfig:
+    def from_env_file(cls, path: Path | None = None, host_id: str | None = None) -> RabbitMQConfig:
         """Load config from environment file.
 
         Parses shell-style env file looking for RABBITMQ_URL.
         Falls back to defaults if file missing or URL not found.
+
+        When ``path`` is None, the module-level ``DEFAULT_ENV_FILE`` is
+        resolved at call time (not at definition time) so tests can patch it.
         """
+        if path is None:
+            path = DEFAULT_ENV_FILE
         if not path.exists():
             logger.warning("Env file %s not found, using defaults", path)
             return cls() if host_id is None else cls(host_id=host_id)
