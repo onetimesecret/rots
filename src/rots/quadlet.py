@@ -706,15 +706,24 @@ def render_image_template(
     cfg: Config,
     *,
     executor: Executor | None = None,
+    render_mode: bool = False,
 ) -> str:
     """Render the image quadlet unit content without writing to disk.
 
     Used by dry-run to preview what would be written. Only meaningful
-    when cfg.registry is set.
+    when cfg.registry is set. Off-host render mode resolves the image
+    without the deployment DB and emits the target's standard auth path,
+    independent of registry credentials found on the rendering workstation.
     """
+    if render_mode:
+        image = _render_image_reference(cfg)
+        auth_file = Path("/etc/containers/auth.json")
+    else:
+        image = cfg.resolved_image_with_tag(executor=executor)
+        auth_file = cfg.get_registry_auth_file(executor=executor)
     return IMAGE_TEMPLATE.format(
-        image=cfg.resolved_image_with_tag(executor=executor),
-        auth_file=cfg.get_registry_auth_file(executor=executor),
+        image=image,
+        auth_file=auth_file,
     )
 
 

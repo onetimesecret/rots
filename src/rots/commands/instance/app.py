@@ -531,7 +531,7 @@ def _render_quadlets(
             ),
         ]
         if cfg.registry:
-            payloads.append(("onetime.image", quadlet.render_image_template(cfg, executor=None)))
+            payloads.append(("onetime.image", quadlet.render_image_template(cfg, render_mode=True)))
     except Exception as exc:
         print(f"render: failed to generate Quadlet content: {exc}", file=sys.stderr)
         raise SystemExit(EXIT_FAILURE) from exc
