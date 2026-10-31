@@ -328,20 +328,7 @@ def _build_fmt_vars(
     if cfg.registry:
         image = "onetime.image"
     elif render_mode:
-        # Render mode contract: no host I/O, no DB writes. resolve_image_tag
-        # would call db.get_alias -> get_connection -> init_db for alias tags,
-        # creating deployments.db on the caller's filesystem. Reject aliases
-        # explicitly so the user sees a clear error rather than a silent DB
-        # file appearing in their checkout.
-        tag_key = cfg.tag.lstrip("@").lower()
-        if tag_key in ("current", "rollback"):
-            raise SystemExit(
-                f"render: tag {cfg.tag!r} is an alias and cannot be resolved without "
-                "consulting the deployment database (which render mode forbids).\n"
-                "Pass a concrete tag or digest with --tag (e.g. --tag v0.24.0) or via "
-                "an explicit image reference (e.g. ghcr.io/org/image:v0.24.0)."
-            )
-        image = join_image_tag(cfg.effective_image, cfg.tag)
+        image = _render_image_reference(cfg)
     else:
         image = cfg.resolved_image_with_tag(executor=executor)
 
@@ -356,6 +343,21 @@ def _build_fmt_vars(
     if extra_vars:
         fmt_vars.update(extra_vars)
     return fmt_vars
+
+
+def _render_image_reference(cfg: Config) -> str:
+    """Build an offline image reference, rejecting aliases before DB access."""
+    # resolve_image_tag would call db.get_alias -> get_connection -> init_db
+    # for alias tags, creating deployments.db on the rendering workstation.
+    tag_key = cfg.tag.lstrip("@").lower()
+    if tag_key in ("current", "rollback"):
+        raise SystemExit(
+            f"render: tag {cfg.tag!r} is an alias and cannot be resolved without "
+            "consulting the deployment database (which render mode forbids).\n"
+            "Pass a concrete tag or digest with --tag (e.g. --tag v0.24.0) or via "
+            "an explicit image reference (e.g. ghcr.io/org/image:v0.24.0)."
+        )
+    return join_image_tag(cfg.effective_image, cfg.tag)
 
 
 def render_web_template(
