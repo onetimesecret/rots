@@ -1,0 +1,23 @@
+CHANGELOG.rst
+  s_a271da70f5fc32::t_9ae81b275426d9 15-35
+pyproject.toml
+  s_a271da70f5fc32::t_fcd361a7f4ff0a 12
+uv.lock
+  s_a271da70f5fc32::t_5a58fadffcf360 1088
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e322ef837104abba15e6d9f7ccb5785990992095",
+  "prompts": {},
+  "sessions": {
+    "s_a271da70f5fc32": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2f32d43d-a224-4d85-9b42-f3624b3ceb25",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "delano <delano@onetimesecret.com>"
+    }
+  }
+}
