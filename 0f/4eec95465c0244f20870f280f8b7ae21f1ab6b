@@ -1,0 +1,19 @@
+changelog.d/20261119_offline_image_render.rst
+  s_ea8bea568b734a::t_4227662328236c 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0f4eec95465c0244f20870f280f8b7ae21f1ab6b",
+  "prompts": {},
+  "sessions": {
+    "s_ea8bea568b734a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d69d080-7f97-432a-9227-f48e21dc7564",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "delano <delano@onetimesecret.com>"
+    }
+  }
+}
