@@ -4340,6 +4340,53 @@ class TestRenderItem1NoDBSafetyNet:
         web = (target / "onetime-web@.container").read_text()
         assert "Image=onetime.image" in web
 
+    def test_registry_render_uses_target_auth_without_workstation_discovery(
+        self, mocker, monkeypatch, tmp_path
+    ):
+        """Off-host render must not embed the operator's registry auth path."""
+        self._patch_safety_nets(mocker)
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+        workstation_auth = tmp_path / "workstation-auth.json"
+        workstation_auth.write_text("{}\n")
+        monkeypatch.setenv("REGISTRY_AUTH_FILE", str(workstation_auth))
+        auth_probe = mocker.patch.object(
+            Config,
+            "get_registry_auth_file",
+            side_effect=AssertionError("render must not discover workstation credentials"),
+        )
+        image_resolver = mocker.patch.object(
+            Config,
+            "resolved_image_with_tag",
+            side_effect=AssertionError("render must resolve concrete images offline"),
+        )
+
+        out_dir = tmp_path / "out"
+        from rots.commands.instance.app import render as render_cmd
+
+        render_cmd(out_dir=out_dir, tag="v1.2.3")
+
+        image = (out_dir / "etc/containers/systemd/onetime.image").read_text()
+        assert "Image=registry.example.com/onetimesecret/onetimesecret:v1.2.3\n" in image
+        assert "AuthFile=/etc/containers/auth.json\n" in image
+        assert str(workstation_auth) not in image
+        auth_probe.assert_not_called()
+        image_resolver.assert_not_called()
+
+    @pytest.mark.parametrize("tag", ["@current", "current", "@rollback", "rollback"])
+    def test_registry_render_rejects_alias_before_database_lookup(
+        self, mocker, monkeypatch, tmp_path, tag
+    ):
+        """The companion image unit shares render's offline alias restriction."""
+        self._patch_safety_nets(mocker)
+        monkeypatch.setenv("OTS_REGISTRY", "registry.example.com")
+        out_dir = tmp_path / "out"
+        from rots.commands.instance.app import render as render_cmd
+
+        with pytest.raises(SystemExit, match="alias"):
+            render_cmd(out_dir=out_dir, tag=tag)
+
+        assert not out_dir.exists()
+
 
 class TestRenderItem2NoPartialOutput:
     """Item 2, supplemental — ``--config-source`` validation must precede output writes.

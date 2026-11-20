@@ -373,20 +373,7 @@ def _build_fmt_vars(
     if cfg.registry:
         image = "onetime.image"
     elif render_mode:
-        # Render mode contract: no host I/O, no DB writes. resolve_image_tag
-        # would call db.get_alias -> get_connection -> init_db for alias tags,
-        # creating deployments.db on the caller's filesystem. Reject aliases
-        # explicitly so the user sees a clear error rather than a silent DB
-        # file appearing in their checkout.
-        tag_key = cfg.tag.lstrip("@").lower()
-        if tag_key in ("current", "rollback"):
-            raise SystemExit(
-                f"render: tag {cfg.tag!r} is an alias and cannot be resolved without "
-                "consulting the deployment database (which render mode forbids).\n"
-                "Pass a concrete tag or digest with --tag (e.g. --tag v0.24.0) or via "
-                "an explicit image reference (e.g. ghcr.io/org/image:v0.24.0)."
-            )
-        image = join_image_tag(cfg.effective_image, cfg.tag)
+        image = _render_image_reference(cfg)
     else:
         image = cfg.resolved_image_with_tag(executor=executor)
 
@@ -402,6 +389,21 @@ def _build_fmt_vars(
     if extra_vars:
         fmt_vars.update(extra_vars)
     return fmt_vars
+
+
+def _render_image_reference(cfg: Config) -> str:
+    """Build an offline image reference, rejecting aliases before DB access."""
+    # resolve_image_tag would call db.get_alias -> get_connection -> init_db
+    # for alias tags, creating deployments.db on the rendering workstation.
+    tag_key = cfg.tag.lstrip("@").lower()
+    if tag_key in ("current", "rollback"):
+        raise SystemExit(
+            f"render: tag {cfg.tag!r} is an alias and cannot be resolved without "
+            "consulting the deployment database (which render mode forbids).\n"
+            "Pass a concrete tag or digest with --tag (e.g. --tag v0.24.0) or via "
+            "an explicit image reference (e.g. ghcr.io/org/image:v0.24.0)."
+        )
+    return join_image_tag(cfg.effective_image, cfg.tag)
 
 
 def render_web_template(
@@ -758,15 +760,24 @@ def render_image_template(
     cfg: Config,
     *,
     executor: Executor | None = None,
+    render_mode: bool = False,
 ) -> str:
     """Render the image quadlet unit content without writing to disk.
 
     Used by dry-run to preview what would be written. Only meaningful
-    when cfg.registry is set.
+    when cfg.registry is set. Off-host render mode resolves the image
+    without the deployment DB and emits the target's standard auth path,
+    independent of registry credentials found on the rendering workstation.
     """
+    if render_mode:
+        image = _render_image_reference(cfg)
+        auth_file = Path("/etc/containers/auth.json")
+    else:
+        image = cfg.resolved_image_with_tag(executor=executor)
+        auth_file = cfg.get_registry_auth_file(executor=executor)
     return IMAGE_TEMPLATE.format(
-        image=cfg.resolved_image_with_tag(executor=executor),
-        auth_file=cfg.get_registry_auth_file(executor=executor),
+        image=image,
+        auth_file=auth_file,
     )
 
 
